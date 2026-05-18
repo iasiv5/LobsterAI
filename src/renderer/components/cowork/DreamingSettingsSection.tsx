@@ -641,7 +641,7 @@ const DreamingSettingsSection: React.FC<DreamingSettingsSectionProps> = ({
 
   const [dreamingStatus, setDreamingStatus] = useState<DreamingStatusData | null>(null);
   const [dreamDiary, setDreamDiary] = useState<DreamDiaryData | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
+  const [_statusLoading, setStatusLoading] = useState(false);
   const [diaryLoading, setDiaryLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -753,48 +753,32 @@ const DreamingSettingsSection: React.FC<DreamingSettingsSectionProps> = ({
     }
   }, [dreamingEnabled, fetchDreamingStatus, fetchDreamDiary]);
 
-  const refreshDreamingData = useCallback(() => {
-    void fetchDreamingStatus();
-    void fetchDreamDiary();
-  }, [fetchDreamingStatus, fetchDreamDiary]);
-
   const contentTabs = [
     { key: 'scene' as const, labelKey: 'coworkDreamingSubTabScene' },
     { key: 'diary' as const, labelKey: 'coworkDreamingSubTabDiary' },
     { key: 'advanced' as const, labelKey: 'coworkDreamingSubTabAdvanced' },
   ];
 
-  const isRefreshing = statusLoading || diaryLoading;
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3">
         <p className="text-sm text-secondary">{i18nService.t('coworkDreamingHeaderSubtitle')}</p>
 
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={refreshDreamingData}
-            disabled={isRefreshing}
-            className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:opacity-50"
-          >
-            {i18nService.t('coworkDreamingDiaryRefresh')}
-          </button>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={dreamingEnabled}
-            onClick={() => onDreamingEnabledChange(!dreamingEnabled)}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition-colors ${
-              dreamingEnabled
-                ? 'border-primary/30 bg-primary-muted text-primary'
-                : 'border-border bg-background text-secondary hover:bg-surface-raised hover:text-foreground'
+        <button
+          type="button"
+          role="switch"
+          aria-checked={dreamingEnabled}
+          onClick={() => onDreamingEnabledChange(!dreamingEnabled)}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+            dreamingEnabled ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              dreamingEnabled ? 'translate-x-6' : 'translate-x-1'
             }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${dreamingEnabled ? 'bg-primary' : 'bg-secondary/50'}`} />
-            <span>DREAMING {dreamingEnabled ? i18nService.t('coworkDreamingSwitchOn') : i18nService.t('coworkDreamingSwitchOff')}</span>
-          </button>
-        </div>
+          />
+        </button>
       </div>
 
       <div className="rounded-xl border border-border bg-surface p-3">
