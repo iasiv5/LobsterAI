@@ -8,6 +8,7 @@ test('pruneOpenClawRuntime keeps required bundled extensions', () => {
   expect(shouldKeepBundledExtension('openai')).toBe(true);
   expect(shouldKeepBundledExtension('browser')).toBe(true);
   expect(shouldKeepBundledExtension('feishu')).toBe(true);
+  expect(shouldKeepBundledExtension('xiaomi')).toBe(true);
 });
 
 test('pruneOpenClawRuntime removes explicitly unwanted bundled extensions', () => {

@@ -55,8 +55,8 @@ index b4166c642d..868dd0d2b 100644
  const PROVIDER_ID = "xiaomi";
 +const XIAOMI_DEFAULT_THINKING_LEVEL = "medium";
 +
-+const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
-+  family: "openai-compatible",
++const XIAOMI_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
++  family: "hybrid-anthropic-openai",
 +});
  
  export default defineSingleProviderPluginEntry({
@@ -65,7 +65,7 @@ index b4166c642d..868dd0d2b 100644
      catalog: {
        buildProvider: buildXiaomiProvider,
      },
-+    ...OPENAI_COMPATIBLE_REPLAY_HOOKS,
++    ...XIAOMI_REPLAY_HOOKS,
 +    resolveDefaultThinkingLevel: ({ reasoning }) =>
 +      reasoning ? XIAOMI_DEFAULT_THINKING_LEVEL : "off",
      resolveUsageAuth: async (ctx) => {
@@ -82,7 +82,7 @@ index 615f1115e1..aa5f7dd1de 100644
 +import { registerSingleProviderPlugin } from "../../test/helpers/plugins/plugin-registration.js";
 +import xiaomiPlugin from "./index.js";
  import { applyXiaomiConfig, applyXiaomiProviderConfig } from "./onboard.js";
-@@ -19,6 +21,24 @@ describe("xiaomi onboard", () => {
+@@ -19,6 +21,52 @@ describe("xiaomi onboard", () => {
      });
    });
 -
@@ -105,6 +105,34 @@ index 615f1115e1..aa5f7dd1de 100644
 +    ).toBe("off");
 +  });
 +
++  it("uses hybrid replay policy for Xiaomi Anthropic and OpenAI transports", async () => {
++    const provider = await registerSingleProviderPlugin(xiaomiPlugin);
++    const anthropicPolicy = provider.buildReplayPolicy?.({
++      provider: "xiaomi",
++      modelId: "mimo-v2.5",
++      modelApi: "anthropic-messages",
++    });
++
++    expect(anthropicPolicy).toMatchObject({
++      sanitizeMode: "full",
++      preserveSignatures: true,
++      validateAnthropicTurns: true,
++      allowSyntheticToolResults: true,
++    });
++    expect(anthropicPolicy).not.toHaveProperty("dropThinkingBlocks");
++
++    const openaiPolicy = provider.buildReplayPolicy?.({
++      provider: "xiaomi",
++      modelId: "mimo-v2.5",
++      modelApi: "openai-completions",
++    });
++    expect(openaiPolicy).toMatchObject({
++      sanitizeToolCallIds: true,
++      validateAnthropicTurns: true,
++      validateGeminiTurns: true,
++    });
++  });
++
    it("merges Xiaomi models and keeps existing provider overrides", () => {
      const provider = expectProviderOnboardMergedLegacyConfig({
        applyProviderConfig: applyXiaomiProviderConfig,
@@ -121,3 +149,237 @@ index 92941caea7..2ff873b55a 100644
          input: ["text"],
          cost: XIAOMI_DEFAULT_COST,
          contextWindow: XIAOMI_DEFAULT_CONTEXT_WINDOW,
+diff --git a/src/agents/anthropic-transport-stream.ts b/src/agents/anthropic-transport-stream.ts
+index 31cd86337d..8983b30970 100644
+--- a/src/agents/anthropic-transport-stream.ts
++++ b/src/agents/anthropic-transport-stream.ts
+@@ -211,10 +211,15 @@ function normalizeToolCallId(id: string): string {
+   return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+ }
+-
++
++type AnthropicMessageReplayOptions = {
++  allowUnsignedThinkingReplay?: boolean;
++};
++
+ function convertAnthropicMessages(
+   messages: Context["messages"],
+   model: AnthropicTransportModel,
+   isOAuthToken: boolean,
++  options: AnthropicMessageReplayOptions = {},
+ ) {
+   const params: Array<Record<string, unknown>> = [];
+   const transformedMessages = transformTransportMessages(messages, model, normalizeToolCallId);
+@@ -290,10 +293,17 @@ function convertAnthropicMessages(
+             continue;
+           }
+           if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+-            blocks.push({
+-              type: "text",
+-              text: sanitizeTransportPayloadText(block.thinking),
+-            });
++            if (options.allowUnsignedThinkingReplay) {
++              blocks.push({
++                type: "thinking",
++                thinking: sanitizeTransportPayloadText(block.thinking),
++              });
++            } else {
++              blocks.push({
++                type: "text",
++                text: sanitizeTransportPayloadText(block.thinking),
++              });
++            }
+           } else {
+             blocks.push({
+               type: "thinking",
+@@ -489,7 +500,11 @@ function buildAnthropicParams(
+   const defaultMaxTokens = Math.min(model.maxTokens, 32_000);
+   const params: Record<string, unknown> = {
+     model: model.id,
+-    messages: convertAnthropicMessages(context.messages, model, isOAuthToken),
++    messages: convertAnthropicMessages(context.messages, model, isOAuthToken, {
++      // Xiaomi MiMo Anthropic-compatible thinking blocks document `signature`
++      // as optional, while Claude requires signed thinking replay.
++      allowUnsignedThinkingReplay: model.provider === "xiaomi",
++    }),
+     max_tokens: options?.maxTokens || defaultMaxTokens,
+     stream: true,
+   };
+diff --git a/src/agents/anthropic-transport-stream.test.ts b/src/agents/anthropic-transport-stream.test.ts
+index 13a3c78431..46cd7a2a65 100644
+--- a/src/agents/anthropic-transport-stream.test.ts
++++ b/src/agents/anthropic-transport-stream.test.ts
+@@ -291,6 +291,172 @@ describe("anthropic transport stream", () => {
+     );
+   });
+-
++
++  it("preserves unsigned Xiaomi thinking blocks in Anthropic replay payloads", async () => {
++    const model = attachModelProviderRequestTransport(
++      {
++        id: "mimo-v2.5",
++        name: "MiMo V2.5",
++        api: "anthropic-messages",
++        provider: "xiaomi",
++        baseUrl: "https://api.xiaomimimo.com/anthropic",
++        reasoning: true,
++        input: ["text"],
++        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++        contextWindow: 262144,
++        maxTokens: 8192,
++      } satisfies Model<"anthropic-messages">,
++      {},
++    );
++    const streamFn = createAnthropicMessagesTransportStreamFn();
++
++    const stream = await Promise.resolve(
++      streamFn(
++        model,
++        {
++          messages: [
++            {
++              role: "assistant",
++              provider: "xiaomi",
++              api: "anthropic-messages",
++              model: "mimo-v2.5",
++              stopReason: "toolUse",
++              timestamp: 0,
++              content: [
++                {
++                  type: "thinking",
++                  thinking: "I need to inspect the file before answering.",
++                },
++                {
++                  type: "toolCall",
++                  id: "call_1",
++                  name: "read",
++                  arguments: { path: "/tmp/a" },
++                },
++              ],
++            },
++            {
++              role: "toolResult",
++              toolCallId: "call_1",
++              toolName: "read",
++              content: [{ type: "text", text: "file contents" }],
++              isError: false,
++              timestamp: 1,
++            },
++          ],
++        } as never,
++        {
++          apiKey: "mimo-key",
++          reasoning: "low",
++        } as Parameters<typeof streamFn>[2],
++      ),
++    );
++    await stream.result();
++
++    const firstCallParams = anthropicMessagesStreamMock.mock.calls[0]?.[0] as Record<
++      string,
++      unknown
++    >;
++    expect(firstCallParams.messages).toEqual(
++      expect.arrayContaining([
++        expect.objectContaining({
++          role: "assistant",
++          content: expect.arrayContaining([
++            expect.objectContaining({
++              type: "thinking",
++              thinking: "I need to inspect the file before answering.",
++            }),
++            expect.objectContaining({
++              type: "tool_use",
++              id: "call_1",
++              name: "read",
++            }),
++          ]),
++        }),
++        expect.objectContaining({
++          role: "user",
++          content: expect.arrayContaining([
++            expect.objectContaining({
++              type: "tool_result",
++              tool_use_id: "call_1",
++            }),
++          ]),
++        }),
++      ]),
++    );
++  });
++
++  it("keeps unsigned thinking replay downgraded to text for non-Xiaomi Anthropic providers", async () => {
++    const model = attachModelProviderRequestTransport(
++      {
++        id: "claude-sonnet-4-6",
++        name: "Claude Sonnet 4.6",
++        api: "anthropic-messages",
++        provider: "anthropic",
++        baseUrl: "https://api.anthropic.com",
++        reasoning: true,
++        input: ["text"],
++        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++        contextWindow: 200000,
++        maxTokens: 8192,
++      } satisfies Model<"anthropic-messages">,
++      {},
++    );
++    const streamFn = createAnthropicMessagesTransportStreamFn();
++
++    const stream = await Promise.resolve(
++      streamFn(
++        model,
++        {
++          messages: [
++            {
++              role: "assistant",
++              provider: "anthropic",
++              api: "anthropic-messages",
++              model: "claude-sonnet-4-6",
++              stopReason: "toolUse",
++              timestamp: 0,
++              content: [
++                {
++                  type: "thinking",
++                  thinking: "Unsigned thinking should not be replayed as thinking.",
++                },
++                {
++                  type: "toolCall",
++                  id: "tool_1",
++                  name: "read",
++                  arguments: { path: "/tmp/a" },
++                },
++              ],
++            },
++          ],
++        } as never,
++        {
++          apiKey: "sk-ant-api",
++          reasoning: "low",
++        } as Parameters<typeof streamFn>[2],
++      ),
++    );
++    await stream.result();
++
++    const firstCallParams = anthropicMessagesStreamMock.mock.calls[0]?.[0] as Record<
++      string,
++      unknown
++    >;
++    expect(firstCallParams.messages).toEqual(
++      expect.arrayContaining([
++        expect.objectContaining({
++          role: "assistant",
++          content: expect.arrayContaining([
++            expect.objectContaining({
++              type: "text",
++              text: "Unsigned thinking should not be replayed as thinking.",
++            }),
++          ]),
++        }),
++      ]),
++    );
++  });
++
+   it("maps adaptive thinking effort for Claude 4.6 transport runs", async () => {
+     const model = attachModelProviderRequestTransport(
+       {
