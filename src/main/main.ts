@@ -1944,8 +1944,12 @@ let isQuitting = false;
 const activeStreamControllers = new Map<string, AbortController>();
 let lastReloadAt = 0;
 let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// Timestamp (ms) until which resize-triggered persists are suppressed.
+// Set around maximize/unmaximize transitions to avoid capturing intermediate bounds.
+let windowStateSuppressUntil = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
 const WINDOW_STATE_SAVE_DEBOUNCE_MS = 300;
+const WINDOW_STATE_TRANSITION_GUARD_MS = 500;
 type AppConfigSettings = {
   theme?: string;
   language?: string;
@@ -2059,6 +2063,10 @@ const getCurrentAppWindowState = () => {
 const persistAppWindowState = () => {
   const state = getCurrentAppWindowState();
   if (!state) return;
+  // Reject obviously invalid bounds that can arise from getNormalBounds()
+  // returning wrong values on Windows frameless windows, or from resize
+  // events firing with transitional sizes during maximize/unmaximize.
+  if (state.width < MIN_APP_WINDOW_WIDTH || state.height < MIN_APP_WINDOW_HEIGHT) return;
   getStore().set(AppWindowStoreKey.State, state);
 };
 
@@ -2069,6 +2077,9 @@ const schedulePersistAppWindowState = () => {
 
   windowStateSaveTimer = setTimeout(() => {
     windowStateSaveTimer = null;
+    // Skip if we are inside a maximize/unmaximize transition window,
+    // because getBounds() may return intermediate animation values.
+    if (Date.now() < windowStateSuppressUntil) return;
     persistAppWindowState();
   }, WINDOW_STATE_SAVE_DEBOUNCE_MS);
 };
@@ -6296,7 +6307,18 @@ end tell'`, { timeout: 5000 });
     const forwardWindowState = () => emitWindowState();
     const forwardAndPersistWindowState = () => {
       emitWindowState();
-      schedulePersistAppWindowState();
+      // Suppress resize-driven persists during the transition animation,
+      // then persist the final settled state after the guard period.
+      windowStateSuppressUntil = Date.now() + WINDOW_STATE_TRANSITION_GUARD_MS;
+      if (windowStateSaveTimer) {
+        clearTimeout(windowStateSaveTimer);
+        windowStateSaveTimer = null;
+      }
+      windowStateSaveTimer = setTimeout(() => {
+        windowStateSaveTimer = null;
+        windowStateSuppressUntil = 0;
+        persistAppWindowState();
+      }, WINDOW_STATE_TRANSITION_GUARD_MS);
     };
     mainWindow.on('resize', schedulePersistAppWindowState);
     mainWindow.on('move', schedulePersistAppWindowState);
@@ -6309,6 +6331,18 @@ end tell'`, { timeout: 5000 });
 
     // 等待内容加载完成后再显示窗口
     mainWindow.once('ready-to-show', () => {
+      // Fix cross-DPI-monitor scaling: on Windows with frame:false, Electron
+      // may divide width/height by the primary monitor's scaleFactor when the
+      // window is placed on a secondary monitor with a different DPI.  Detect
+      // and correct this before showing the window.
+      if (mainWindow && !mainWindow.isDestroyed() && !shouldRestoreMaximized) {
+        const actual = mainWindow.getBounds();
+        if (actual.width < initialWindowBounds.width || actual.height < initialWindowBounds.height) {
+          mainWindow.setBounds(initialWindowBounds);
+          // Re-enforce minimum size after correction
+          mainWindow.setMinimumSize(MIN_APP_WINDOW_WIDTH, MIN_APP_WINDOW_HEIGHT);
+        }
+      }
       emitWindowState();
       // 开机自启时不显示窗口，仅显示托盘图标
       if (!isAutoLaunched()) {
