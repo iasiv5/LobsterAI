@@ -1,9 +1,16 @@
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
+import {
+  HtmlShareAccessMode,
+  type HtmlShareAccessMode as HtmlShareAccessModeType,
+  HtmlShareErrorCode,
+} from '@shared/htmlShare/constants';
 import type { LocalWebService } from '@shared/localWebServices/constants';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { authService } from '@/services/auth';
+import { getPortalPricingUrl } from '@/services/endpoints';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 import {
@@ -19,7 +26,12 @@ import {
   setPanelWidth,
   setPreviewTabContentView,
 } from '@/store/slices/artifactSlice';
-import { type Artifact, type ArtifactType, ArtifactTypeValue, PREVIEWABLE_ARTIFACT_TYPES } from '@/types/artifact';
+import {
+  type Artifact,
+  type ArtifactType,
+  ArtifactTypeValue,
+  PREVIEWABLE_ARTIFACT_TYPES,
+} from '@/types/artifact';
 
 import CopyIcon from '../icons/CopyIcon';
 import ArtifactRenderer from './ArtifactRenderer';
@@ -32,12 +44,56 @@ const BROWSER_OPENABLE_TYPES = new Set<ArtifactType>(['html', 'svg', 'mermaid'])
 
 const SYSTEM_OPENABLE_TYPES = new Set<ArtifactType>(['document']);
 
-const NON_CODE_TYPES = new Set<ArtifactType>(['document', 'image', 'text', ArtifactTypeValue.LocalService]);
+const NON_CODE_TYPES = new Set<ArtifactType>([
+  'document',
+  'image',
+  'text',
+  ArtifactTypeValue.LocalService,
+]);
 
 const COPYABLE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg']);
 
 const PANEL_CLOSE_DRAG_THRESHOLD = 48;
 const FILE_LIST_DRAWER_TRANSITION_MS = 180;
+
+const HtmlSharePhase = {
+  Idle: 'idle',
+  SelectingAccessMode: 'selectingAccessMode',
+  Packing: 'packing',
+  Uploading: 'uploading',
+  Live: 'live',
+  Failed: 'failed',
+} as const;
+
+type HtmlSharePhase = (typeof HtmlSharePhase)[keyof typeof HtmlSharePhase];
+
+const HtmlShareDialogKind = {
+  Subscription: 'subscription',
+  AccessMode: 'accessMode',
+  Result: 'result',
+} as const;
+
+type HtmlShareDialogKind = (typeof HtmlShareDialogKind)[keyof typeof HtmlShareDialogKind];
+
+const HtmlSharePendingSource = {
+  HtmlFile: 'htmlFile',
+} as const;
+
+interface HtmlSharePendingRequest {
+  source: typeof HtmlSharePendingSource.HtmlFile;
+  sessionId: string;
+  artifactId: string;
+  filePath: string;
+  title: string;
+}
+
+interface HtmlShareDialogState {
+  kind: HtmlShareDialogKind;
+  title: string;
+  message: string;
+  url?: string;
+  shareCode?: string;
+}
 
 function isCopyableArtifact(artifact: Artifact): boolean {
   if (artifact.type === 'document') return false;
@@ -58,7 +114,10 @@ function dataUrlToPngBlob(dataUrl: string): Promise<Blob> {
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       const ctx = canvas.getContext('2d');
-      if (!ctx) { reject(new Error('Failed to get canvas context')); return; }
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'));
+        return;
+      }
       ctx.drawImage(img, 0, 0);
       canvas.toBlob(blob => {
         if (blob) resolve(blob);
@@ -84,7 +143,11 @@ function buildBrowserHtml(artifact: Artifact): string | null {
 }
 
 function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 interface ArtifactPanelProps {
@@ -106,13 +169,15 @@ export const BrowserAnnotationShape = {
   Rectangle: 'rectangle',
 } as const;
 
-export type BrowserAnnotationShape = typeof BrowserAnnotationShape[keyof typeof BrowserAnnotationShape];
+export type BrowserAnnotationShape =
+  (typeof BrowserAnnotationShape)[keyof typeof BrowserAnnotationShape];
 
 export const BrowserAnnotationColor = {
   Blue: 'blue',
 } as const;
 
-export type BrowserAnnotationColor = typeof BrowserAnnotationColor[keyof typeof BrowserAnnotationColor];
+export type BrowserAnnotationColor =
+  (typeof BrowserAnnotationColor)[keyof typeof BrowserAnnotationColor];
 
 export interface BrowserAnnotationElementInfo {
   tagName: string;
@@ -167,19 +232,34 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 }) => {
   const dispatch = useDispatch();
   const panelWidth = useSelector(selectPanelWidth);
-  const activePreviewTab = useSelector((state: RootState) => selectActivePreviewTab(state, sessionId));
+  const activePreviewTab = useSelector((state: RootState) =>
+    selectActivePreviewTab(state, sessionId),
+  );
+  const authState = useSelector((state: RootState) => state.auth);
   const [showFileListDrawer, setShowFileListDrawer] = useState(false);
   const [isFileListDrawerVisible, setIsFileListDrawerVisible] = useState(false);
   const [localBrowserAddress, setLocalBrowserAddress] = useState('');
   const [localBrowserUrl, setLocalBrowserUrl] = useState('');
+  const [htmlSharePhase, setHtmlSharePhase] = useState<HtmlSharePhase>(HtmlSharePhase.Idle);
+  const [htmlShareDialog, setHtmlShareDialog] = useState<HtmlShareDialogState | null>(null);
+  const [htmlSharePendingRequest, setHtmlSharePendingRequest] =
+    useState<HtmlSharePendingRequest | null>(null);
+  const [htmlShareAccessMode, setHtmlShareAccessMode] = useState<HtmlShareAccessModeType>(
+    HtmlShareAccessMode.Code,
+  );
   const fileListDrawerRef = useRef<HTMLDivElement>(null);
   const fileListButtonRef = useRef<HTMLButtonElement>(null);
   const fileListDrawerAnimationFrameRef = useRef<number | undefined>(undefined);
   const fileListDrawerCloseTimeoutRef = useRef<number | undefined>(undefined);
 
   const previewableArtifacts = artifacts.filter(a => PREVIEWABLE_ARTIFACT_TYPES.has(a.type));
-  const artifactsById = useMemo(() => new Map(artifacts.map(artifact => [artifact.id, artifact])), [artifacts]);
-  const selectedArtifact = activePreviewTab ? artifactsById.get(activePreviewTab.artifactId) ?? null : null;
+  const artifactsById = useMemo(
+    () => new Map(artifacts.map(artifact => [artifact.id, artifact])),
+    [artifacts],
+  );
+  const selectedArtifact = activePreviewTab
+    ? (artifactsById.get(activePreviewTab.artifactId) ?? null)
+    : null;
   const selectedArtifactId = selectedArtifact?.id ?? null;
   const activeTab = activePreviewTab?.contentView ?? ArtifactContentView.Preview;
   const isDocumentArtifact = selectedArtifact?.type === 'document';
@@ -189,24 +269,39 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const startWidth = useRef(0);
   const previousBodyCursor = useRef('');
   const [panelIsResizing, setPanelIsResizing] = useState(false);
-  const constrainedMaxPanelWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, maxPanelWidth));
+  const constrainedMaxPanelWidth = Math.max(
+    MIN_PANEL_WIDTH,
+    Math.min(MAX_PANEL_WIDTH, maxPanelWidth),
+  );
   const constrainedMinPanelWidth = Math.min(
     constrainedMaxPanelWidth,
     Math.max(MIN_PANEL_WIDTH, minPanelWidth),
   );
-  const constrainedPanelWidth = Math.max(constrainedMinPanelWidth, Math.min(constrainedMaxPanelWidth, panelWidth));
+  const constrainedPanelWidth = Math.max(
+    constrainedMinPanelWidth,
+    Math.min(constrainedMaxPanelWidth, panelWidth),
+  );
   const browserAddress = controlledBrowserAddress ?? localBrowserAddress;
   const browserUrl = controlledBrowserUrl ?? localBrowserUrl;
+  const isHtmlSharing =
+    htmlSharePhase === HtmlSharePhase.Packing ||
+    htmlSharePhase === HtmlSharePhase.Uploading;
 
-  const handleBrowserAddressChange = useCallback((value: string) => {
-    setLocalBrowserAddress(value);
-    onBrowserAddressChange?.(value);
-  }, [onBrowserAddressChange]);
+  const handleBrowserAddressChange = useCallback(
+    (value: string) => {
+      setLocalBrowserAddress(value);
+      onBrowserAddressChange?.(value);
+    },
+    [onBrowserAddressChange],
+  );
 
-  const handleBrowserUrlChange = useCallback((value: string) => {
-    setLocalBrowserUrl(value);
-    onBrowserUrlChange?.(value);
-  }, [onBrowserUrlChange]);
+  const handleBrowserUrlChange = useCallback(
+    (value: string) => {
+      setLocalBrowserUrl(value);
+      onBrowserUrlChange?.(value);
+    },
+    [onBrowserUrlChange],
+  );
 
   const openFileListDrawer = useCallback(() => {
     if (fileListDrawerCloseTimeoutRef.current !== undefined) {
@@ -249,51 +344,60 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     openFileListDrawer();
   }, [closeFileListDrawer, isFileListDrawerVisible, openFileListDrawer, showFileListDrawer]);
 
-  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    isResizing.current = true;
-    startX.current = e.clientX;
-    startWidth.current = constrainedPanelWidth;
-    previousBodyCursor.current = document.body.style.cursor;
-    document.body.style.cursor = 'col-resize';
-    document.body.classList.add('select-none');
-    setPanelIsResizing(true);
+  const handleResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      isResizing.current = true;
+      startX.current = e.clientX;
+      startWidth.current = constrainedPanelWidth;
+      previousBodyCursor.current = document.body.style.cursor;
+      document.body.style.cursor = 'col-resize';
+      document.body.classList.add('select-none');
+      setPanelIsResizing(true);
 
-    const stopResizing = () => {
-      isResizing.current = false;
-      document.body.style.cursor = previousBodyCursor.current;
-      document.body.classList.remove('select-none');
-      setPanelIsResizing(false);
-      document.removeEventListener('pointermove', handlePointerMove);
-      document.removeEventListener('pointerup', handlePointerUp);
-      document.removeEventListener('pointercancel', handlePointerUp);
-    };
+      const stopResizing = () => {
+        isResizing.current = false;
+        document.body.style.cursor = previousBodyCursor.current;
+        document.body.classList.remove('select-none');
+        setPanelIsResizing(false);
+        document.removeEventListener('pointermove', handlePointerMove);
+        document.removeEventListener('pointerup', handlePointerUp);
+        document.removeEventListener('pointercancel', handlePointerUp);
+      };
 
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (!isResizing.current) return;
-      moveEvent.preventDefault();
-      const nextWidth = startWidth.current + startX.current - moveEvent.clientX;
-      if (nextWidth < constrainedMinPanelWidth - PANEL_CLOSE_DRAG_THRESHOLD) {
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (!isResizing.current) return;
+        moveEvent.preventDefault();
+        const nextWidth = startWidth.current + startX.current - moveEvent.clientX;
+        if (nextWidth < constrainedMinPanelWidth - PANEL_CLOSE_DRAG_THRESHOLD) {
+          stopResizing();
+          dispatch(closePanel({ sessionId }));
+          return;
+        }
+        const clampedWidth = Math.max(
+          constrainedMinPanelWidth,
+          Math.min(constrainedMaxPanelWidth, nextWidth),
+        );
+        dispatch(setPanelWidth(clampedWidth));
+      };
+
+      const handlePointerUp = () => {
         stopResizing();
-        dispatch(closePanel({ sessionId }));
-        return;
-      }
-      const clampedWidth = Math.max(
-        constrainedMinPanelWidth,
-        Math.min(constrainedMaxPanelWidth, nextWidth),
-      );
-      dispatch(setPanelWidth(clampedWidth));
-    };
+      };
 
-    const handlePointerUp = () => {
-      stopResizing();
-    };
-
-    document.addEventListener('pointermove', handlePointerMove);
-    document.addEventListener('pointerup', handlePointerUp);
-    document.addEventListener('pointercancel', handlePointerUp);
-  }, [constrainedMaxPanelWidth, constrainedMinPanelWidth, constrainedPanelWidth, dispatch, sessionId]);
+      document.addEventListener('pointermove', handlePointerMove);
+      document.addEventListener('pointerup', handlePointerUp);
+      document.addEventListener('pointercancel', handlePointerUp);
+    },
+    [
+      constrainedMaxPanelWidth,
+      constrainedMinPanelWidth,
+      constrainedPanelWidth,
+      dispatch,
+      sessionId,
+    ],
+  );
 
   useEffect(() => {
     return () => {
@@ -322,7 +426,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (fileListDrawerRef.current?.contains(target) || fileListButtonRef.current?.contains(target)) {
+      if (
+        fileListDrawerRef.current?.contains(target) ||
+        fileListButtonRef.current?.contains(target)
+      ) {
         return;
       }
       closeFileListDrawer();
@@ -365,49 +472,67 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     };
   }, [selectedArtifact?.filePath]);
 
-  const openLocalServiceArtifact = useCallback((artifact: Artifact): boolean => {
-    if (artifact.type !== ArtifactTypeValue.LocalService) return false;
-    const url = artifact.url || artifact.content;
-    if (!url) return true;
-    onOpenBrowserTab?.();
-    handleBrowserAddressChange(url);
-    handleBrowserUrlChange(url);
-    return true;
-  }, [handleBrowserAddressChange, handleBrowserUrlChange, onOpenBrowserTab]);
+  const openLocalServiceArtifact = useCallback(
+    (artifact: Artifact): boolean => {
+      if (artifact.type !== ArtifactTypeValue.LocalService) return false;
+      const url = artifact.url || artifact.content;
+      if (!url) return true;
+      onOpenBrowserTab?.();
+      handleBrowserAddressChange(url);
+      handleBrowserUrlChange(url);
+      return true;
+    },
+    [handleBrowserAddressChange, handleBrowserUrlChange, onOpenBrowserTab],
+  );
 
-  const handleSelectArtifact = useCallback((id: string) => {
-    const artifact = artifacts.find(item => item.id === id);
-    if (artifact && openLocalServiceArtifact(artifact)) return;
-    onOpenFileListTab?.();
-    dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
-  }, [artifacts, dispatch, onOpenFileListTab, openLocalServiceArtifact, sessionId]);
+  const handleSelectArtifact = useCallback(
+    (id: string) => {
+      const artifact = artifacts.find(item => item.id === id);
+      if (artifact && openLocalServiceArtifact(artifact)) return;
+      onOpenFileListTab?.();
+      dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
+    },
+    [artifacts, dispatch, onOpenFileListTab, openLocalServiceArtifact, sessionId],
+  );
 
-  const handleSelectArtifactFromDrawer = useCallback((id: string) => {
-    const artifact = artifacts.find(item => item.id === id);
-    if (artifact && openLocalServiceArtifact(artifact)) {
+  const handleSelectArtifactFromDrawer = useCallback(
+    (id: string) => {
+      const artifact = artifacts.find(item => item.id === id);
+      if (artifact && openLocalServiceArtifact(artifact)) {
+        closeFileListDrawer();
+        return;
+      }
+      dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
       closeFileListDrawer();
-      return;
-    }
-    dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
-    closeFileListDrawer();
-  }, [artifacts, closeFileListDrawer, dispatch, openLocalServiceArtifact, sessionId]);
+    },
+    [artifacts, closeFileListDrawer, dispatch, openLocalServiceArtifact, sessionId],
+  );
 
-  const handleSetContentView = useCallback((contentView: ArtifactContentView) => {
-    if (!activePreviewTab) return;
-    dispatch(setPreviewTabContentView({
-      sessionId,
-      tabId: activePreviewTab.id,
-      contentView,
-    }));
-  }, [activePreviewTab, dispatch, sessionId]);
+  const handleSetContentView = useCallback(
+    (contentView: ArtifactContentView) => {
+      if (!activePreviewTab) return;
+      dispatch(
+        setPreviewTabContentView({
+          sessionId,
+          tabId: activePreviewTab.id,
+          contentView,
+        }),
+      );
+    },
+    [activePreviewTab, dispatch, sessionId],
+  );
 
   const handleCopy = useCallback(async () => {
     if (!selectedArtifact) return;
     if (selectedArtifact.type === 'image') {
       if (selectedArtifact.filePath) {
-        const result = await window.electron?.clipboard?.writeImageFromFile(selectedArtifact.filePath);
+        const result = await window.electron?.clipboard?.writeImageFromFile(
+          selectedArtifact.filePath,
+        );
         if (!result?.success) {
-          window.dispatchEvent(new CustomEvent('app:showToast', { detail: result?.error || t('copyFailed') }));
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: result?.error || t('copyFailed') }),
+          );
           return;
         }
       } else if (selectedArtifact.content) {
@@ -455,6 +580,152 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
   }, [selectedArtifact]);
 
+  const openSubscriptionPage = useCallback(() => {
+    window.electron?.shell?.openExternal(getPortalPricingUrl());
+    setHtmlShareDialog(null);
+  }, []);
+
+  const formatShareClipboardText = useCallback((url: string, shareCode?: string): string => {
+    if (!shareCode) return url;
+    return `${t('htmlShareLink')}: ${url}\n${t('htmlShareCode')}: ${shareCode}`;
+  }, []);
+
+  const ensureHtmlShareAllowed = useCallback(async (): Promise<boolean> => {
+    let latestIsLoggedIn = authState.isLoggedIn;
+    let latestQuota = authState.quota;
+
+    if (!latestIsLoggedIn || latestQuota?.subscriptionStatus !== 'active') {
+      const refreshed = await authService.refreshAuthState();
+      latestIsLoggedIn = refreshed.isLoggedIn;
+      latestQuota = refreshed.quota;
+    }
+
+    if (!latestIsLoggedIn) {
+      setHtmlShareDialog({
+        kind: HtmlShareDialogKind.Subscription,
+        title: t('htmlShareLoginRequiredTitle'),
+        message: t('htmlShareLoginRequiredMessage'),
+      });
+      return false;
+    }
+    if (latestQuota?.subscriptionStatus !== 'active') {
+      setHtmlShareDialog({
+        kind: HtmlShareDialogKind.Subscription,
+        title: t('htmlShareSubscriptionRequiredTitle'),
+        message: t('htmlShareSubscriptionRequiredMessage'),
+      });
+      return false;
+    }
+    return true;
+  }, [authState.isLoggedIn, authState.quota]);
+
+  const handleCopyShareLink = useCallback(
+    async (url?: string, shareCode?: string) => {
+      if (!url) return;
+      await navigator.clipboard.writeText(formatShareClipboardText(url, shareCode));
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('copied') }));
+    },
+    [formatShareClipboardText],
+  );
+
+  const handleOpenShareLink = useCallback((url?: string) => {
+    if (!url) return;
+    window.electron?.shell?.openExternal(url);
+  }, []);
+
+  const openHtmlShareAccessModeDialog = useCallback((request: HtmlSharePendingRequest) => {
+    setHtmlSharePendingRequest(request);
+    setHtmlShareAccessMode(HtmlShareAccessMode.Code);
+    setHtmlSharePhase(HtmlSharePhase.SelectingAccessMode);
+    setHtmlShareDialog({
+      kind: HtmlShareDialogKind.AccessMode,
+      title: t('htmlShareCreateDialogTitle'),
+      message: t('htmlShareAccessModeCodeDescription'),
+    });
+  }, []);
+
+  const handleHtmlShareResult = useCallback(
+    async (
+      result: Awaited<
+        ReturnType<NonNullable<typeof window.electron>['htmlShare']['createFromHtmlFile']>
+      >,
+    ) => {
+      if (!result?.success || !result.url) {
+        if (result?.code === HtmlShareErrorCode.SubscriptionRequired) {
+          setHtmlShareDialog({
+            kind: HtmlShareDialogKind.Subscription,
+            title: t('htmlShareSubscriptionRequiredTitle'),
+            message: t('htmlShareSubscriptionRequiredMessage'),
+          });
+          setHtmlSharePhase(HtmlSharePhase.Failed);
+          return;
+        }
+        throw new Error(result?.error || t('htmlShareFailed'));
+      }
+      setHtmlSharePhase(HtmlSharePhase.Live);
+      await handleCopyShareLink(result.url, result.shareCode);
+      setHtmlShareDialog({
+        kind: HtmlShareDialogKind.Result,
+        title: t('htmlShareSuccess'),
+        message: result.warnings?.length
+          ? result.warnings.slice(0, 3).join('\n')
+          : t('htmlShareSuccessMessage'),
+        url: result.url,
+        shareCode: result.shareCode,
+      });
+    },
+    [handleCopyShareLink],
+  );
+
+  const createHtmlShare = useCallback(async () => {
+    if (!htmlSharePendingRequest || isHtmlSharing) return;
+    const request = htmlSharePendingRequest;
+    setHtmlShareDialog(null);
+    setHtmlSharePendingRequest(null);
+    try {
+      setHtmlSharePhase(HtmlSharePhase.Packing);
+      setHtmlSharePhase(HtmlSharePhase.Uploading);
+      const result = await window.electron?.htmlShare?.createFromHtmlFile({
+        sessionId: request.sessionId,
+        artifactId: request.artifactId,
+        filePath: request.filePath,
+        title: request.title,
+        accessMode: htmlShareAccessMode,
+      });
+      await handleHtmlShareResult(result);
+    } catch (error) {
+      setHtmlSharePhase(HtmlSharePhase.Failed);
+      setHtmlShareDialog({
+        kind: HtmlShareDialogKind.Result,
+        title: t('htmlShareFailed'),
+        message: error instanceof Error ? error.message : t('htmlShareFailed'),
+      });
+    }
+  }, [handleHtmlShareResult, htmlShareAccessMode, htmlSharePendingRequest, isHtmlSharing]);
+
+  const handleShareHtmlArtifact = useCallback(async () => {
+    if (
+      !selectedArtifact?.filePath ||
+      selectedArtifact.type !== ArtifactTypeValue.Html ||
+      isHtmlSharing
+    )
+      return;
+    if (!(await ensureHtmlShareAllowed())) return;
+    openHtmlShareAccessModeDialog({
+      source: HtmlSharePendingSource.HtmlFile,
+      sessionId,
+      artifactId: selectedArtifact.id,
+      filePath: selectedArtifact.filePath,
+      title: selectedArtifact.title || selectedArtifact.fileName || t('htmlShare'),
+    });
+  }, [
+    ensureHtmlShareAllowed,
+    isHtmlSharing,
+    openHtmlShareAccessModeDialog,
+    selectedArtifact,
+    sessionId,
+  ]);
+
   const handleOpenWithApp = useCallback(() => {
     if (selectedArtifact?.filePath) {
       let filePath = selectedArtifact.filePath;
@@ -478,7 +749,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     try {
       const result = await window.electron.dialog.readFileAsDataUrl(selectedArtifact.filePath);
       if (result?.success && result.dataUrl) {
-        const isTextType = selectedArtifact.type !== 'image' && selectedArtifact.type !== 'document';
+        const isTextType =
+          selectedArtifact.type !== 'image' && selectedArtifact.type !== 'document';
         let content = result.dataUrl;
         if (isTextType) {
           try {
@@ -489,10 +761,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             content = result.dataUrl;
           }
         }
-        dispatch(addArtifact({
-          sessionId: selectedArtifact.sessionId,
-          artifact: { ...selectedArtifact, content },
-        }));
+        dispatch(
+          addArtifact({
+            sessionId: selectedArtifact.sessionId,
+            artifact: { ...selectedArtifact, content },
+          }),
+        );
       }
     } catch {
       // File unreadable or missing
@@ -521,7 +795,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
             {/* Header: current file + actions */}
             <div className="h-10 flex items-center gap-2 px-3 border-b border-border shrink-0">
-              <span className="text-sm font-medium truncate">{selectedArtifact.fileName || selectedArtifact.title}</span>
+              <span className="text-sm font-medium truncate">
+                {selectedArtifact.fileName || selectedArtifact.title}
+              </span>
               <span className="text-xs uppercase text-muted">{selectedArtifact.type}</span>
               <span className="flex-1" />
               {selectedArtifact.filePath && (
@@ -549,6 +825,16 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   title={t('artifactOpenInBrowser')}
                 >
                   <BrowserIcon />
+                </button>
+              )}
+              {selectedArtifact.type === ArtifactTypeValue.Html && selectedArtifact.filePath && (
+                <button
+                  onClick={handleShareHtmlArtifact}
+                  disabled={isHtmlSharing}
+                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  title={isHtmlSharing ? t('htmlShareUploading') : t('htmlShare')}
+                >
+                  <ShareIcon />
                 </button>
               )}
               {SYSTEM_OPENABLE_TYPES.has(selectedArtifact.type) && selectedArtifact.filePath && (
@@ -593,7 +879,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                 }`}
               >
                 <div className="h-9 flex items-center px-3 border-b border-border shrink-0">
-                  <span className="text-xs font-medium text-secondary">{t('artifactFileList')}</span>
+                  <span className="text-xs font-medium text-secondary">
+                    {t('artifactFileList')}
+                  </span>
                 </div>
                 <FileDirectoryView
                   artifacts={previewableArtifacts}
@@ -605,7 +893,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             )}
 
             {/* Preview/Code tabs */}
-            <div className={`flex border-b border-border shrink-0 ${isDocumentArtifact ? 'pl-4' : ''}`}>
+            <div
+              className={`flex border-b border-border shrink-0 ${isDocumentArtifact ? 'pl-4' : ''}`}
+            >
               <button
                 onClick={() => handleSetContentView(ArtifactContentView.Preview)}
                 className={`${isDocumentArtifact ? 'px-0' : 'px-3'} py-1.5 text-xs font-medium transition-colors border-b-2 ${
@@ -659,6 +949,123 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           </div>
         )}
       </aside>
+      {htmlShareDialog &&
+        createPortal(
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/35 px-4">
+            <div className="w-full max-w-[420px] rounded-lg border border-border bg-background p-4 shadow-2xl">
+              <div className="text-sm font-semibold text-foreground">{htmlShareDialog.title}</div>
+              {htmlShareDialog.kind === HtmlShareDialogKind.AccessMode ? (
+                <div className="mt-3 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setHtmlShareAccessMode(HtmlShareAccessMode.Code)}
+                    className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                      htmlShareAccessMode === HtmlShareAccessMode.Code
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border text-secondary hover:bg-surface hover:text-foreground'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium">
+                      {t('htmlShareAccessModeCode')}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted">
+                      {t('htmlShareAccessModeCodeDescription')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHtmlShareAccessMode(HtmlShareAccessMode.Public)}
+                    className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
+                      htmlShareAccessMode === HtmlShareAccessMode.Public
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border text-secondary hover:bg-surface hover:text-foreground'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium">
+                      {t('htmlShareAccessModePublic')}
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-muted">
+                      {t('htmlShareAccessModePublicDescription')}
+                    </span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-secondary">
+                    {htmlShareDialog.url || htmlShareDialog.message}
+                  </div>
+                  {htmlShareDialog.shareCode && (
+                    <div className="mt-2 rounded-md border border-border bg-surface px-3 py-2">
+                      <div className="text-xs text-muted">{t('htmlShareCode')}</div>
+                      <div className="mt-1 font-mono text-sm tracking-wider text-foreground">
+                        {htmlShareDialog.shareCode}
+                      </div>
+                    </div>
+                  )}
+                  {htmlShareDialog.url && htmlShareDialog.message !== htmlShareDialog.url && (
+                    <div className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted">
+                      {htmlShareDialog.message}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHtmlShareDialog(null);
+                    setHtmlSharePendingRequest(null);
+                    if (htmlSharePhase === HtmlSharePhase.SelectingAccessMode) {
+                      setHtmlSharePhase(HtmlSharePhase.Idle);
+                    }
+                  }}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                >
+                  {t('cancel')}
+                </button>
+                {htmlShareDialog.kind === HtmlShareDialogKind.Subscription ? (
+                  <button
+                    type="button"
+                    onClick={openSubscriptionPage}
+                    className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    {t('htmlShareOpenSubscription')}
+                  </button>
+                ) : htmlShareDialog.kind === HtmlShareDialogKind.AccessMode ? (
+                  <button
+                    type="button"
+                    onClick={createHtmlShare}
+                    className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    {t('htmlShareCreate')}
+                  </button>
+                ) : htmlShareDialog.url ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCopyShareLink(htmlShareDialog.url, htmlShareDialog.shareCode)
+                      }
+                      className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                    >
+                      {htmlShareDialog.shareCode
+                        ? t('htmlShareCopyLinkAndCode')
+                        : t('htmlShareCopyLink')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenShareLink(htmlShareDialog.url)}
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                    >
+                      {t('htmlShareOpenLink')}
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 };
@@ -666,7 +1073,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 type BrowserWebviewElement = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
-  capturePage?: () => Promise<{ toDataURL: () => string; getSize?: () => { width: number; height: number } }>;
+  capturePage?: () => Promise<{
+    toDataURL: () => string;
+    getSize?: () => { width: number; height: number };
+  }>;
   executeJavaScript?: (code: string) => Promise<unknown>;
   loadURL?: (url: string) => Promise<void>;
   goBack?: () => void;
@@ -684,14 +1094,16 @@ const BrowserScreenshotStatus = {
   Error: 'error',
 } as const;
 
-type BrowserScreenshotStatus = typeof BrowserScreenshotStatus[keyof typeof BrowserScreenshotStatus];
+type BrowserScreenshotStatus =
+  (typeof BrowserScreenshotStatus)[keyof typeof BrowserScreenshotStatus];
 
 const BrowserAnnotationStatus = {
   Sent: 'sent',
   Cancelled: 'cancelled',
 } as const;
 
-type BrowserAnnotationStatus = typeof BrowserAnnotationStatus[keyof typeof BrowserAnnotationStatus];
+type BrowserAnnotationStatus =
+  (typeof BrowserAnnotationStatus)[keyof typeof BrowserAnnotationStatus];
 
 const BrowserToolbarAction = {
   Annotate: 'annotate',
@@ -699,7 +1111,7 @@ const BrowserToolbarAction = {
   OpenExternal: 'openExternal',
 } as const;
 
-type BrowserToolbarAction = typeof BrowserToolbarAction[keyof typeof BrowserToolbarAction];
+type BrowserToolbarAction = (typeof BrowserToolbarAction)[keyof typeof BrowserToolbarAction];
 
 const BrowserZoom = {
   Min: 0.25,
@@ -732,7 +1144,7 @@ const BrowserDevicePresetId = {
   IPhoneSe: 'iphone-se',
 } as const;
 
-type BrowserDevicePresetId = typeof BrowserDevicePresetId[keyof typeof BrowserDevicePresetId];
+type BrowserDevicePresetId = (typeof BrowserDevicePresetId)[keyof typeof BrowserDevicePresetId];
 
 interface BrowserDevicePreset {
   id: BrowserDevicePresetId;
@@ -764,7 +1176,12 @@ const BROWSER_DEVICE_PRESETS: BrowserDevicePreset[] = [
   },
   { id: BrowserDevicePresetId.FourK, label: '4K', width: 3840, height: 2160 },
   { id: BrowserDevicePresetId.LaptopLarge, label: 'Laptop L', width: 1440, height: 900 },
-  { id: BrowserDevicePresetId.Laptop, labelKey: 'artifactBrowserDeviceLaptop', width: 1366, height: 768 },
+  {
+    id: BrowserDevicePresetId.Laptop,
+    labelKey: 'artifactBrowserDeviceLaptop',
+    width: 1366,
+    height: 768,
+  },
   { id: BrowserDevicePresetId.SurfacePro7, label: 'Surface Pro 7', width: 912, height: 1368 },
   { id: BrowserDevicePresetId.IPadAir, label: 'iPad Air', width: 820, height: 1180 },
   { id: BrowserDevicePresetId.IPadMini, label: 'iPad Mini', width: 768, height: 1024 },
@@ -772,7 +1189,12 @@ const BROWSER_DEVICE_PRESETS: BrowserDevicePreset[] = [
   { id: BrowserDevicePresetId.IPhone15ProMax, label: 'iPhone 15 Pro Max', width: 430, height: 932 },
   { id: BrowserDevicePresetId.Pixel8, label: 'Pixel 8', width: 412, height: 915 },
   { id: BrowserDevicePresetId.IPhone15Pro, label: 'iPhone 15 Pro', width: 393, height: 852 },
-  { id: BrowserDevicePresetId.SamsungGalaxyS24Ultra, label: 'Samsung Galaxy S24 Ultra', width: 384, height: 824 },
+  {
+    id: BrowserDevicePresetId.SamsungGalaxyS24Ultra,
+    label: 'Samsung Galaxy S24 Ultra',
+    width: 384,
+    height: 824,
+  },
   { id: BrowserDevicePresetId.IPhoneSe, label: 'iPhone SE', width: 375, height: 667 },
 ];
 
@@ -802,7 +1224,8 @@ function normalizeBrowserAnnotationRect(
   const screenshotWidth = screenshot.width > 0 ? screenshot.width : 1;
   const screenshotHeight = screenshot.height > 0 ? screenshot.height : 1;
   const viewportWidth = viewport?.width && viewport.width > 0 ? viewport.width : screenshotWidth;
-  const viewportHeight = viewport?.height && viewport.height > 0 ? viewport.height : screenshotHeight;
+  const viewportHeight =
+    viewport?.height && viewport.height > 0 ? viewport.height : screenshotHeight;
   const scaleX = screenshotWidth / viewportWidth;
   const scaleY = screenshotHeight / viewportHeight;
   const x = Math.max(0, Math.min(screenshotWidth, Math.round(rect.x * scaleX)));
@@ -824,7 +1247,7 @@ function normalizeBrowserUrl(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (/^(https?|file):\/\//i.test(trimmed)) return trimmed;
-  if (/^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
+  if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|::1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
     return `http://${trimmed}`;
   }
   if (/^[\w.-]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(trimmed)) {
@@ -847,16 +1270,25 @@ function clampBrowserDeviceSize(value: number): number {
 
 function clampBrowserDeviceScale(value: number): number {
   if (!Number.isFinite(value)) return BrowserDeviceScale.Default;
-  return Math.max(BrowserDeviceScale.Min, Math.min(BrowserDeviceScale.Max, Number(value.toFixed(2))));
+  return Math.max(
+    BrowserDeviceScale.Min,
+    Math.min(BrowserDeviceScale.Max, Number(value.toFixed(2))),
+  );
 }
 
 function getBrowserDevicePresetLabel(preset: BrowserDevicePreset): string {
-  return preset.labelKey ? t(preset.labelKey) : preset.label ?? preset.id;
+  return preset.labelKey ? t(preset.labelKey) : (preset.label ?? preset.id);
 }
 
 function isLocalServiceHostname(hostname: string): boolean {
   const value = hostname.toLowerCase();
-  return value === 'localhost' || value === '127.0.0.1' || value === '[::1]' || value === '::1';
+  return (
+    value === 'localhost' ||
+    value === '127.0.0.1' ||
+    value === '0.0.0.0' ||
+    value === '[::1]' ||
+    value === '::1'
+  );
 }
 
 function parseLocalServiceArtifact(artifact: Artifact): LocalWebService | null {
@@ -901,13 +1333,18 @@ function mergeLocalServices(
 
   for (const sessionService of sessionServices) {
     const discovered = discoveredByPort.get(sessionService.port);
-    byPort.set(sessionService.port, discovered ? {
-      ...sessionService,
-      title: discovered.title || sessionService.title,
-      url: sessionService.url || discovered.url,
-      host: discovered.host || sessionService.host,
-      online: true,
-    } : sessionService);
+    byPort.set(
+      sessionService.port,
+      discovered
+        ? {
+            ...sessionService,
+            title: discovered.title || sessionService.title,
+            url: sessionService.url || discovered.url,
+            host: discovered.host || sessionService.host,
+            online: true,
+          }
+        : sessionService,
+    );
   }
 
   for (const discoveredService of discoveredServices) {
@@ -1156,18 +1593,25 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
-  const [screenshotStatus, setScreenshotStatus] = useState<BrowserScreenshotStatus>(BrowserScreenshotStatus.Idle);
+  const [screenshotStatus, setScreenshotStatus] = useState<BrowserScreenshotStatus>(
+    BrowserScreenshotStatus.Idle,
+  );
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [localServices, setLocalServices] = useState<LocalWebService[]>([]);
   const [isLoadingLocalServices, setIsLoadingLocalServices] = useState(false);
-  const [hoveredToolbarAction, setHoveredToolbarAction] = useState<BrowserToolbarAction | null>(null);
-  const [toolbarTooltipPosition, setToolbarTooltipPosition] = useState<BrowserToolbarTooltipPosition | null>(null);
+  const [hoveredToolbarAction, setHoveredToolbarAction] = useState<BrowserToolbarAction | null>(
+    null,
+  );
+  const [toolbarTooltipPosition, setToolbarTooltipPosition] =
+    useState<BrowserToolbarTooltipPosition | null>(null);
   const [webviewNode, setWebviewNode] = useState<BrowserWebviewElement | null>(null);
   const [isWebviewReady, setIsWebviewReady] = useState(false);
   const [isBrowserMenuOpen, setIsBrowserMenuOpen] = useState(false);
   const [browserZoomFactor, setBrowserZoomFactor] = useState<number>(BrowserZoom.Default);
   const [isDeviceToolbarVisible, setIsDeviceToolbarVisible] = useState(false);
-  const [devicePresetId, setDevicePresetId] = useState<BrowserDevicePresetId>(BrowserDevicePresetId.Responsive);
+  const [devicePresetId, setDevicePresetId] = useState<BrowserDevicePresetId>(
+    BrowserDevicePresetId.Responsive,
+  );
   const [deviceWidth, setDeviceWidth] = useState<number>(BrowserDeviceViewport.DefaultWidth);
   const [deviceHeight, setDeviceHeight] = useState<number>(BrowserDeviceViewport.DefaultHeight);
   const [deviceScale, setDeviceScale] = useState<number>(BrowserDeviceScale.Default);
@@ -1185,11 +1629,14 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     [sessionArtifacts],
   );
 
-  useEffect(() => () => {
-    if (screenshotStatusTimeoutRef.current !== undefined) {
-      window.clearTimeout(screenshotStatusTimeoutRef.current);
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      if (screenshotStatusTimeoutRef.current !== undefined) {
+        window.clearTimeout(screenshotStatusTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const handleWebviewRef = useCallback((node: BrowserWebviewElement | null) => {
     if (webviewNodeRef.current === node) return;
@@ -1225,7 +1672,10 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (browserMenuRef.current?.contains(target) || browserMenuButtonRef.current?.contains(target)) {
+      if (
+        browserMenuRef.current?.contains(target) ||
+        browserMenuButtonRef.current?.contains(target)
+      ) {
         return;
       }
       setIsBrowserMenuOpen(false);
@@ -1245,29 +1695,35 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     };
   }, [isBrowserMenuOpen]);
 
-  const syncNavigationState = useCallback((node: BrowserWebviewElement | null) => {
-    if (!node) return;
-    setCanGoBack(node.canGoBack?.() ?? false);
-    setCanGoForward(node.canGoForward?.() ?? false);
-    const nextUrl = node.getURL?.();
-    if (nextUrl && nextUrl !== BrowserPageUrl.Blank) {
-      onCurrentUrlChange(nextUrl);
-      onAddressChange(nextUrl);
-    }
-  }, [onAddressChange, onCurrentUrlChange]);
+  const syncNavigationState = useCallback(
+    (node: BrowserWebviewElement | null) => {
+      if (!node) return;
+      setCanGoBack(node.canGoBack?.() ?? false);
+      setCanGoForward(node.canGoForward?.() ?? false);
+      const nextUrl = node.getURL?.();
+      if (nextUrl && nextUrl !== BrowserPageUrl.Blank) {
+        onCurrentUrlChange(nextUrl);
+        onAddressChange(nextUrl);
+      }
+    },
+    [onAddressChange, onCurrentUrlChange],
+  );
 
-  const getToolbarActionElement = useCallback((action: BrowserToolbarAction): HTMLDivElement | null => {
-    switch (action) {
-      case BrowserToolbarAction.Annotate:
-        return annotateButtonRef.current;
-      case BrowserToolbarAction.Screenshot:
-        return screenshotButtonRef.current;
-      case BrowserToolbarAction.OpenExternal:
-        return openExternalButtonRef.current;
-      default:
-        return null;
-    }
-  }, []);
+  const getToolbarActionElement = useCallback(
+    (action: BrowserToolbarAction): HTMLDivElement | null => {
+      switch (action) {
+        case BrowserToolbarAction.Annotate:
+          return annotateButtonRef.current;
+        case BrowserToolbarAction.Screenshot:
+          return screenshotButtonRef.current;
+        case BrowserToolbarAction.OpenExternal:
+          return openExternalButtonRef.current;
+        default:
+          return null;
+      }
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     if (!hoveredToolbarAction) {
@@ -1347,8 +1803,8 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     if (!currentUrl || !isWebviewReady || !webviewNode?.loadURL) return;
 
     const loadedUrl = webviewNode.getURL?.();
-    const isSamePendingRequest = lastRequestedWebviewRef.current === webviewNode &&
-      lastRequestedUrlRef.current === currentUrl;
+    const isSamePendingRequest =
+      lastRequestedWebviewRef.current === webviewNode && lastRequestedUrlRef.current === currentUrl;
     if (loadedUrl === currentUrl || isSamePendingRequest) return;
 
     lastRequestedUrlRef.current = currentUrl;
@@ -1384,16 +1840,22 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     onAddressChange(nextUrl);
   }, [address, onAddressChange, onCurrentUrlChange]);
 
-  const handleOpenLocalService = useCallback((service: LocalWebService) => {
-    onCurrentUrlChange(service.url);
-    onAddressChange(service.url);
-  }, [onAddressChange, onCurrentUrlChange]);
+  const handleOpenLocalService = useCallback(
+    (service: LocalWebService) => {
+      onCurrentUrlChange(service.url);
+      onAddressChange(service.url);
+    },
+    [onAddressChange, onCurrentUrlChange],
+  );
 
-  const handleAddressKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      handleNavigate();
-    }
-  }, [handleNavigate]);
+  const handleAddressKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        handleNavigate();
+      }
+    },
+    [handleNavigate],
+  );
 
   const handleOpenExternal = useCallback(() => {
     if (!currentUrl) return;
@@ -1433,11 +1895,14 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     setDeviceScale(clampBrowserDeviceScale(Number(value)));
   }, []);
 
-  const applyBrowserZoom = useCallback((nextFactor: number) => {
-    const clampedFactor = clampBrowserZoomFactor(nextFactor);
-    setBrowserZoomFactor(clampedFactor);
-    webviewNode?.setZoomFactor?.(clampedFactor);
-  }, [webviewNode]);
+  const applyBrowserZoom = useCallback(
+    (nextFactor: number) => {
+      const clampedFactor = clampBrowserZoomFactor(nextFactor);
+      setBrowserZoomFactor(clampedFactor);
+      webviewNode?.setZoomFactor?.(clampedFactor);
+    },
+    [webviewNode],
+  );
 
   const handleZoomOut = useCallback(() => {
     applyBrowserZoom(browserZoomFactor - BrowserZoom.Step);
@@ -1463,13 +1928,19 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     setIsBrowserMenuOpen(false);
     try {
       const result = await window.electron?.artifact?.clearBrowserCookies?.();
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: result?.success ? t('artifactBrowserCookiesCleared') : result?.error || t('artifactBrowserClearCookiesFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: result?.success
+            ? t('artifactBrowserCookiesCleared')
+            : result?.error || t('artifactBrowserClearCookiesFailed'),
+        }),
+      );
     } catch {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: t('artifactBrowserClearCookiesFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: t('artifactBrowserClearCookiesFailed'),
+        }),
+      );
     }
   }, []);
 
@@ -1477,13 +1948,19 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     setIsBrowserMenuOpen(false);
     try {
       const result = await window.electron?.artifact?.clearBrowserCache?.();
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: result?.success ? t('artifactBrowserCacheCleared') : result?.error || t('artifactBrowserClearCacheFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: result?.success
+            ? t('artifactBrowserCacheCleared')
+            : result?.error || t('artifactBrowserClearCacheFailed'),
+        }),
+      );
     } catch {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: t('artifactBrowserClearCacheFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: t('artifactBrowserClearCacheFailed'),
+        }),
+      );
     }
   }, []);
 
@@ -1508,14 +1985,18 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         throw new Error(result?.error || 'Failed to write browser screenshot to clipboard');
       }
       setTemporaryScreenshotStatus(BrowserScreenshotStatus.Copied);
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: t('artifactBrowserScreenshotCopied'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: t('artifactBrowserScreenshotCopied'),
+        }),
+      );
     } catch {
       setTemporaryScreenshotStatus(BrowserScreenshotStatus.Error);
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: t('artifactBrowserScreenshotFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: t('artifactBrowserScreenshotFailed'),
+        }),
+      );
     } finally {
       setIsCapturingScreenshot(false);
     }
@@ -1524,7 +2005,9 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   const handleToggleAnnotation = useCallback(async () => {
     if (!webviewNode?.executeJavaScript || !webviewNode.capturePage || !currentUrl) return;
     if (isAnnotating) {
-      await webviewNode.executeJavaScript('window.__lobsterAnnotationCleanup?.()').catch(() => undefined);
+      await webviewNode
+        .executeJavaScript('window.__lobsterAnnotationCleanup?.()')
+        .catch(() => undefined);
       setIsAnnotating(false);
       return;
     }
@@ -1541,8 +2024,11 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         statusSent: BrowserAnnotationStatus.Sent,
         statusCancelled: BrowserAnnotationStatus.Cancelled,
       };
-      const result = await webviewNode.executeJavaScript(buildBrowserAnnotationScript(labels)) as BrowserAnnotationResult | undefined;
-      if (result?.status !== BrowserAnnotationStatus.Sent || !result.element || !result.rect) return;
+      const result = (await webviewNode.executeJavaScript(buildBrowserAnnotationScript(labels))) as
+        | BrowserAnnotationResult
+        | undefined;
+      if (result?.status !== BrowserAnnotationStatus.Sent || !result.element || !result.rect)
+        return;
 
       await new Promise(resolve => window.setTimeout(resolve, 80));
       const image = await webviewNode.capturePage();
@@ -1564,11 +2050,15 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         element: result.element,
       });
     } catch {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: t('artifactBrowserScreenshotFailed'),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: t('artifactBrowserScreenshotFailed'),
+        }),
+      );
     } finally {
-      await webviewNode?.executeJavaScript?.('window.__lobsterAnnotationCleanup?.()').catch(() => undefined);
+      await webviewNode
+        ?.executeJavaScript?.('window.__lobsterAnnotationCleanup?.()')
+        .catch(() => undefined);
       setIsAnnotating(false);
     }
   }, [currentUrl, isAnnotating, onAnnotationCaptured, webviewNode]);
@@ -1588,7 +2078,6 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         : hoveredToolbarAction === BrowserToolbarAction.OpenExternal
           ? t('artifactBrowserOpenExternal')
           : '';
-
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border px-3">
@@ -1681,7 +2170,11 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             aria-label={t('artifactBrowserScreenshot')}
             title={screenshotButtonTitle}
           >
-            {screenshotStatus === BrowserScreenshotStatus.Copied ? <ScreenshotCopiedIcon /> : <ScreenshotIcon />}
+            {screenshotStatus === BrowserScreenshotStatus.Copied ? (
+              <ScreenshotCopiedIcon />
+            ) : (
+              <ScreenshotIcon />
+            )}
           </button>
         </div>
         <div
@@ -1741,7 +2234,9 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
           </button>
           <div className="my-1 border-t border-border" />
           <div className="flex h-9 items-center gap-2 px-2">
-            <span className="min-w-0 flex-1 text-xs text-secondary">{t('artifactBrowserZoom')}</span>
+            <span className="min-w-0 flex-1 text-xs text-secondary">
+              {t('artifactBrowserZoom')}
+            </span>
             <div className="flex h-7 shrink-0 items-center overflow-hidden rounded-md border border-border bg-background">
               <button
                 type="button"
@@ -1788,21 +2283,24 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
           </button>
         </div>
       )}
-      {hoveredToolbarLabel && toolbarTooltipPosition && createPortal(
-        <div
-          className="pointer-events-none fixed z-[9999] -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-[11px] leading-none text-background shadow-sm"
-          style={{
-            left: toolbarTooltipPosition.left,
-            top: toolbarTooltipPosition.top,
-            transform: toolbarTooltipPosition.placement === 'top'
-              ? 'translate(-50%, -100%)'
-              : 'translate(-50%, 0)',
-          }}
-        >
-          {hoveredToolbarLabel}
-        </div>,
-        document.body,
-      )}
+      {hoveredToolbarLabel &&
+        toolbarTooltipPosition &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[9999] -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-[11px] leading-none text-background shadow-sm"
+            style={{
+              left: toolbarTooltipPosition.left,
+              top: toolbarTooltipPosition.top,
+              transform:
+                toolbarTooltipPosition.placement === 'top'
+                  ? 'translate(-50%, -100%)'
+                  : 'translate(-50%, 0)',
+            }}
+          >
+            {hoveredToolbarLabel}
+          </div>,
+          document.body,
+        )}
       {currentUrl ? (
         <div className="flex min-h-0 flex-1 flex-col bg-background">
           {isDeviceToolbarVisible && (
@@ -1872,25 +2370,33 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
               </button>
             </div>
           )}
-          <div className={`min-h-0 flex-1 overflow-auto ${isDeviceToolbarVisible ? 'bg-surface px-5 py-4' : 'bg-white'}`}>
+          <div
+            className={`min-h-0 flex-1 overflow-auto ${isDeviceToolbarVisible ? 'bg-surface px-5 py-4' : 'bg-white'}`}
+          >
             <div
-              className={isDeviceToolbarVisible ? 'mx-auto overflow-hidden shadow-sm' : 'h-full w-full'}
-              style={isDeviceToolbarVisible
-                ? {
-                    width: deviceWidth * deviceScale,
-                    height: deviceHeight * deviceScale,
-                  }
-                : undefined}
+              className={
+                isDeviceToolbarVisible ? 'mx-auto overflow-hidden shadow-sm' : 'h-full w-full'
+              }
+              style={
+                isDeviceToolbarVisible
+                  ? {
+                      width: deviceWidth * deviceScale,
+                      height: deviceHeight * deviceScale,
+                    }
+                  : undefined
+              }
             >
               <div
                 className="h-full w-full origin-top-left bg-white"
-                style={isDeviceToolbarVisible
-                  ? {
-                      width: deviceWidth,
-                      height: deviceHeight,
-                      transform: `scale(${deviceScale})`,
-                    }
-                  : undefined}
+                style={
+                  isDeviceToolbarVisible
+                    ? {
+                        width: deviceWidth,
+                        height: deviceHeight,
+                        transform: `scale(${deviceScale})`,
+                      }
+                    : undefined
+                }
               >
                 {React.createElement('webview', {
                   ref: handleWebviewRef,
@@ -1938,8 +2444,12 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
                       </div>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">{service.title}</div>
-                      <div className="truncate text-xs text-muted">{service.host}:{service.port}</div>
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {service.title}
+                      </div>
+                      <div className="truncate text-xs text-muted">
+                        {service.host}:{service.port}
+                      </div>
                     </div>
                     <span
                       className={`h-2 w-2 shrink-0 rounded-full ${service.online ? 'bg-emerald-400' : 'bg-muted'}`}
@@ -1950,10 +2460,12 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
-                {isLoadingLocalServices ? t('artifactBrowserLocalServicesLoading') : t('artifactBrowserLocalServicesEmpty')}
+                {isLoadingLocalServices
+                  ? t('artifactBrowserLocalServicesLoading')
+                  : t('artifactBrowserLocalServicesEmpty')}
               </div>
             )}
-        </div>
+          </div>
         </div>
       )}
     </div>
@@ -1961,13 +2473,31 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
 };
 
 const FolderIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M2 4.5A1.5 1.5 0 013.5 3h2.879a1.5 1.5 0 011.06.44l.622.62a1.5 1.5 0 001.06.44H12.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" />
   </svg>
 );
 
 const BrowserIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <circle cx="8" cy="8" r="6" />
     <ellipse cx="8" cy="8" rx="2.5" ry="6" />
     <path d="M2 8h12" />
@@ -1975,60 +2505,160 @@ const BrowserIcon = () => (
 );
 
 const AnnotateIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M8 2.25c3.35 0 6 2.2 6 5.05 0 2.84-2.65 5.05-6 5.05-.7 0-1.36-.1-1.98-.29L3.55 13.5c-.46.27-.96-.23-.69-.69l1.06-1.82C2.74 10.08 2 8.79 2 7.3c0-2.85 2.65-5.05 6-5.05z" />
     <path d="M8 5.75v3.5M6.25 7.5h3.5" />
   </svg>
 );
 
 const ScreenshotIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M5.25 4.25l.55-1.1A1.5 1.5 0 017.14 2.3h1.72a1.5 1.5 0 011.34.85l.55 1.1h1.75A1.5 1.5 0 0114 5.75v6A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.75v-6a1.5 1.5 0 011.5-1.5h1.75z" />
     <circle cx="8" cy="8.6" r="2.3" />
   </svg>
 );
 
 const ScreenshotCopiedIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M3.5 8.2l3 3 6-6.4" />
   </svg>
 );
 
 const ChevronLeftIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M10 3L5 8l5 5" />
   </svg>
 );
 
 const ChevronRightBrowserIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M6 3l5 5-5 5" />
   </svg>
 );
 
 const StopIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M4.25 4.25h7.5v7.5h-7.5z" />
   </svg>
 );
 
 const OpenExternalIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M12 9v3.5a1.5 1.5 0 01-1.5 1.5h-7A1.5 1.5 0 012 12.5v-7A1.5 1.5 0 013.5 4H7" />
     <path d="M10 2h4v4" />
     <path d="M7 9l7-7" />
   </svg>
 );
 
+const ShareIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="4" cy="8" r="1.8" />
+    <circle cx="11.5" cy="4" r="1.8" />
+    <circle cx="11.5" cy="12" r="1.8" />
+    <path d="M5.6 7.15l4.3-2.3" />
+    <path d="M5.6 8.85l4.3 2.3" />
+  </svg>
+);
+
 const FileListIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M4.5 2.881c0-.644.522-1.167 1.167-1.167h2.552c.323 0 .635.117.878.33l.58.507c.243.213.555.33.877.33h3.351c.736 0 1.333.597 1.333 1.333v5.945c0 .49-.398.889-.889.889" />
     <path d="M1.143 6.476c0-.736.597-1.333 1.333-1.333h2.314c.323 0 .635.117.878.33l.58.507c.242.213.554.33.877.33h3.351c.736 0 1.333.597 1.333 1.334v4.833c0 .736-.597 1.333-1.333 1.333H2.476c-.736 0-1.333-.597-1.333-1.333V6.476z" />
   </svg>
 );
 
 const RefreshIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M13.5 8a5.5 5.5 0 01-9.55 3.75" />
     <path d="M2.5 8a5.5 5.5 0 019.55-3.75" />
     <path d="M12.05 1.25v3h-3" />
@@ -2045,20 +2675,48 @@ const MoreVerticalIcon = () => (
 );
 
 const MinusIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
     <path d="M4 8h8" />
   </svg>
 );
 
 const PlusIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
     <path d="M8 4v8" />
     <path d="M4 8h8" />
   </svg>
 );
 
 const RotateDeviceIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
     <path d="M5.5 2.5h5A1.5 1.5 0 0112 4v8a1.5 1.5 0 01-1.5 1.5h-5A1.5 1.5 0 014 12V4a1.5 1.5 0 011.5-1.5z" />
     <path d="M7 4h2" />
     <path d="M7.5 12h1" />
@@ -2068,7 +2726,16 @@ const RotateDeviceIcon = () => (
 );
 
 const CloseIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.7"
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
     <path d="M4.5 4.5l7 7" />
     <path d="M11.5 4.5l-7 7" />
   </svg>

@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
@@ -27,8 +28,14 @@ const isTestMode = (): boolean => {
  */
 export const getServerApiBaseUrl = (): string => {
   return isTestMode()
-    ? 'https://lobsterai-server.inner.youdao.com'
+    // ? 'https://lobsterai-server.inner.youdao.com'
+    ? 'http://zj183.corp.yodao.com:18878'
     : 'https://lobsterai-server.youdao.com';
+
+};
+
+export const getHtmlSharePublicBaseUrl = (): string => {
+  return `${getServerApiBaseUrl()}${HtmlSharePublicRoute.Root}`;
 };
 
 export const getUpdateCheckUrl = (): string => (
