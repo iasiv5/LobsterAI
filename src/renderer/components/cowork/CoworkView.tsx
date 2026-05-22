@@ -539,7 +539,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         {engineStatusBanner}
         <SubagentSessionDetail
           subagent={viewingSubagent}
-          onBack={() => setViewingSubagent(null)}
+          onBack={() => {
+            setViewingSubagent(null);
+            window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
+          }}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={onToggleSidebar}
           onNewChat={onNewChat}
