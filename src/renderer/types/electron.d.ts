@@ -692,7 +692,7 @@ interface IElectronAPI {
         pluginId: string;
         version?: string;
         description?: string;
-        source: 'npm' | 'clawhub' | 'git' | 'local' | 'bundled';
+        source: 'npm' | 'clawhub' | 'git' | 'local' | 'bundled' | 'openclaw';
         enabled: boolean;
         canUninstall: boolean;
         hasConfig: boolean;
@@ -724,6 +724,8 @@ interface IElectronAPI {
       error?: string;
     }>;
     saveConfig: (pluginId: string, config: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+    detect: () => Promise<{ plugins: string[]; error?: string }>;
+    sync: () => Promise<{ synced: string[]; error?: string }>;
     onInstallLog: (callback: (line: string) => void) => () => void;
   };
   im: {

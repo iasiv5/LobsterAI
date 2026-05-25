@@ -4364,6 +4364,26 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('plugins:sync', async () => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      return await manager.syncPluginsFromOpenClaw();
+    } catch (error) {
+      return { synced: [], error: error instanceof Error ? error.message : 'Failed to sync plugins' };
+    }
+  });
+
+  ipcMain.handle('plugins:detect', async () => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      return manager.detectPluginsFromOpenClaw();
+    } catch (error) {
+      return { plugins: [], error: error instanceof Error ? error.message : 'Failed to detect plugins' };
+    }
+  });
+
   ipcMain.handle('plugins:install', async (event, params: {
     source: 'npm' | 'clawhub' | 'git' | 'local';
     spec: string;

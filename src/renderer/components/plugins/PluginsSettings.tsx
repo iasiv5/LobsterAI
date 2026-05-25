@@ -1,10 +1,10 @@
-import { Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useRef,useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import PluginConfigPage from './PluginConfigPage';
 
-type PluginSource = 'npm' | 'clawhub' | 'git' | 'local';
+type PluginSource = 'npm' | 'clawhub' | 'git' | 'local' | 'openclaw';
 
 interface PluginListItem {
   pluginId: string;
@@ -33,6 +33,8 @@ export default function PluginsSettings() {
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
   const [uninstalling, setUninstalling] = useState(false);
   const [configPluginId, setConfigPluginId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [detectedPlugins, setDetectedPlugins] = useState<string[] | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const [form, setForm] = useState<InstallForm>({
     source: 'npm',
@@ -49,8 +51,29 @@ export default function PluginsSettings() {
     setLoading(false);
   }, []);
 
+  const runSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const result = await window.electron?.plugins.sync();
+      if (result && result.synced.length > 0) {
+        await loadPlugins();
+      }
+    } finally {
+      setSyncing(false);
+      setDetectedPlugins(null);
+    }
+  }, [loadPlugins]);
+
   useEffect(() => {
-    loadPlugins();
+    // On mount: load plugins and detect any unsynced ones from OpenClaw
+    const init = async () => {
+      await loadPlugins();
+      const detectResult = await window.electron?.plugins.detect();
+      if (detectResult && detectResult.plugins.length > 0) {
+        setDetectedPlugins(detectResult.plugins);
+      }
+    };
+    init();
   }, [loadPlugins]);
 
   // Listen for install log events
@@ -123,6 +146,7 @@ export default function PluginsSettings() {
       case 'clawhub': return i18nService.t('pluginsSourceClawhub');
       case 'git': return i18nService.t('pluginsSourceGit');
       case 'local': return i18nService.t('pluginsSourceLocal');
+      case 'openclaw': return i18nService.t('pluginsSourceOpenclaw');
       case 'bundled': return 'Bundled';
     }
   };
@@ -139,6 +163,54 @@ export default function PluginsSettings() {
 
   return (
     <div className="space-y-6 px-1">
+      {/* Syncing overlay */}
+      {syncing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background border border-border rounded-xl shadow-lg p-6 flex items-center gap-3">
+            <ArrowPathIcon className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-sm text-foreground">{i18nService.t('pluginsSyncing')}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Detect confirmation dialog */}
+      {detectedPlugins && !syncing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-md p-6">
+            <h3 className="text-base font-semibold text-foreground mb-2">
+              {i18nService.t('pluginsSyncTitle')}
+            </h3>
+            <p className="text-sm text-muted-foreground mb-3">
+              {i18nService.t('pluginsSyncFound').replace('{count}', String(detectedPlugins.length))}
+            </p>
+            <div className="mb-4 max-h-32 overflow-y-auto rounded-md border border-border bg-surface-raised p-2">
+              {detectedPlugins.map(id => (
+                <div key={id} className="text-xs text-foreground py-0.5 font-mono">{id}</div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mb-5">
+              {i18nService.t('pluginsSyncLater')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDetectedPlugins(null)}
+                className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors"
+              >
+                {i18nService.t('pluginsSyncSkip')}
+              </button>
+              <button
+                type="button"
+                onClick={runSync}
+                className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                {i18nService.t('pluginsSyncNow')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -256,8 +328,8 @@ export default function PluginsSettings() {
               <label className="block text-sm font-medium text-foreground mb-1">
                 {i18nService.t('pluginsSource')}
               </label>
-              <div className="flex gap-1">
-                {(['npm', 'clawhub', 'git', 'local'] as PluginSource[]).map(src => (
+              <div className="flex gap-1 flex-wrap">
+                {(['npm', 'clawhub', 'git', 'local', 'openclaw'] as PluginSource[]).map(src => (
                   <button
                     key={src}
                     type="button"
@@ -375,10 +447,30 @@ export default function PluginsSettings() {
                   />
                 </div>
               )}
+
+              {form.source === 'openclaw' && (
+                <div className="text-center py-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {i18nService.t('pluginsSyncDesc')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInstallModal(false);
+                      runSync();
+                    }}
+                    disabled={syncing}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowPathIcon className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                    {syncing ? i18nService.t('pluginsSyncing') : i18nService.t('pluginsSyncButton')}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Install Log */}
-            {(installing || installLog) && (
+            {form.source !== 'openclaw' && (installing || installLog) && (
               <pre
                 ref={logRef}
                 className="mt-3 text-xs font-mono bg-surface-raised border border-border rounded-md p-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-muted-foreground"
@@ -388,7 +480,7 @@ export default function PluginsSettings() {
             )}
 
             {/* Error */}
-            {installError && (
+            {form.source !== 'openclaw' && installError && (
               <div className="mt-3 text-xs text-destructive bg-destructive/10 rounded-md p-2">
                 {installError}
               </div>
@@ -403,14 +495,16 @@ export default function PluginsSettings() {
               >
                 {i18nService.t('cancel')}
               </button>
-              <button
-                type="button"
-                onClick={handleInstall}
-                disabled={installing || !form.spec.trim()}
-                className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {installing ? i18nService.t('pluginsInstalling') : i18nService.t('pluginsInstall')}
-              </button>
+              {form.source !== 'openclaw' && (
+                <button
+                  type="button"
+                  onClick={handleInstall}
+                  disabled={installing || !form.spec.trim()}
+                  className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {installing ? i18nService.t('pluginsInstalling') : i18nService.t('pluginsInstall')}
+                </button>
+              )}
             </div>
           </div>
         </div>

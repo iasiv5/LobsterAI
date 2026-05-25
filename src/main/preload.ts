@@ -475,6 +475,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
+    detect: () => ipcRenderer.invoke('plugins:detect'),
+    sync: () => ipcRenderer.invoke('plugins:sync'),
     install: (params: {
       source: 'npm' | 'clawhub' | 'git' | 'local';
       spec: string;

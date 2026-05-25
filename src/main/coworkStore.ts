@@ -533,7 +533,7 @@ CoworkConfig,
   | 'dreamingTimezone'
 >>;
 
-export type PluginSource = 'npm' | 'clawhub' | 'git' | 'local';
+export type PluginSource = 'npm' | 'clawhub' | 'git' | 'local' | 'openclaw';
 
 export interface UserInstalledPlugin {
   pluginId: string;

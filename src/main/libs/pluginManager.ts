@@ -6,7 +6,7 @@ import path from 'path';
 
 import type { CoworkStore, PluginSource } from '../coworkStore';
 import { getElectronNodeRuntimePath } from './coworkUtil';
-import { findThirdPartyExtensionsDir } from './openclawLocalExtensions';
+import { findThirdPartyExtensionsDir, listBundledOpenClawExtensionManifests } from './openclawLocalExtensions';
 
 export interface PluginInstallParams {
   source: PluginSource;
@@ -541,5 +541,171 @@ export class PluginManager {
       // ignore
     }
     return null;
+  }
+
+  /**
+   * Detect plugins present in OpenClaw's extensions directory but missing from
+   * the local SQLite store. Returns a read-only list without writing anything.
+   */
+  detectPluginsFromOpenClaw(): { plugins: string[]; error?: string } {
+    const extensionsDir = getExtensionsDir();
+    if (!extensionsDir) {
+      return { plugins: [], error: 'Extensions directory not found' };
+    }
+
+    const hiddenIds = getHiddenPluginIds();
+    const existingPlugins = this.store.listUserPlugins();
+    const existingIds = new Set(existingPlugins.map(p => p.pluginId));
+
+    const plugins: string[] = [];
+
+    try {
+      const entries = fs.readdirSync(extensionsDir, { withFileTypes: true })
+        .filter(e => e.isDirectory());
+
+      for (const entry of entries) {
+        const pluginDir = path.join(extensionsDir, entry.name);
+        const manifest = readPluginManifest(pluginDir);
+        const pluginId = manifest?.id || entry.name;
+
+        if (existingIds.has(pluginId)) continue;
+        if (isHiddenPlugin(pluginId, hiddenIds)) continue;
+
+        plugins.push(pluginId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { plugins, error: message };
+    }
+
+    return { plugins };
+  }
+
+  /**
+   * Sync plugins from OpenClaw's extensions directory into the local SQLite store.
+   * Discovers plugins installed outside of LobsterAI (via AI conversation, CLI, or
+   * OpenClaw Web UI) and adds them to the user_plugins table so they appear in the
+   * plugin management UI.
+   */
+  async syncPluginsFromOpenClaw(): Promise<{ synced: string[]; error?: string }> {
+    const extensionsDir = getExtensionsDir();
+    if (!extensionsDir) {
+      return { synced: [], error: 'Extensions directory not found' };
+    }
+
+    const hiddenIds = getHiddenPluginIds();
+    const existingPlugins = this.store.listUserPlugins();
+    const existingIds = new Set(existingPlugins.map(p => p.pluginId));
+
+    // Read openclaw.json to get enabled state for each plugin
+    const configEntries = readOpenClawConfigEntries();
+
+    const synced: string[] = [];
+
+    try {
+      const entries = fs.readdirSync(extensionsDir, { withFileTypes: true })
+        .filter(e => e.isDirectory());
+
+      for (const entry of entries) {
+        const pluginDir = path.join(extensionsDir, entry.name);
+        const manifest = readPluginManifest(pluginDir);
+        const pluginId = manifest?.id || entry.name;
+
+        // Skip if already in SQLite or if it's a hidden/internal plugin
+        if (existingIds.has(pluginId)) continue;
+        if (isHiddenPlugin(pluginId, hiddenIds)) continue;
+
+        // Determine enabled state from openclaw.json
+        const configEntry = configEntries[pluginId] as { enabled?: boolean } | undefined;
+        const enabled = configEntry?.enabled !== false;
+
+        const version = readPluginVersion(pluginDir);
+
+        this.store.addUserPlugin({
+          pluginId,
+          source: 'openclaw',
+          spec: pluginId,
+          version,
+          enabled,
+          installedAt: Date.now(),
+        });
+
+        synced.push(pluginId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { synced, error: message };
+    }
+
+    if (synced.length > 0) {
+      console.log(`[PluginManager] synced ${synced.length} plugin(s) from OpenClaw: ${synced.join(', ')}`);
+    }
+
+    return { synced };
+  }
+}
+
+/** Plugins that should never appear in the user-managed plugin list. */
+const INTERNAL_PLUGIN_IDS = [
+  'ask-user-question',
+  'memory-core',
+  'qwen-portal-auth',
+  'qqbot',
+  'acpx',
+];
+
+/** Read preinstalled plugin IDs from package.json openclaw.plugins field. */
+function readPreinstalledPluginIdsFromPackageJson(): string[] {
+  try {
+    const pkgPath = path.join(app.getAppPath(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const plugins = pkg.openclaw?.plugins;
+    if (!Array.isArray(plugins)) return [];
+    return plugins
+      .map((p: { id?: string }) => p.id)
+      .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Build the set of plugin IDs that should be hidden from the user. */
+function getHiddenPluginIds(): Set<string> {
+  const hidden = new Set<string>();
+
+  // Preinstalled (IM channel) plugins from package.json
+  for (const id of readPreinstalledPluginIdsFromPackageJson()) {
+    hidden.add(id);
+  }
+
+  // Bundled extensions shipped with the runtime
+  for (const manifest of listBundledOpenClawExtensionManifests()) {
+    hidden.add(manifest.pluginId);
+  }
+
+  // Hardcoded internal plugins
+  for (const id of INTERNAL_PLUGIN_IDS) {
+    hidden.add(id);
+  }
+
+  return hidden;
+}
+
+/** Check if a plugin should be hidden from the user. */
+function isHiddenPlugin(pluginId: string, hiddenIds: Set<string>): boolean {
+  if (hiddenIds.has(pluginId)) return true;
+  // Provider plugins (e.g. @openclaw/anthropic-provider) are internal
+  if (pluginId.startsWith('@openclaw/')) return true;
+  return false;
+}
+
+/** Read plugins.entries from the openclaw.json config file. */
+function readOpenClawConfigEntries(): Record<string, unknown> {
+  try {
+    const configPath = path.join(app.getPath('userData'), 'openclaw', 'state', 'openclaw.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    return (config?.plugins?.entries ?? {}) as Record<string, unknown>;
+  } catch {
+    return {};
   }
 }

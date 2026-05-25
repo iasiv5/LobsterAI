@@ -1284,6 +1284,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsConfigBack: '返回',
     pluginsConfigNoSchema: '此插件没有可配置项',
     pluginsConfigLoadError: '加载配置失败',
+    pluginsSourceOpenclaw: 'OpenClaw',
+    pluginsSyncTitle: '发现新插件',
+    pluginsSyncDesc: '从 OpenClaw 发现并同步插件到管理列表。',
+    pluginsSyncButton: '发现插件',
+    pluginsSyncing: '正在同步插件...',
+    pluginsSyncFound: '检测到 {count} 个可从 OpenClaw 同步的插件：',
+    pluginsSyncNone: '未发现新插件',
+    pluginsSyncNow: '立即同步',
+    pluginsSyncSkip: '暂不同步',
+    pluginsSyncLater: '如果现在不同步，后续可以在「安装插件」页面的 OpenClaw 分类下手动操作。',
 
     // IM Bot
     imBot: 'IM 机器人',
@@ -3435,6 +3445,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsConfigBack: 'Back',
     pluginsConfigNoSchema: 'This plugin has no configurable settings',
     pluginsConfigLoadError: 'Failed to load config',
+    pluginsSourceOpenclaw: 'OpenClaw',
+    pluginsSyncTitle: 'New Plugins Detected',
+    pluginsSyncDesc: 'Discover and sync plugins from OpenClaw.',
+    pluginsSyncButton: 'Discover Plugins',
+    pluginsSyncing: 'Syncing plugins...',
+    pluginsSyncFound: 'Detected {count} plugin(s) available to sync from OpenClaw:',
+    pluginsSyncNone: 'No new plugins found',
+    pluginsSyncNow: 'Sync Now',
+    pluginsSyncSkip: 'Not Now',
+    pluginsSyncLater: 'You can always sync later from the "Install Plugin" dialog under the OpenClaw tab.',
 
     // IM Bot
     imBot: 'IM Bot',
