@@ -18,6 +18,7 @@ const ERROR_RULES: Array<[RegExp, string]> = [
   // Model not found: standard, Qwen, Ollama
   [/model.*not.*(found|exist)/i, 'coworkErrorModelNotFound'],
   // Gateway / connection issues
+  [/gateway request timeout for sessions\.patch/i, 'coworkGatewaySessionSyncTimeout'],
   [/gateway.*disconnect|client disconnected/i, 'coworkErrorGatewayDisconnected'],
   [/service restart/i, 'coworkErrorServiceRestart'],
   [/gateway.*draining|draining.*restart/i, 'coworkErrorGatewayDraining'],

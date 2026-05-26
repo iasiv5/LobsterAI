@@ -994,6 +994,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkErrorInputTooLong: '输入内容过长，超出模型上下文限制，请缩短对话内容后重试。',
     coworkErrorCouldNotProcessPdf: '无法处理 PDF 文件。请尝试将 PDF 转换为文本格式后重新发送。',
     coworkErrorModelNotFound: '请求的模型不存在或不可用，请在设置中检查模型配置。',
+    coworkGatewaySessionSyncTimeout: 'OpenClaw 会话同步超时，消息尚未发送。请稍后重试或重启 OpenClaw Runtime。',
     coworkErrorGatewayDisconnected: 'AI 引擎连接中断，请重试。如果问题持续，请尝试重启应用。',
     coworkErrorServiceRestart: 'AI 引擎正在重启，请稍后重试。',
     coworkErrorGatewayDraining: 'AI 引擎正在重启中，请稍等片刻后重试。',
@@ -3177,6 +3178,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Unable to process the PDF file. Please try converting the PDF to text format and resend.',
     coworkErrorModelNotFound:
       'The requested model does not exist or is unavailable. Please check the model configuration in settings.',
+    coworkGatewaySessionSyncTimeout:
+      'OpenClaw session sync timed out, and the message was not sent. Please retry later or restart OpenClaw Runtime.',
     coworkErrorGatewayDisconnected:
       'AI engine connection lost. Please retry. If the issue persists, try restarting the app.',
     coworkErrorServiceRestart: 'AI engine is restarting. Please try again later.',

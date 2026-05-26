@@ -1,4 +1,5 @@
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import { classifyErrorKey } from './coworkErrorClassify';
 
 const classifyError = (error: string) => classifyErrorKey(error) ?? error;
@@ -113,6 +114,10 @@ test('gateway: disconnect', () => {
 
 test('gateway: client disconnected', () => {
   expect(classifyError('client disconnected')).toBe('coworkErrorGatewayDisconnected');
+});
+
+test('gateway: session patch timeout before send', () => {
+  expect(classifyError('gateway request timeout for sessions.patch')).toBe('coworkGatewaySessionSyncTimeout');
 });
 
 test('gateway: service restart', () => {

@@ -145,6 +145,60 @@ test('context usage resolves historical sessions with targeted lookup', async ()
   expect(requests[0].params).not.toHaveProperty('activeMinutes');
 });
 
+test('context usage coalesces concurrent refreshes for the same session', async () => {
+  const session = {
+    id: 'session-1',
+    title: 'Historical Session',
+    claudeSessionId: null,
+    status: 'completed',
+    pinned: false,
+    cwd: '',
+    systemPrompt: '',
+    modelOverride: '',
+    executionMode: 'local',
+    activeSkillIds: [],
+    agentId: 'main',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let releaseRequest: (() => void) | null = null;
+  const requestBlocked = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+  } as never, {} as never);
+  adapter.gatewayClient = {
+    request: async (method: string, params?: unknown) => {
+      requests.push({ method, params: params as Record<string, unknown> });
+      await requestBlocked;
+      return {
+        sessions: [{
+          key: sessionKey,
+          totalTokens: 42_000,
+          contextTokens: 60_000,
+        }],
+      };
+    },
+  } as never;
+
+  const first = adapter.getContextUsage(session.id);
+  const second = adapter.getContextUsage(session.id);
+  await Promise.resolve();
+
+  expect(requests).toHaveLength(1);
+
+  releaseRequest?.();
+  const [firstUsage, secondUsage] = await Promise.all([first, second]);
+
+  expect(firstUsage?.usedTokens).toBe(42_000);
+  expect(secondUsage?.usedTokens).toBe(42_000);
+  expect(requests).toHaveLength(1);
+});
+
 test('usage metadata falls back to latest assistant when preferred id was replaced', async () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'Hello', timestamp: 1, metadata: {} },
@@ -299,6 +353,7 @@ function createRunTurnAdapter(options: {
   sessionModelOverride?: string;
   agentModel?: string;
   cachedModel?: string;
+  modelPatchError?: Error;
   holdFirstModelPatch?: boolean;
   sessionCwd?: string;
 } = {}) {
@@ -385,6 +440,9 @@ function createRunTurnAdapter(options: {
           firstModelPatchStartedResolve?.();
           await firstModelPatchBlocked;
         }
+        if (options.modelPatchError) {
+          throw options.modelPatchError;
+        }
         return {};
       }
       if (method === 'chat.history') {
@@ -418,7 +476,12 @@ function createRunTurnAdapter(options: {
   adapter.reconcileWithHistory = async () => {};
 
   if (options.cachedModel) {
-    adapter.lastPatchedModelBySession.set(session.id, options.cachedModel);
+    adapter.sessionModelPatchStateBySession.set(session.id, {
+      model: options.cachedModel,
+      sessionKey: 'agent:main:lobsterai:session-1',
+      source: options.sessionModelOverride ? 'sessionOverride' : 'agentModel',
+      confirmedAt: Date.now(),
+    });
   }
 
   return {
@@ -447,6 +510,37 @@ test('continueSession patches a session override before chat.send even when the 
     key: 'agent:main:lobsterai:session-1',
     model,
   });
+});
+
+test('continueSession continues after a redundant session override patch times out', async () => {
+  const model = 'lobsterai-server/qwen3.6-plus-YoudaoInner';
+  const { adapter, requests } = createRunTurnAdapter({
+    sessionModelOverride: model,
+    cachedModel: model,
+    modelPatchError: new Error('gateway request timeout for sessions.patch'),
+  });
+
+  await adapter.continueSession('session-1', 'hello');
+
+  expect(requests.map((request) => request.method).slice(0, 3)).toEqual([
+    'sessions.patch',
+    'chat.history',
+    'chat.send',
+  ]);
+});
+
+test('continueSession rejects an unconfirmed session override patch timeout before chat.send', async () => {
+  const model = 'lobsterai-server/qwen3.6-plus-YoudaoInner';
+  const { adapter, requests } = createRunTurnAdapter({
+    sessionModelOverride: model,
+    modelPatchError: new Error('gateway request timeout for sessions.patch'),
+  });
+  adapter.on('error', () => undefined);
+
+  await expect(adapter.continueSession('session-1', 'hello'))
+    .rejects.toThrow('gateway request timeout for sessions.patch');
+
+  expect(requests.map((request) => request.method)).toEqual(['sessions.patch']);
 });
 
 test('continueSession waits for an in-flight model patch before chat.send', async () => {

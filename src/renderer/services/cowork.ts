@@ -59,6 +59,7 @@ const classifyError = (error: string): string => {
 const CONTEXT_USAGE_REFRESH_DELAY_MS = 800;
 const FINAL_CONTEXT_USAGE_REFRESH_DELAYS_MS = [800, 2500, 6000, 12000] as const;
 const SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS = 1500;
+const CONTEXT_USAGE_REFRESH_BACKOFF_MS = 30_000;
 const MANUAL_CONTEXT_COMPACTION_WATCHDOG_MS = 130_000;
 
 const restoreCurrentAgentDefaultSkills = (): void => {
@@ -80,6 +81,8 @@ class CoworkService {
   private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
   private contextUsageRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private contextUsageInFlight = new Map<string, Promise<CoworkContextUsage | null>>();
+  private contextUsageBackoffUntil = new Map<string, number>();
   private sessionEntryContextUsageRefreshAt = new Map<string, number>();
   private contextCompactionWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -279,6 +282,10 @@ class CoworkService {
     notifyCompaction: boolean,
     delayMs = CONTEXT_USAGE_REFRESH_DELAY_MS,
   ): void {
+    const backoffUntil = this.contextUsageBackoffUntil.get(sessionId) ?? 0;
+    if (backoffUntil > Date.now()) {
+      return;
+    }
     const timerKey = `${sessionId}:${delayMs}`;
     const existing = this.contextUsageRefreshTimers.get(timerKey);
     if (existing) {
@@ -289,6 +296,16 @@ class CoworkService {
       void this.refreshContextUsage(sessionId, { notifyCompaction });
     }, delayMs);
     this.contextUsageRefreshTimers.set(timerKey, timer);
+  }
+
+  private clearContextUsageRefreshTimers(sessionId: string): void {
+    for (const [timerKey, timer] of this.contextUsageRefreshTimers.entries()) {
+      if (!timerKey.startsWith(`${sessionId}:`)) {
+        continue;
+      }
+      clearTimeout(timer);
+      this.contextUsageRefreshTimers.delete(timerKey);
+    }
   }
 
   private scheduleFinalContextUsageRefresh(sessionId: string, notifyCompaction: boolean): void {
@@ -321,17 +338,49 @@ class CoworkService {
   }
 
   async refreshContextUsage(sessionId: string, options: { notifyCompaction?: boolean } = {}): Promise<CoworkContextUsage | null> {
+    const backoffUntil = this.contextUsageBackoffUntil.get(sessionId) ?? 0;
+    if (backoffUntil > Date.now()) {
+      return null;
+    }
+
+    const existing = this.contextUsageInFlight.get(sessionId);
+    if (existing) {
+      const usage = await existing;
+      if (usage && options.notifyCompaction === true) {
+        this.handleContextUsageUpdate(usage, true);
+      }
+      return usage;
+    }
+
+    let request: Promise<CoworkContextUsage | null>;
+    request = this.performContextUsageRefresh(sessionId, options.notifyCompaction === true).finally(() => {
+      if (this.contextUsageInFlight.get(sessionId) === request) {
+        this.contextUsageInFlight.delete(sessionId);
+      }
+    });
+    this.contextUsageInFlight.set(sessionId, request);
+    return request;
+  }
+
+  private async performContextUsageRefresh(sessionId: string, notifyCompaction: boolean): Promise<CoworkContextUsage | null> {
     const cowork = window.electron?.cowork;
     if (!cowork?.getContextUsage) return null;
 
     try {
       const result = await cowork.getContextUsage(sessionId);
       if (result?.success && result.usage) {
-        this.handleContextUsageUpdate(result.usage, options.notifyCompaction === true);
+        this.contextUsageBackoffUntil.delete(sessionId);
+        this.handleContextUsageUpdate(result.usage, notifyCompaction);
         return result.usage;
+      }
+      if (result && !result.success) {
+        this.contextUsageBackoffUntil.set(sessionId, Date.now() + CONTEXT_USAGE_REFRESH_BACKOFF_MS);
+        this.clearContextUsageRefreshTimers(sessionId);
       }
     } catch (error) {
       console.warn('[CoworkService] context usage refresh failed:', error);
+      this.contextUsageBackoffUntil.set(sessionId, Date.now() + CONTEXT_USAGE_REFRESH_BACKOFF_MS);
+      this.clearContextUsageRefreshTimers(sessionId);
     }
     return null;
   }
@@ -445,6 +494,8 @@ class CoworkService {
     this.openClawEngineListenerAttached = false;
     this.contextUsageRefreshTimers.forEach(timer => clearTimeout(timer));
     this.contextUsageRefreshTimers.clear();
+    this.contextUsageInFlight.clear();
+    this.contextUsageBackoffUntil.clear();
   }
 
   async loadSessions(agentId?: string): Promise<void> {
