@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
@@ -17,7 +18,7 @@ export function refreshEndpointsTestMode(store: SqliteStore): void {
  * Whether the app is in test mode.
  * Uses cached value after init; falls back to !app.isPackaged before init.
  */
-const isTestMode = (): boolean => {
+export const isTestModeEnabled = (): boolean => {
   return cachedTestMode ?? !app.isPackaged;
 };
 
@@ -26,31 +27,35 @@ const isTestMode = (): boolean => {
  * Used for auth exchange/refresh, models, proxy, etc.
  */
 export const getServerApiBaseUrl = (): string => {
-  return isTestMode()
+  return isTestModeEnabled()
     ? 'https://lobsterai-server.inner.youdao.com'
     : 'https://lobsterai-server.youdao.com';
 };
 
+export const getHtmlSharePublicBaseUrl = (): string => {
+  return `${getServerApiBaseUrl()}${HtmlSharePublicRoute.Root}`;
+};
+
 export const getUpdateCheckUrl = (): string => (
-  isTestMode()
+  isTestModeEnabled()
     ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
     : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update'
 );
 
 export const getManualUpdateCheckUrl = (): string => (
-  isTestMode()
+  isTestModeEnabled()
     ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update-manual'
     : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update-manual'
 );
 
 export const getFallbackDownloadUrl = (): string => (
-  isTestMode()
+  isTestModeEnabled()
     ? 'https://lobsterai.inner.youdao.com/#/download-list'
     : 'https://lobsterai.youdao.com/#/download-list'
 );
 
 export const getSkillStoreUrl = (): string => (
-  isTestMode()
+  isTestModeEnabled()
     ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'
     : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/skill-store'
 );

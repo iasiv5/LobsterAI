@@ -1,11 +1,9 @@
+import { CheckIcon } from '@heroicons/react/24/outline';
 import Lottie from 'lottie-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { CheckIcon } from '@heroicons/react/24/outline';
 
-import mediaGenAnimation from '../icons/MediaGenIcon.json';
-import MagicIcon from '../icons/MagicIcon';
 import { getProviderIcon } from '../../providers/uiRegistry';
 import { authService } from '../../services/auth';
 import { i18nService } from '../../services/i18n';
@@ -13,6 +11,8 @@ import { localStore } from '../../services/store';
 import { RootState } from '../../store';
 import { setMediaModels, setMediaSelection } from '../../store/slices/coworkSlice';
 import type { MediaGenerationMode, MediaModel } from '../../types/mediaGeneration';
+import MagicIcon from '../icons/MagicIcon';
+import mediaGenAnimation from '../icons/MediaGenIcon.json';
 
 interface SavedMediaSelection {
   image?: { modelId: string; modelName: string };
@@ -400,8 +400,6 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled 
   };
 
   const currentModels = activeTab === 'image' ? mediaModels.image : mediaModels.video;
-
-  const isMediaActive = selection != null && selection.mode !== 'none';
 
   const triggerIcon = (
     <MagicIcon className="h-5 w-5" />

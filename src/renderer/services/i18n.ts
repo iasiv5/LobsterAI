@@ -359,6 +359,37 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactOpenInBrowser: '在浏览器中打开',
     artifactCopyCode: '复制代码',
     artifactRefresh: '刷新',
+    htmlShare: '分享',
+    htmlShareScanning: '正在扫描...',
+    htmlSharePacking: '正在打包...',
+    htmlShareUploading: '正在分享...',
+    htmlShareSuccess: '分享成功',
+    htmlShareSuccessMessage: '链接已复制到剪贴板。',
+    htmlShareFailed: '分享失败',
+    htmlShareCreateDialogTitle: '创建分享',
+    htmlShareCreate: '创建分享',
+    htmlShareManageDialogTitle: '分享设置',
+    htmlShareExistingShareMessage: '此文件已分享。更新后原链接保持不变。',
+    htmlShareUpdate: '更新',
+    htmlShareUpdated: '分享已更新',
+    htmlShareUpdatedMessage: '原分享链接已更新，链接已复制到剪贴板。',
+    htmlShareAccessModeCode: '分享码',
+    htmlShareAccessModeCodeDescription: '访问者打开链接后，需要输入分享码才能查看。',
+    htmlShareAccessModePublic: '公开',
+    htmlShareAccessModePublicDescription: '任何获得链接的人都可以直接查看。',
+    htmlShareLink: '分享链接',
+    htmlShareCode: '分享码',
+    htmlShareCopyLink: '复制链接',
+    htmlShareCopyLinkAndCode: '复制链接和分享码',
+    htmlShareOpenLink: '打开链接',
+    htmlShareCodeUnavailable: '旧分享码无法再次显示。切换模式或更新后会生成新的分享码。',
+    htmlShareLoginRequiredTitle: '登录并订阅后即可分享页面',
+    htmlShareLoginRequiredMessage: 'HTML 分享是订阅用户功能。请登录后开通订阅。',
+    htmlShareSubscriptionRequiredTitle: '开通订阅后即可分享页面',
+    htmlShareSubscriptionRequiredMessage:
+      'HTML 分享需要有效订阅。开通后即可生成外网可访问的分享链接。',
+    htmlShareOpenSubscription: '去订阅',
+    htmlShareUnavailableInProduction: 'HTML 分享功能仅在测试模式可用。',
     artifactCloseTab: '关闭标签页',
     artifactAddTab: '添加标签页',
     artifactOpenFileTab: '打开文件',
@@ -380,8 +411,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactBrowserAnnotationLabelSize: '尺寸',
     artifactBrowserAnnotationLabelColor: '颜色',
     artifactBrowserAnnotationLabelFont: '字体',
-    artifactBrowserAnnotationPromptTitle: '请根据浏览器截图中被蓝色矩形边框高亮的区域处理以下注释：',
-    artifactBrowserAnnotationPromptTarget: '蓝色矩形框表示用户当前标注的页面元素或区域。请优先分析蓝框内的内容，并结合周围页面上下文判断用户意图。',
+    artifactBrowserAnnotationPromptTitle:
+      '请根据浏览器截图中被蓝色矩形边框高亮的区域处理以下注释：',
+    artifactBrowserAnnotationPromptTarget:
+      '蓝色矩形框表示用户当前标注的页面元素或区域。请优先分析蓝框内的内容，并结合周围页面上下文判断用户意图。',
     artifactBrowserAnnotationPromptScreenshot: '截图尺寸',
     artifactBrowserAnnotationPromptArea: '标注区域',
     artifactBrowserAnnotationPromptPage: '页面',
@@ -502,9 +535,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkAgentEngine: 'Agent 引擎',
     coworkAgentEngineOpenClaw: 'OpenClaw（默认）',
     coworkAgentEngineOpenClawHint: '个人 AI 助理',
-    settingsSavedButOpenClawSyncFailed: '设置已保存，但应用到 OpenClaw 运行环境失败。请重试保存，或重启 OpenClaw 后再试。',
+    settingsSavedButOpenClawSyncFailed:
+      '设置已保存，但应用到 OpenClaw 运行环境失败。请重试保存，或重启 OpenClaw 后再试。',
     openClawSessionKeepAlive: '会话保持时长',
-    openClawSessionKeepAliveHint: '决定一段对话在连续空闲多久后会被视为新的会话。只要间隔没有超过这个时间，就会继续沿用原来的上下文。设置得更长可以保留更多上下文，但也可能增加 token 消耗。',
+    openClawSessionKeepAliveHint:
+      '决定一段对话在连续空闲多久后会被视为新的会话。只要间隔没有超过这个时间，就会继续沿用原来的上下文。设置得更长可以保留更多上下文，但也可能增加 token 消耗。',
     openClawSessionKeepAliveOneDay: '24小时',
     openClawSessionKeepAliveSevenDays: '7天',
     openClawSessionKeepAliveThirtyDays: '30天（推荐）',
@@ -610,11 +645,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkMemoryEmbeddingProviderMistral: 'Mistral',
     coworkMemoryEmbeddingProviderOllama: 'Ollama',
     coworkMemoryEmbeddingRemoteBaseUrl: 'API Base URL',
-    coworkMemoryEmbeddingRemoteBaseUrlHint: '填写到域名/版本号即可，无需包含 /embeddings 路径。例如 https://api.openai.com/v1',
+    coworkMemoryEmbeddingRemoteBaseUrlHint:
+      '填写到域名/版本号即可，无需包含 /embeddings 路径。例如 https://api.openai.com/v1',
     coworkMemoryEmbeddingRemoteApiKey: 'API Key',
     coworkMemoryEmbeddingRemoteApiKeyHint: '用于远程 embedding 服务的 API 密钥',
     coworkMemoryDreamingEnabled: '启用 Dreaming 记忆整理',
-    coworkMemoryDreamingEnabledHint: '后台定时运行记忆整合，将高价值条目提升为永久记忆，并生成 Dream Diary',
+    coworkMemoryDreamingEnabledHint:
+      '后台定时运行记忆整合，将高价值条目提升为永久记忆，并生成 Dream Diary',
     coworkMemoryDreamingFrequency: '运行频率',
     coworkMemoryDreamingFrequencyHint: '设置 Dreaming 的定时计划',
     coworkMemoryDreamingFreqNightly3am: '每晚凌晨 3 点',
@@ -641,7 +678,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDreamingSwitchOn: '已开启',
     coworkDreamingSwitchOff: '已关闭',
     coworkDreamingInsightBrewing: '正在培育初现的洞见...',
-    coworkDreamingInsightMessages: '正在重新整理记忆阁楼...，正在轻轻索引这一天...，正在培育出现的洞见...，正在酝酿尚未成形的想法...，正在整合记忆...，正在向向量存储轻声低语...，正在整合记忆...，正在整理知识图谱...，正在重放今天的对话...，正在将短期记忆编织进长期记忆...，正在整理心智宫殿的碎片...，正在归档零散思绪...，正在连接遥远的线索...，正在将旧上下文窗口化作养分...，正在为潜意识按字母排序...，正在提升有希望的直觉...，正在遗忘无关紧要的噪音...',
+    coworkDreamingInsightMessages:
+      '正在重新整理记忆阁楼...，正在轻轻索引这一天...，正在培育出现的洞见...，正在酝酿尚未成形的想法...，正在整合记忆...，正在向向量存储轻声低语...，正在整合记忆...，正在整理知识图谱...，正在重放今天的对话...，正在将短期记忆编织进长期记忆...，正在整理心智宫殿的碎片...，正在归档零散思绪...，正在连接遥远的线索...，正在将旧上下文窗口化作养分...，正在为潜意识按字母排序...，正在提升有希望的直觉...，正在遗忘无关紧要的噪音...',
     coworkDreamingSettingsTitle: '运行设置',
     coworkDreamingContentTitle: '梦境内容',
     coworkDreamingStatusActive: '运行中',
@@ -862,7 +900,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     agentDefaultWorkingDirectory: 'Agent 默认工作目录',
     agentDefaultWorkingDirectoryHint: '新建会话默认在此目录执行',
     agentModelInvalidHint: '当前模型已不可用，请重新选择',
-    agentSystemPromptPlaceholder: '定义这个 Agent 的角色、工作方式和回答风格，例如：你是专业的办公文档助理，擅长起草报告、润色邮件、整理表格要点，并保持格式清晰。',
+    agentSystemPromptPlaceholder:
+      '定义这个 Agent 的角色、工作方式和回答风格，例如：你是专业的办公文档助理，擅长起草报告、润色邮件、整理表格要点，并保持格式清晰。',
     agentSkills: '技能',
     agentSkillsHint: '选择该 Agent 可使用的技能。不选则使用所有已启用技能。',
     agentSkillsSearch: '搜索技能...',
@@ -930,7 +969,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPreparingEnvironment: '准备环境中，请稍候',
     coworkAddFile: '添加文件',
     voiceInput: '语音输入',
-    voiceInputPermissionDenied: '语音输入需要辅助功能权限，请前往 系统设置 → 隐私与安全性 → 辅助功能 中开启，开启后需重启应用',
+    voiceInputPermissionDenied:
+      '语音输入需要辅助功能权限，请前往 系统设置 → 隐私与安全性 → 辅助功能 中开启，开启后需重启应用',
     voiceInputFailed: '语音输入启动失败，请检查系统听写是否已开启后重试',
     coworkDropFileHint: '拖拽文件到此处，或直接粘贴文件',
     coworkAddImage: '添加图片',
@@ -1595,8 +1635,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     dingtalkBotCreateWizardScanBtn: '扫码配置机器人',
     dingtalkBotCreateWizardScanHint: '使用钉钉客户端扫描二维码，一键创建并配置机器人',
     dingtalkBotCreateWizardOrManual: '或 手动填写机器人凭证',
-    dingtalkBotCreateWizardQrcodeDesc:
-      '使用钉钉客户端扫描二维码，完成机器人创建与授权。',
+    dingtalkBotCreateWizardQrcodeDesc: '使用钉钉客户端扫描二维码，完成机器人创建与授权。',
     dingtalkBotCreateWizardQrcodeExpired: '二维码已过期，请点击重新扫码',
     dingtalkBotCreateWizardSuccessTitle: '已获取配置，保存后生效',
     dingtalkBotCreateWizardGenerating: '正在生成二维码…',
@@ -1634,7 +1673,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinQrSuccess: '已获取配置，保存后生效',
     imWeixinQrFailed: '连接失败',
     imWeixinQrExpired: '二维码已过期，请重新获取',
-    imWeixinQrAccountMissing: '微信已连接过此 OpenClaw，但未找到本地账号 ID。请重新加载状态后再试。',
+    imWeixinQrAccountMissing:
+      '微信已连接过此 OpenClaw，但未找到本地账号 ID。请重新加载状态后再试。',
     imPopoCredentialHint: '从 POPO 开发者后台获取 AppKey、AppSecret 和 AES Key',
     imPopoGuideStep1: '点击「扫码绑定 POPO 机器人」或手动填写凭证',
     imPopoGuideStep2: '使用 POPO 扫描二维码完成机器人绑定',
@@ -1768,27 +1808,32 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksTemplateNew: '新建',
     scheduledTasksTemplateEmpty: '暂无可用模板',
     scheduledTasksTemplateTechBriefingTitle: '科技早报',
-    scheduledTasksTemplateTechBriefingDesc: '工作日早晨汇总科技、AI 和产品动态，筛出适合办公人群快速浏览的重点。',
+    scheduledTasksTemplateTechBriefingDesc:
+      '工作日早晨汇总科技、AI 和产品动态，筛出适合办公人群快速浏览的重点。',
     scheduledTasksTemplateTechBriefingSchedule: '工作日 08:30',
     scheduledTasksTemplateTechBriefingPrompt:
       '请收集并总结过去 24 小时的科技、AI 与产品动态，筛选 5-8 条与办公、研发和产品人群相关的重点。每条包含事件、影响、可跟进行动，并在结尾列出今天值得关注的关键词。',
     scheduledTasksTemplateWorkdayWrapTitle: '每日工作收尾',
-    scheduledTasksTemplateWorkdayWrapDesc: '下班前整理当天进展、风险和明日待办，适合个人复盘或团队同步。',
+    scheduledTasksTemplateWorkdayWrapDesc:
+      '下班前整理当天进展、风险和明日待办，适合个人复盘或团队同步。',
     scheduledTasksTemplateWorkdayWrapSchedule: '工作日 18:00',
     scheduledTasksTemplateWorkdayWrapPrompt:
       '请整理今天的工作收尾摘要，按「已完成」「进行中」「遇到的问题」「明日待办」输出。内容要简洁、可执行，并提醒我哪些事项需要提前同步给同事。',
     scheduledTasksTemplateMeetingPrepTitle: '会议准备',
-    scheduledTasksTemplateMeetingPrepDesc: '每天开始前梳理会议目标、待确认问题和需要提前准备的材料。',
+    scheduledTasksTemplateMeetingPrepDesc:
+      '每天开始前梳理会议目标、待确认问题和需要提前准备的材料。',
     scheduledTasksTemplateMeetingPrepSchedule: '工作日 08:45',
     scheduledTasksTemplateMeetingPrepPrompt:
       '请基于可访问的日程、待办或工作记录，为今天的会议和重点事项做准备。列出每个会议的目标、需要提前看的材料、待确认问题，以及会后应跟进的动作。',
     scheduledTasksTemplateWeeklyReportTitle: '周报草稿',
-    scheduledTasksTemplateWeeklyReportDesc: '每周五生成一份结构化周报草稿，减少临下班补材料的成本。',
+    scheduledTasksTemplateWeeklyReportDesc:
+      '每周五生成一份结构化周报草稿，减少临下班补材料的成本。',
     scheduledTasksTemplateWeeklyReportSchedule: '周五 17:30',
     scheduledTasksTemplateWeeklyReportPrompt:
       '请整理本周工作周报草稿，包含本周完成、关键进展、数据或结果、问题与风险、下周计划。请用适合直接发给主管或团队的语气输出。',
     scheduledTasksTemplateProjectHealthTitle: '项目健康巡检',
-    scheduledTasksTemplateProjectHealthDesc: '定期检查项目状态、近期变更和潜在风险，适合研发或运营项目。',
+    scheduledTasksTemplateProjectHealthDesc:
+      '定期检查项目状态、近期变更和潜在风险，适合研发或运营项目。',
     scheduledTasksTemplateProjectHealthSchedule: '每天 10:00',
     scheduledTasksTemplateProjectHealthPrompt:
       '请检查当前项目的健康状态，关注最近变更、测试或构建状态、明显的 TODO/风险点和可改进项。请给出简短巡检报告，并把需要人工处理的事项列为清单。',
@@ -2313,8 +2358,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'When enabled, uses the Baidu Qianfan Coding Plan dedicated API endpoint',
     qianfanCodingPlanEndpointHint:
       'When using Coding Plan, the system will automatically switch to the dedicated Coding endpoint',
-    xiaomiCodingPlanHint:
-      'When enabled, uses the Xiaomi Coding Plan dedicated API endpoint',
+    xiaomiCodingPlanHint: 'When enabled, uses the Xiaomi Coding Plan dedicated API endpoint',
     xiaomiCodingPlanEndpointHint:
       'When using Coding Plan, the system will automatically switch to the dedicated Coding endpoint',
     minimaxOAuthTabApiKey: 'API Key',
@@ -2534,6 +2578,38 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactOpenInBrowser: 'Open in Browser',
     artifactCopyCode: 'Copy Code',
     artifactRefresh: 'Refresh',
+    htmlShare: 'Share',
+    htmlShareScanning: 'Scanning...',
+    htmlSharePacking: 'Packing...',
+    htmlShareUploading: 'Sharing...',
+    htmlShareSuccess: 'Share created',
+    htmlShareSuccessMessage: 'The link has been copied to the clipboard.',
+    htmlShareFailed: 'Share failed',
+    htmlShareCreateDialogTitle: 'Create share',
+    htmlShareCreate: 'Create share',
+    htmlShareManageDialogTitle: 'Share settings',
+    htmlShareExistingShareMessage: 'This file is already shared. Updating keeps the same link.',
+    htmlShareUpdate: 'Update',
+    htmlShareUpdated: 'Share updated',
+    htmlShareUpdatedMessage: 'The existing share link has been updated and copied to the clipboard.',
+    htmlShareAccessModeCode: 'Share code',
+    htmlShareAccessModeCodeDescription: 'Visitors must enter a share code before viewing.',
+    htmlShareAccessModePublic: 'Public',
+    htmlShareAccessModePublicDescription: 'Anyone with the link can view directly.',
+    htmlShareLink: 'Share link',
+    htmlShareCode: 'Share code',
+    htmlShareCopyLink: 'Copy link',
+    htmlShareCopyLinkAndCode: 'Copy link and code',
+    htmlShareOpenLink: 'Open link',
+    htmlShareCodeUnavailable: 'The legacy share code cannot be shown again. Change the mode or update to generate a new code.',
+    htmlShareLoginRequiredTitle: 'Log in and subscribe to share pages',
+    htmlShareLoginRequiredMessage:
+      'HTML sharing is available to subscribers. Log in and subscribe to continue.',
+    htmlShareSubscriptionRequiredTitle: 'Subscribe to share pages',
+    htmlShareSubscriptionRequiredMessage:
+      'HTML sharing requires an active subscription. After subscribing, you can create a public share link.',
+    htmlShareOpenSubscription: 'View subscription',
+    htmlShareUnavailableInProduction: 'HTML sharing is only available in test mode.',
     artifactCloseTab: 'Close tab',
     artifactAddTab: 'Add tab',
     artifactOpenFileTab: 'Open file',
@@ -2555,8 +2631,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactBrowserAnnotationLabelSize: 'Size',
     artifactBrowserAnnotationLabelColor: 'Color',
     artifactBrowserAnnotationLabelFont: 'Font',
-    artifactBrowserAnnotationPromptTitle: 'Please handle the note for the area highlighted by the blue rectangle border in the browser screenshot:',
-    artifactBrowserAnnotationPromptTarget: 'The blue rectangle marks the page element or area currently annotated by the user. Prioritize the content inside the blue box and use surrounding page context to infer intent.',
+    artifactBrowserAnnotationPromptTitle:
+      'Please handle the note for the area highlighted by the blue rectangle border in the browser screenshot:',
+    artifactBrowserAnnotationPromptTarget:
+      'The blue rectangle marks the page element or area currently annotated by the user. Prioritize the content inside the blue box and use surrounding page context to infer intent.',
     artifactBrowserAnnotationPromptScreenshot: 'Screenshot size',
     artifactBrowserAnnotationPromptArea: 'Annotation area',
     artifactBrowserAnnotationPromptPage: 'Page',
@@ -2678,9 +2756,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkAgentEngine: 'Agent Engine',
     coworkAgentEngineOpenClaw: 'OpenClaw (Default)',
     coworkAgentEngineOpenClawHint: 'Personal AI assistant',
-    settingsSavedButOpenClawSyncFailed: 'Settings were saved locally, but applying them to the running OpenClaw environment failed. Please save again or restart OpenClaw.',
+    settingsSavedButOpenClawSyncFailed:
+      'Settings were saved locally, but applying them to the running OpenClaw environment failed. Please save again or restart OpenClaw.',
     openClawSessionKeepAlive: 'Session continuity',
-    openClawSessionKeepAliveHint: 'Determines how long a conversation can stay continuously idle before it is treated as a new session. As long as the gap does not exceed this duration, the existing context will continue to be used. Longer durations preserve more context, but may also increase token usage.',
+    openClawSessionKeepAliveHint:
+      'Determines how long a conversation can stay continuously idle before it is treated as a new session. As long as the gap does not exceed this duration, the existing context will continue to be used. Longer durations preserve more context, but may also increase token usage.',
     openClawSessionKeepAliveOneDay: '24 hours',
     openClawSessionKeepAliveSevenDays: '7 days',
     openClawSessionKeepAliveThirtyDays: '30 days (Recommended)',
@@ -2795,11 +2875,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkMemoryEmbeddingProviderMistral: 'Mistral',
     coworkMemoryEmbeddingProviderOllama: 'Ollama',
     coworkMemoryEmbeddingRemoteBaseUrl: 'API Base URL',
-    coworkMemoryEmbeddingRemoteBaseUrlHint: 'Base URL only — do not include /embeddings path. e.g. https://api.openai.com/v1',
+    coworkMemoryEmbeddingRemoteBaseUrlHint:
+      'Base URL only — do not include /embeddings path. e.g. https://api.openai.com/v1',
     coworkMemoryEmbeddingRemoteApiKey: 'API Key',
     coworkMemoryEmbeddingRemoteApiKeyHint: 'API key for the remote embedding service',
     coworkMemoryDreamingEnabled: 'Enable Dreaming memory consolidation',
-    coworkMemoryDreamingEnabledHint: 'Run background memory consolidation on a schedule, promoting high-value entries to permanent memory and generating a Dream Diary',
+    coworkMemoryDreamingEnabledHint:
+      'Run background memory consolidation on a schedule, promoting high-value entries to permanent memory and generating a Dream Diary',
     coworkMemoryDreamingFrequency: 'Schedule',
     coworkMemoryDreamingFrequencyHint: 'Set the cron schedule for Dreaming runs',
     coworkMemoryDreamingFreqNightly3am: 'Every night at 3 AM',
@@ -2812,7 +2894,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkMemoryDreamingTimezone: 'Timezone',
     coworkMemoryDreamingTimezoneHint: 'Leave empty to use your local timezone',
     coworkMemoryDreamingModel: 'Dream Diary model',
-    coworkMemoryDreamingModelHint: 'Optional. Override the model used for Dream Diary generation. Leave empty to use the primary model.',
+    coworkMemoryDreamingModelHint:
+      'Optional. Override the model used for Dream Diary generation. Leave empty to use the primary model.',
     // Memory tab names
     coworkMemoryTabEntries: 'Memory Entries',
     coworkMemoryTabEmbedding: 'Embedding Search',
@@ -2826,7 +2909,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDreamingSwitchOn: 'On',
     coworkDreamingSwitchOff: 'Off',
     coworkDreamingInsightBrewing: 'Cultivating emerging insights...',
-    coworkDreamingInsightMessages: 'Rearranging the memory attic...,Gently indexing the day...,Cultivating emerging insights...,Brewing unformed ideas...,Consolidating memory...,Whispering softly to the vector store...,Consolidating memory...,Organizing the knowledge graph...,Replaying today\'s conversations...,Weaving short-term memory into long-term memory...,Sorting fragments of the mind palace...,Archiving scattered thoughts...,Connecting distant clues...,Turning old context windows into nutrients...,Alphabetizing the subconscious...,Promoting promising intuitions...,Forgetting irrelevant noise...',
+    coworkDreamingInsightMessages:
+      "Rearranging the memory attic...,Gently indexing the day...,Cultivating emerging insights...,Brewing unformed ideas...,Consolidating memory...,Whispering softly to the vector store...,Consolidating memory...,Organizing the knowledge graph...,Replaying today's conversations...,Weaving short-term memory into long-term memory...,Sorting fragments of the mind palace...,Archiving scattered thoughts...,Connecting distant clues...,Turning old context windows into nutrients...,Alphabetizing the subconscious...,Promoting promising intuitions...,Forgetting irrelevant noise...",
     coworkDreamingSettingsTitle: 'Run Settings',
     coworkDreamingContentTitle: 'Dream Content',
     coworkDreamingStatusActive: 'Active',
@@ -2838,13 +2922,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkDreamingPhaseRem: 'REM',
     coworkDreamingPhaseOff: 'Off',
     coworkDreamingDiaryTitle: 'Dream Diary',
-    coworkDreamingDiaryHint: 'Raw dream diary written while replaying and consolidating memory; inspect what the memory system is noticing',
+    coworkDreamingDiaryHint:
+      'Raw dream diary written while replaying and consolidating memory; inspect what the memory system is noticing',
     coworkDreamingDiaryEmpty: 'No dream diary yet',
-    coworkDreamingDiaryEmptyHint: 'Once Dreaming is enabled, the system will generate dream diary entries in the background',
+    coworkDreamingDiaryEmptyHint:
+      'Once Dreaming is enabled, the system will generate dream diary entries in the background',
     coworkDreamingDiaryRefresh: 'Refresh',
     coworkDreamingDiaryRefreshing: 'Refreshing...',
     coworkDreamingAdvancedTitle: 'Daily Memory Signals',
-    coworkDreamingAdvancedHint: 'Inspect grounded replay signals, waiting short-term entries, and today\'s promoted entries',
+    coworkDreamingAdvancedHint:
+      "Inspect grounded replay signals, waiting short-term entries, and today's promoted entries",
     coworkDreamingAdvancedGroundedTitle: 'Grounded Signals',
     coworkDreamingAdvancedGroundedDesc: 'Short-term entries from daily log replays',
     coworkDreamingAdvancedGroundedEmpty: 'No grounded signals yet',
@@ -3052,7 +3139,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     agentDefaultWorkingDirectoryHint: 'New sessions run in this directory by default',
     agentModelInvalidHint: 'Model unavailable. Please select another',
     agentSystemPromptPlaceholder:
-      'Define this Agent\'s role, workflow, and response style. Example: you are a professional office document assistant who drafts reports, polishes emails, summarizes spreadsheet highlights, and keeps formatting clear.',
+      "Define this Agent's role, workflow, and response style. Example: you are a professional office document assistant who drafts reports, polishes emails, summarizes spreadsheet highlights, and keeps formatting clear.",
     agentSkills: 'Skills',
     agentSkillsHint:
       'Select skills available to this Agent. Leave empty to use all enabled skills.',
@@ -3124,8 +3211,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkPreparingEnvironment: 'Preparing environment, please wait',
     coworkAddFile: 'Add File',
     voiceInput: 'Voice input',
-    voiceInputPermissionDenied: 'Voice input requires Accessibility permission. Please enable it in System Settings → Privacy & Security → Accessibility, then restart the app',
-    voiceInputFailed: 'Failed to start voice input. Please check that system dictation is enabled, then try again',
+    voiceInputPermissionDenied:
+      'Voice input requires Accessibility permission. Please enable it in System Settings → Privacy & Security → Accessibility, then restart the app',
+    voiceInputFailed:
+      'Failed to start voice input. Please check that system dictation is enabled, then try again',
     coworkDropFileHint: 'Drop files here, or paste files directly',
     coworkAddImage: 'Add Image',
     coworkInputFileLabel: 'Input file',
@@ -3177,7 +3266,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkContextCompactConfirm: 'Compact context for the current session?',
     coworkContextCompactConfirmAction: 'Start compaction',
     coworkContextCompactConfirmActionShort: 'Compact',
-    coworkContextCompactBlockedRunning: 'The current task is still running. Compact context after it finishes.',
+    coworkContextCompactBlockedRunning:
+      'The current task is still running. Compact context after it finishes.',
     coworkContextCompacting: 'Context compaction in progress',
     coworkContextCompactingSendBlocked: 'Context compaction is running. Please try again shortly.',
     coworkContextAutoCompacted: 'Context compaction completed',
@@ -3679,7 +3769,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imNimQrLoginHintPrefix: 'Use',
     imNimQrLoginHintSuffix: 'to scan the QR code and create a bot.',
     imNimQrGenerating: 'Generating QR code...',
-    imNimQrScanPromptPrefix: 'Scan the QR code below with the NetEase IM client to finish binding. If it is not installed, download ',
+    imNimQrScanPromptPrefix:
+      'Scan the QR code below with the NetEase IM client to finish binding. If it is not installed, download ',
     imNimQrDemoLink: 'NetEase IM',
     imNimQrScanPromptSuffix: ' first.',
     imNimQrExpiresIn: 'QR code expires in {seconds}s',
@@ -3690,9 +3781,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imNimQrFailed: 'QR login failed',
     imNimQrFailedWithCode: 'QR login failed (code: {code})',
     imNimQrOrManual: 'or manually enter / edit existing bot credentials',
-    imNimQrUnsupported: 'QR login is not supported in this environment. Please enter credentials manually.',
+    imNimQrUnsupported:
+      'QR login is not supported in this environment. Please enter credentials manually.',
     imNimDownloadModalTitle: 'Download NetEase IM',
-    imNimDownloadModalDesc: 'Choose a platform and scan the matching QR code with your phone to download the client.',
+    imNimDownloadModalDesc:
+      'Choose a platform and scan the matching QR code with your phone to download the client.',
     imNimDownloadPlatformAndroid: 'Android',
     imNimDownloadPlatformIos: 'iOS',
     imNimDownloadModalHint: 'Scan this QR code with your {platform} device to download NetEase IM.',
@@ -3864,7 +3957,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinQrSuccess: 'Configuration received. Save to apply.',
     imWeixinQrFailed: 'Connection failed',
     imWeixinQrExpired: 'QR code expired, please try again',
-    imWeixinQrAccountMissing: 'WeChat is already connected to this OpenClaw, but no local account ID was found. Refresh status and try again.',
+    imWeixinQrAccountMissing:
+      'WeChat is already connected to this OpenClaw, but no local account ID was found. Refresh status and try again.',
     imPopoCredentialHint: 'Get AppKey, AppSecret and AES Key from the POPO Developer Portal',
     imPopoGuideStep1: 'Click "Scan to Bind POPO Bot" or enter credentials manually',
     imPopoGuideStep2: 'Scan the QR code with POPO to bind the bot',
@@ -3984,7 +4078,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserWebFetchAllowFakeIp: 'Allow fake-IP proxy range',
     browserWebFetchAllowFakeIpDescription: 'Only enable this when using proxy setups such as Clash TUN or Surge.',
     sqliteAutoBackupEnabled: 'Enable Auto Backup and Recovery',
-    sqliteAutoBackupEnabledDescription: 'When enabled, the app automatically backs up data and tries to restore corrupted data on startup',
+    sqliteAutoBackupEnabledDescription:
+      'When enabled, the app automatically backs up data and tries to restore corrupted data on startup',
     preventSleep: 'Prevent Sleep',
     preventSleepDescription: 'Prevent the system from sleeping while the app is running',
     skipMissedJobs: 'Skip Missed Scheduled Jobs',
@@ -3996,7 +4091,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksTitle: 'Scheduled Tasks',
     scheduledTasksNewTask: 'New Task',
     scheduledTasksTemplateTitle: 'Scheduled Task Templates',
-    scheduledTasksTemplateSubtitle: 'Pick a common office automation scenario to prefill the plan and prompt',
+    scheduledTasksTemplateSubtitle:
+      'Pick a common office automation scenario to prefill the plan and prompt',
     scheduledTasksTemplateUse: 'Use template',
     scheduledTasksTemplateNew: 'New',
     scheduledTasksTemplateEmpty: 'No templates available',
@@ -4011,19 +4107,19 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Review daily progress, risks, and tomorrow tasks before the end of each workday.',
     scheduledTasksTemplateWorkdayWrapSchedule: 'Weekdays 18:00',
     scheduledTasksTemplateWorkdayWrapPrompt:
-      'Prepare today\'s work wrap-up with sections for completed items, in-progress work, blockers, and tomorrow\'s to-do list. Keep it concise and actionable, and call out items that should be synced with teammates.',
+      "Prepare today's work wrap-up with sections for completed items, in-progress work, blockers, and tomorrow's to-do list. Keep it concise and actionable, and call out items that should be synced with teammates.",
     scheduledTasksTemplateMeetingPrepTitle: 'Meeting Prep',
     scheduledTasksTemplateMeetingPrepDesc:
       'Prepare goals, open questions, and materials before the day starts.',
     scheduledTasksTemplateMeetingPrepSchedule: 'Weekdays 08:45',
     scheduledTasksTemplateMeetingPrepPrompt:
-      'Use accessible calendar, task, or work records to prepare for today\'s meetings and priorities. List each meeting\'s goal, materials to review, questions to confirm, and follow-up actions to track afterward.',
+      "Use accessible calendar, task, or work records to prepare for today's meetings and priorities. List each meeting's goal, materials to review, questions to confirm, and follow-up actions to track afterward.",
     scheduledTasksTemplateWeeklyReportTitle: 'Weekly Report Draft',
     scheduledTasksTemplateWeeklyReportDesc:
       'Draft a structured weekly report every Friday before the end of the day.',
     scheduledTasksTemplateWeeklyReportSchedule: 'Friday 17:30',
     scheduledTasksTemplateWeeklyReportPrompt:
-      'Draft this week\'s work report with completed work, key progress, measurable outcomes, problems and risks, and next week\'s plan. Use a tone suitable for sending directly to a manager or team.',
+      "Draft this week's work report with completed work, key progress, measurable outcomes, problems and risks, and next week's plan. Use a tone suitable for sending directly to a manager or team.",
     scheduledTasksTemplateProjectHealthTitle: 'Project Health Check',
     scheduledTasksTemplateProjectHealthDesc:
       'Check project status, recent changes, and potential risks on a regular schedule.',
@@ -4035,7 +4131,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Remind me to handle invoices, expenses, renewals, contracts, and routine admin tasks.',
     scheduledTasksTemplateMonthlyAdminSchedule: 'Monthly on the 25th at 10:00',
     scheduledTasksTemplateMonthlyAdminPrompt:
-      'Remind me to organize this month\'s admin tasks, including invoices, expenses, subscription renewals, contracts, equipment, and other items that should be handled before month end. Output a checklist and mark suggested priority.',
+      "Remind me to organize this month's admin tasks, including invoices, expenses, subscription renewals, contracts, equipment, and other items that should be handled before month end. Output a checklist and mark suggested priority.",
     scheduledTasksEmptyState: 'No scheduled tasks',
     scheduledTasksEmptyHint: 'Create scheduled tasks to automate AI execution on a schedule',
     scheduledTasksListColTitle: 'Title',
@@ -4132,7 +4228,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksFormValidationNameRequired: 'Task title is required',
     scheduledTasksFormValidationPromptRequired: 'Execution prompt is required',
     scheduledTasksFormValidationModelRequired: 'Task model is required',
-    scheduledTasksFormValidationModelUnavailable: 'The task model is unavailable. Please select another',
+    scheduledTasksFormValidationModelUnavailable:
+      'The task model is unavailable. Please select another',
     scheduledTasksFormValidationDatetimeFuture: 'Execution time must be in the future',
     scheduledTasksFormValidationIntervalPositive: 'Interval must be greater than 0',
     scheduledTasksFormValidationCronRequired: 'Cron expression is required',
