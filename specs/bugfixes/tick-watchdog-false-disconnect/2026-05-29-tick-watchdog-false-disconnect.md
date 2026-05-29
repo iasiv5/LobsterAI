@@ -77,7 +77,45 @@ private handleGatewayEvent(event: GatewayEventFrame): void {
 - 执行 `node -e "console.log(JSON.stringify(Array.from({length:12000},(_,i)=>({index:i,title:'test-'+i,content:'x'.repeat(180)}))))"` 等大输出命令时，不再触发"AI 引擎连接中断"
 - Gateway 真正不可用时（kill 进程、冻结 event loop），重连仍在 90s 内触发
 
-## 8. 上游参考
+## 8. 已知伴生现象：sessions.list RPC 超时
+
+### 8.1 现象
+
+TickWatchdog 修复后，exec 大输出期间不再误断连，但日志中仍可观察到：
+
+```
+[OpenClawRuntime] gateway RPC timed out for sessions.list; session RPCs are degraded for 30000ms
+[ChannelSync] channel session polling timed out; polling will back off temporarily
+```
+
+### 8.2 原因
+
+`sessions.list` RPC 与 gateway 事件推送**共用同一条 WebSocket 连接**（见 `client-BvnkXDjJ.js:755-780`）。
+exec 风暴期间 gateway event loop 被 I/O 饱和，无法在 5s（`CONTEXT_USAGE_LIST_TIMEOUT_MS`）内处理并应答入站 RPC 请求。
+
+```
+客户端 ──[req: sessions.list]──> gateway WS ──> gateway event loop (饱和)
+                                                  ↓ 无法及时处理
+客户端 5s 超时 → recordGatewayRpcFailure → 30s degraded 模式
+```
+
+与 TickWatchdog 的区别：
+- TickWatchdog 问题是**客户端侧**误判（已修复）
+- sessions.list 超时是**服务端侧**无法及时应答（gateway event-loop starvation）
+
+### 8.3 维持现状的理由
+
+| 考量 | 说明 |
+|------|------|
+| 用户影响为零 | sessions.list 用于 context token 查询和 channel session 发现，超时仅导致数据延迟刷新，不影响 agent/tool 执行流 |
+| 现有防护已充分 | `isGatewayRpcDegraded()` 在首次超时后 30s 内跳过后续调用，避免无意义重试 |
+| ChannelSync backoff | 超时后 polling 自动退避，exec 结束后下一周期恢复正常 |
+| 根因在上游 | gateway event-loop starvation 需 openclaw 侧修复（#83366 OPEN），LobsterAI 侧无法从根本解决 |
+| 改动风险 > 收益 | 增加"exec 期间跳过 poll"等逻辑会引入状态耦合，收益仅为减少 warn 日志 |
+
+**结论**：当前行为符合预期设计，warn 日志作为可观测性信号保留，不做代码修改。
+
+## 9. 上游参考
 
 - [openclaw/openclaw#83366](https://github.com/openclaw/openclaw/issues/83366) — Gateway event-loop starvation (P1, OPEN)
 - [openclaw/openclaw#56733](https://github.com/openclaw/openclaw/issues/56733) — Gateway alive but event loop frozen (P1, OPEN)
