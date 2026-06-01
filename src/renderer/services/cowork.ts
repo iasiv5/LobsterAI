@@ -92,6 +92,20 @@ class CoworkService {
   private contextUsageBackoffUntil = new Map<string, number>();
   private contextCompactionWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
+  private logDiagnostic(level: 'info' | 'warn' | 'error' | 'debug', message: string): void {
+    const formatted = `[CoworkService] ${message}`;
+    if (level === 'warn') {
+      console.warn(formatted);
+    } else if (level === 'error') {
+      console.error(formatted);
+    } else if (level === 'debug') {
+      console.debug(formatted);
+    } else {
+      console.log(formatted);
+    }
+    window.electron?.log?.fromRenderer?.(level, 'CoworkService', message);
+  }
+
   async init(): Promise<void> {
     if (this.initialized) return;
 
@@ -907,8 +921,13 @@ class CoworkService {
 
     const result = await cowork.getSession(sessionId);
     if (result.success && result.session) {
+      this.logDiagnostic(
+        'info',
+        `received session ${sessionId}; returned ${result.session.messages.length} of ${result.session.totalMessages} messages from offset ${result.session.messagesOffset}.`,
+      );
       // Keep only the latest session load result to avoid stale async overwrites.
       if (requestId !== this.latestLoadSessionRequestId) {
+        this.logDiagnostic('debug', `ignored stale session load result for session ${sessionId}.`);
         return result.session;
       }
       store.dispatch(setCurrentSession(result.session));
@@ -940,11 +959,28 @@ class CoworkService {
     const PAGE_SIZE = 50;
     const newOffset = Math.max(0, currentOffset - PAGE_SIZE);
     const limit = currentOffset - newOffset;
+    const currentMessageCount = state.currentSession.messages.length;
+    const totalMessages = state.currentSession.totalMessages;
+
+    this.logDiagnostic(
+      'info',
+      `loading older messages for session ${sessionId}; current view has ${currentMessageCount} of ${totalMessages} messages from offset ${currentOffset}.`,
+    );
 
     const result = await cowork.getSessionMessages({ sessionId, limit, offset: newOffset });
     if (result.success && result.messages && result.messages.length > 0) {
       store.dispatch(prependMessages({ sessionId, messages: result.messages, newOffset }));
+      const nextCount = store.getState().cowork.currentSession?.messages.length ?? currentMessageCount;
+      this.logDiagnostic(
+        'info',
+        `prepended older messages for session ${sessionId}; added ${result.messages.length} messages from offset ${newOffset}, and the view now has ${nextCount} of ${result.total ?? totalMessages} messages.`,
+      );
       return true;
+    }
+    if (result.success) {
+      this.logDiagnostic('info', `older message page for session ${sessionId} was empty at offset ${newOffset}.`);
+    } else {
+      this.logDiagnostic('warn', `failed to load older messages for session ${sessionId}: ${result.error ?? 'unknown error'}`);
     }
     return false;
   }

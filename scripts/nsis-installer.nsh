@@ -56,24 +56,6 @@
   FileWrite $9 "$8 phase=process-stop-complete exit=$0 elapsed_ms=$5$\r$\n"
   FileClose $9
 
-  ; ── Clean stale openclaw-weixin session data ──
-  ; On reinstall, old bot tokens cause the ilink server to reject new QR logins
-  ; because it still considers the old session active. Remove stale accounts
-  ; from both possible state directories so the fresh install starts clean.
-  DetailPrint "[Installer] Clearing stale Weixin session data"
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "\
-    $$dirs = @(\
-      (Join-Path $$env:USERPROFILE \".openclaw\openclaw-weixin\accounts\"),\
-      (Join-Path $$env:APPDATA \"LobsterAI\openclaw\state\openclaw-weixin\accounts\")\
-    );\
-    foreach ($$d in $$dirs) {\
-      if (Test-Path $$d) {\
-        Remove-Item -Path $$d -Recurse -Force -ErrorAction SilentlyContinue;\
-        Write-Output \"[Installer] Removed stale Weixin accounts: $$d\";\
-      }\
-    }"'
-  Pop $0
-
   ; ── Backup user-created skills to AppData before extraction overwrites them ──
   ; Copy non-bundled skills to %APPDATA%\LobsterAI\skills-backup\ so they are
   ; preserved when NSIS extracts the new version over the existing install.

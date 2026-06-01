@@ -88,6 +88,11 @@ const formatExportTimestamp = (value: Date): string => {
   return `${value.getFullYear()}${pad(value.getMonth() + 1)}${pad(value.getDate())}-${pad(value.getHours())}${pad(value.getMinutes())}${pad(value.getSeconds())}`;
 };
 
+const logDetailDiagnostic = (message: string): void => {
+  console.log(`[CoworkSessionDetail] ${message}`);
+  window.electron?.log?.fromRenderer?.('info', 'CoworkSessionDetail', message);
+};
+
 type CaptureRect = { x: number; y: number; width: number; height: number };
 
 const MAX_EXPORT_CANVAS_HEIGHT = 32760;
@@ -1745,6 +1750,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         isLoadingMoreMessagesRef.current = true;
         setIsLoadingMoreMessages(true);
         prevScrollHeightRef.current = container.scrollHeight;
+        logDetailDiagnostic(`loading older messages after scrolling near the top for session ${sessionId}; current offset is ${offset}.`);
         coworkService.loadMoreMessages(sessionId).catch(() => {
           prevScrollHeightRef.current = null;
           isLoadingMoreMessagesRef.current = false;
@@ -1816,6 +1822,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       isLoadingMoreMessagesRef.current = true;
       setIsLoadingMoreMessages(true);
       prevScrollHeightRef.current = container.scrollHeight;
+      logDetailDiagnostic(
+        `auto-loading older messages because session ${sessionId} content height ${container.scrollHeight} does not exceed viewport height ${container.clientHeight}; current offset is ${offset}.`,
+      );
       coworkService.loadMoreMessages(sessionId).catch(() => {
         prevScrollHeightRef.current = null;
         isLoadingMoreMessagesRef.current = false;

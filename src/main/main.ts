@@ -5302,6 +5302,13 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
       const session = getCoworkStore().getSession(sessionId);
+      if (session) {
+        console.log(
+          `[CoworkIPC] loaded session ${sessionId}; returned ${session.messages.length} of ${session.totalMessages} messages from offset ${session.messagesOffset}.`,
+        );
+      } else {
+        console.warn(`[CoworkIPC] session ${sessionId} was not found during load.`);
+      }
       return { success: true, session };
     } catch (error) {
       return {
@@ -5354,6 +5361,9 @@ if (!gotTheLock) {
         const store = getCoworkStore();
         const total = store.countSessionMessages(sessionId);
         const messages = store.getPagedSessionMessages(sessionId, limit, offset);
+        console.log(
+          `[CoworkIPC] loaded message page for session ${sessionId}; returned ${messages.length} of ${total} messages from offset ${offset} with limit ${limit}.`,
+        );
         return { success: true, messages, offset, total };
       } catch (error) {
         return {

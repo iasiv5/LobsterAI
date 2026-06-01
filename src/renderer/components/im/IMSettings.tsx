@@ -100,6 +100,7 @@ const MULTI_INSTANCE_PLATFORMS = new Set<Platform>([
 
 const WeixinRuntimeLastError = {
   Disabled: 'disabled',
+  NotConfigured: 'not configured',
 } as const;
 
 const IMSaveReminderTarget = {
@@ -782,6 +783,11 @@ const IMSettings: React.FC = () => {
   const wecomConnected = status.wecom?.instances?.some(i => i.connected) ?? false;
   const weixinConnected = Boolean(weixinOpenClawConfig.enabled && status.weixin?.connected);
   const weixinLastError = status.weixin?.lastError ?? null;
+  const isWeixinCredentialMissingError = Boolean(
+    weixinOpenClawConfig.enabled
+    && weixinAccountId
+    && weixinLastError?.trim().toLowerCase().includes(WeixinRuntimeLastError.NotConfigured)
+  );
   const shouldShowWeixinError = Boolean(
     weixinLastError && weixinLastError.trim().toLowerCase() !== WeixinRuntimeLastError.Disabled
   );
@@ -2763,7 +2769,9 @@ const IMSettings: React.FC = () => {
             {/* Error display */}
             {shouldShowWeixinError && weixinLastError && (
               <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-500">
-                {translateIMError(weixinLastError)}
+                {isWeixinCredentialMissingError
+                  ? i18nService.t('imWeixinCredentialsMissing')
+                  : translateIMError(weixinLastError)}
               </div>
             )}
 
