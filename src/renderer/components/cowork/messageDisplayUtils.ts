@@ -57,6 +57,17 @@ const TOOL_USE_ERROR_TAG_PATTERN = /^<tool_use_error>([\s\S]*?)<\/tool_use_error
 const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 export const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA:\s*`?[^`\n]+?`?\s*$/gim;
 const SILENT_TOKEN_RE = /^[`*_~"'""''()[\]{}<>.,!?;:，。！？；：\s-]{0,8}NO_REPLY[`*_~"'""''()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
+export const TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS = 64 * 1024;
+export const TOOL_RESULT_COLLAPSED_PREVIEW_MAX_CHARS = 4 * 1024;
+export const STRUCTURED_TEXT_FORMAT_MAX_CHARS = 128 * 1024;
+
+export type ToolResultCollapsedDisplay = {
+  hasText: boolean;
+  text: string;
+  lineCount: number;
+  isLarge: boolean;
+  sizeLabel: string | null;
+};
 
 // ── Pure utility functions ───────────────────────────────────────────────────
 
@@ -180,6 +191,9 @@ export const getCronToolSummary = (input: Record<string, unknown>): string | nul
 export const formatStructuredText = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return value;
+  }
+  if (trimmed.length > STRUCTURED_TEXT_FORMAT_MAX_CHARS) {
     return value;
   }
 
@@ -325,22 +339,88 @@ export const formatToolInput = (
 export const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
-export const getToolResultDisplay = (message: CoworkMessage): string => {
+export const getToolResultRawText = (message: CoworkMessage): string => {
   if (hasText(message.content)) {
-    return formatStructuredText(normalizeToolResultText(message.content));
+    return message.content;
   }
   if (hasText(message.metadata?.toolResult)) {
-    return formatStructuredText(normalizeToolResultText(message.metadata?.toolResult ?? ''));
+    return message.metadata?.toolResult ?? '';
   }
   if (hasText(message.metadata?.error)) {
-    return formatStructuredText(normalizeToolResultText(message.metadata?.error ?? ''));
+    return message.metadata?.error ?? '';
   }
   return '';
 };
 
+export const getToolResultDisplay = (message: CoworkMessage): string => {
+  const rawText = getToolResultRawText(message);
+  return hasText(rawText)
+    ? formatStructuredText(normalizeToolResultText(rawText))
+    : '';
+};
+
 export const getToolResultLineCount = (result: string): number => {
   if (!result) return 0;
-  return result.split('\n').length;
+  let lineCount = 1;
+  for (let index = 0; index < result.length; index += 1) {
+    if (result.charCodeAt(index) === 10) {
+      lineCount += 1;
+    }
+  }
+  return lineCount;
+};
+
+const formatToolResultSize = (charCount: number): string => {
+  if (charCount < 1024) {
+    return `${charCount} B`;
+  }
+  if (charCount < 1024 * 1024) {
+    return `${Math.ceil(charCount / 1024)} KB`;
+  }
+  return `${(charCount / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+export const getToolResultLineCountSummary = (lineCount: number): string => {
+  const unit = i18nService.t(lineCount === 1 ? 'coworkToolOutputLine' : 'coworkToolOutputLines');
+  return i18nService.t('coworkToolOutputLineCount')
+    .replace('{count}', String(lineCount))
+    .replace('{unit}', unit);
+};
+
+export const getLargeToolResultSummary = (sizeLabel: string): string =>
+  i18nService.t('coworkToolLargeOutput').replace('{size}', sizeLabel);
+
+export const getToolResultCollapsedDisplay = (message: CoworkMessage): ToolResultCollapsedDisplay => {
+  const rawText = getToolResultRawText(message);
+  if (!hasText(rawText)) {
+    return {
+      hasText: false,
+      text: '',
+      lineCount: 0,
+      isLarge: false,
+      sizeLabel: null,
+    };
+  }
+
+  if (rawText.length > TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS) {
+    const previewText = normalizeToolResultText(rawText.slice(0, TOOL_RESULT_COLLAPSED_PREVIEW_MAX_CHARS));
+    return {
+      hasText: hasText(previewText) || hasText(rawText),
+      text: previewText,
+      lineCount: 0,
+      isLarge: true,
+      sizeLabel: formatToolResultSize(rawText.length),
+    };
+  }
+
+  const displayText = getToolResultDisplay(message);
+  return {
+    hasText: hasText(displayText),
+    text: displayText,
+    lineCount: hasText(displayText) ? getToolResultLineCount(displayText) : 0,
+    isLarge: false,
+    sizeLabel: null,
+  };
 };
 
 // ── Message classification ───────────────────────────────────────────────────
@@ -387,7 +467,7 @@ const isVisibleAssistantTurnItem = (item: AssistantTurnItem): boolean => {
     return isRenderableAssistantOrSystemMessage(item.message);
   }
   if (item.type === 'tool_result') {
-    return hasText(getToolResultDisplay(item.message));
+    return getToolResultCollapsedDisplay(item.message).hasText;
   }
   return true;
 };

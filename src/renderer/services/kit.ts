@@ -52,6 +52,9 @@ class KitService {
       bundleUrl: kit.skills.bundle,
       version: kit.version ?? '0.0.0',
       skillListIds: kit.skills.list.map(s => s.id),
+      skillList: kit.skills.list,
+      mcpServers: kit.mcpServers ?? null,
+      connectors: kit.connectors ?? null,
     });
 
     return result;

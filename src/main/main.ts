@@ -60,6 +60,10 @@ import {
   HtmlShareIpc,
   HtmlShareSourceType,
 } from '../shared/htmlShare/constants';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -94,6 +98,7 @@ import type {
   TelegramInstanceConfig,
   WecomInstanceConfig,
 } from './im/types';
+import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
@@ -2366,6 +2371,40 @@ const refreshImSessionWorkingDirectoriesForAgent = (agentId: string): number => 
 function mergeCoworkSystemPrompt(systemPrompt?: string): string | undefined {
   const sections = [buildScheduledTaskEnginePrompt(), systemPrompt?.trim() || ''].filter(Boolean);
   return sections.length > 0 ? sections.join('\n\n') : undefined;
+}
+
+type CoworkImageAttachmentMain = {
+  name: string;
+  mimeType: string;
+  base64Data: string;
+};
+
+function buildCoworkUserSelectionMetadata(options: {
+  skillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
+  imageAttachments?: CoworkImageAttachmentMain[];
+}): Record<string, unknown> | undefined {
+  const metadata: Record<string, unknown> = {};
+
+  if (options.skillIds?.length) {
+    metadata.skillIds = options.skillIds;
+  }
+  if (options.kitIds?.length) {
+    metadata.kitIds = options.kitIds;
+    if (options.kitReferences?.length) {
+      metadata.kitReferences = options.kitReferences;
+    }
+    if (options.resolvedKitCapabilities) {
+      metadata.resolvedKitCapabilities = options.resolvedKitCapabilities;
+    }
+  }
+  if (options.imageAttachments?.length) {
+    metadata.imageAttachments = options.imageAttachments;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 // 获取正确的预加载脚本路径
@@ -4810,7 +4849,11 @@ if (!gotTheLock) {
         systemPrompt?: string;
         title?: string;
         activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+        runtimeSkillIds?: string[];
+        kitIds?: string[];
+        kitReferences?: KitReference[];
+        resolvedKitCapabilities?: ResolvedKitCapabilities;
+        imageAttachments?: CoworkImageAttachmentMain[];
         agentId?: string;
         modelOverride?: string;
         mediaSelection?: {
@@ -4821,7 +4864,7 @@ if (!gotTheLock) {
           videoModelId?: string;
         };
         mediaReferences?: MediaAttachmentRefMain[];
-  },
+      },
     ) => {
       try {
         const engineStatus = await ensureOpenClawRunningForCowork();
@@ -4850,13 +4893,14 @@ if (!gotTheLock) {
         );
         const title = options.title?.trim() || fallbackTitle;
         const taskWorkingDirectory = resolveTaskWorkingDirectory(selectedTaskDirectory);
+        const runtimeSkillIds = options.runtimeSkillIds ?? options.activeSkillIds;
 
         const session = coworkStoreInstance.createSession(
           title,
           taskWorkingDirectory,
           systemPrompt,
           config.executionMode || 'local',
-          options.activeSkillIds || [],
+          runtimeSkillIds || [],
           options.agentId || 'main',
           options.modelOverride || '',
         );
@@ -4875,16 +4919,12 @@ if (!gotTheLock) {
           mediaSelectionBySession.delete(session.id);
         }
 
-      if (options.mediaReferences?.length) {
-        mediaReferencesBySession.set(session.id, options.mediaReferences);
-      } else {
-        mediaReferencesBySession.delete(session.id);
-      }
-
-        const messageMetadata: Record<string, unknown> = {};
-        if (options.activeSkillIds?.length) {
-          messageMetadata.skillIds = options.activeSkillIds;
+        if (options.mediaReferences?.length) {
+          mediaReferencesBySession.set(session.id, options.mediaReferences);
+        } else {
+          mediaReferencesBySession.delete(session.id);
         }
+
         if (options.imageAttachments?.length) {
           console.log('[Cowork:StartSession] imageAttachments received via IPC:', {
             count: options.imageAttachments.length,
@@ -4894,12 +4934,18 @@ if (!gotTheLock) {
               base64Length: img.base64Data?.length ?? 0,
             })),
           });
-          messageMetadata.imageAttachments = options.imageAttachments;
         }
+        const messageMetadata = buildCoworkUserSelectionMetadata({
+          skillIds: options.activeSkillIds,
+          kitIds: options.kitIds,
+          kitReferences: options.kitReferences,
+          resolvedKitCapabilities: options.resolvedKitCapabilities,
+          imageAttachments: options.imageAttachments,
+        });
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
           content: options.prompt,
-          metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
+          metadata: messageMetadata,
         });
 
         coworkStoreInstance.updateSession(session.id, { status: 'running' });
@@ -4909,14 +4955,18 @@ if (!gotTheLock) {
           .startSession(session.id, options.prompt, {
             skipInitialUserMessage: true,
             systemPrompt,
-            skillIds: options.activeSkillIds,
+            skillIds: runtimeSkillIds,
+            messageSkillIds: options.activeSkillIds,
+            kitIds: options.kitIds,
+            kitReferences: options.kitReferences,
+            resolvedKitCapabilities: options.resolvedKitCapabilities,
             workspaceRoot: taskWorkingDirectory,
             confirmationMode: 'modal',
             imageAttachments: options.imageAttachments,
             agentId: options.agentId,
             mediaSelection: options.mediaSelection,
             mediaReferences: options.mediaReferences,
-      })
+          })
           .catch(error => {
             console.error('[Cowork] session error:', error);
             try {
@@ -4962,7 +5012,11 @@ if (!gotTheLock) {
         prompt: string;
         systemPrompt?: string;
         activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+        runtimeSkillIds?: string[];
+        kitIds?: string[];
+        kitReferences?: KitReference[];
+        resolvedKitCapabilities?: ResolvedKitCapabilities;
+        imageAttachments?: CoworkImageAttachmentMain[];
         mediaSelection?: {
           mode: 'auto' | 'image' | 'video' | 'none';
           modelId?: string;
@@ -5011,11 +5065,15 @@ if (!gotTheLock) {
             systemPrompt: mergeCoworkSystemPrompt(
               options.systemPrompt ?? existingSession?.systemPrompt,
             ),
-            skillIds: options.activeSkillIds,
+            skillIds: options.runtimeSkillIds ?? options.activeSkillIds,
+            messageSkillIds: options.activeSkillIds,
+            kitIds: options.kitIds,
+            kitReferences: options.kitReferences,
+            resolvedKitCapabilities: options.resolvedKitCapabilities,
             imageAttachments: options.imageAttachments,
             mediaSelection: options.mediaSelection,
             mediaReferences: options.mediaReferences,
-      })
+          })
           .catch(error => {
             console.error('[Cowork] continue error:', error);
             try {
@@ -5652,39 +5710,9 @@ if (!gotTheLock) {
 
   // ── Subagent tracking IPC ──────────────────────────────────────────────
 
-  ipcMain.handle(
-    'cowork:subTask:history',
-    async (
-      _event,
-      options: {
-        parentSessionId: string;
-        agentId: string;
-        sessionKey?: string;
-      },
-    ) => {
-      if (!openClawRuntimeAdapter) {
-        return { success: false, error: 'Runtime adapter not available' };
-      }
-      try {
-        const messages = await openClawRuntimeAdapter.getSubTaskHistory(
-          options.parentSessionId,
-          options.agentId,
-          options.sessionKey,
-        );
-        return { success: true, messages };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch subagent history',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('cowork:subagent:list', async (_event, options: { parentSessionId: string }) => {
-    if (!openClawRuntimeAdapter) return { success: true, runs: [] };
-    const runs = openClawRuntimeAdapter.listSubagentRuns(options.parentSessionId);
-    return { success: true, runs };
+  registerCoworkSubagentHandlers({
+    getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getCoworkEngineRouter,
   });
 
   ipcMain.handle('cowork:media:cancel', async (_event, taskId: string) => {

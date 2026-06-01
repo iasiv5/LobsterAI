@@ -1,4 +1,8 @@
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../../../shared/kit/constants';
 import type { CoworkMessage, CoworkSessionStatus } from '../../coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
@@ -94,6 +98,10 @@ export type CoworkMediaSelection = {
 export type CoworkStartOptions = {
   skipInitialUserMessage?: boolean;
   skillIds?: string[];
+  messageSkillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
   systemPrompt?: string;
   autoApprove?: boolean;
   workspaceRoot?: string;
@@ -107,6 +115,10 @@ export type CoworkStartOptions = {
 export type CoworkContinueOptions = {
   systemPrompt?: string;
   skillIds?: string[];
+  messageSkillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
   imageAttachments?: CoworkImageAttachment[];
   mediaSelection?: CoworkMediaSelection;
   mediaReferences?: CoworkMediaAttachmentRef[];
@@ -132,5 +144,6 @@ export interface CoworkRuntime {
   respondToPermission(requestId: string, result: PermissionResult): void;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
+  deleteSubagentSession?(parentSessionId: string, runId: string): Promise<boolean>;
   onSessionDeleted?(sessionId: string): void;
 }

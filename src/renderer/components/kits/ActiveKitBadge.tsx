@@ -31,12 +31,12 @@ const ActiveKitBadge: React.FC = () => {
           type="button"
           key={kit.id}
           onClick={(e) => handleRemoveKit(e, kit.id)}
-          className="group inline-flex h-7 max-w-[240px] items-center gap-1.5 rounded-md bg-surface-raised px-2.5 text-[13px] font-normal leading-none text-foreground transition-all hover:bg-gray-200 dark:hover:bg-gray-700 hover:ring-1 hover:ring-border"
+          className="group inline-flex h-7 max-w-[240px] items-center gap-1.5 rounded-md bg-primary-muted px-2.5 text-[13px] font-normal leading-none text-foreground transition-all hover:bg-primary/15 hover:ring-1 hover:ring-primary/30"
           title={i18nService.t('clearKit')}
         >
-          <span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors group-hover:bg-gray-300 dark:group-hover:bg-gray-600">
-            <SidebarKitsIcon className="h-3.5 w-3.5 text-secondary transition-opacity group-hover:opacity-0" />
-            <XMarkIcon className="absolute h-3 w-3 text-secondary opacity-0 transition-opacity group-hover:opacity-100" />
+          <span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition-colors group-hover:bg-primary/15">
+            <SidebarKitsIcon className="h-3.5 w-3.5 text-primary transition-opacity group-hover:opacity-0" />
+            <XMarkIcon className="absolute h-3 w-3 text-primary opacity-0 transition-opacity group-hover:opacity-100" />
           </span>
           <span className="min-w-0 truncate">
             {resolveLocalizedText(kit.name)}

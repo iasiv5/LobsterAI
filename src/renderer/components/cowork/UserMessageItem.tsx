@@ -1,13 +1,17 @@
 import { PhotoIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useMemo, useState } from 'react';
 
+import type { KitReference } from '../../../shared/kit/constants';
 import { i18nService } from '../../services/i18n';
+import { buildKitReferences } from '../../services/kitCapability';
 import type { CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import type { MarketplaceKit } from '../../types/kit';
 import type { Skill } from '../../types/skill';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import EditIcon from '../icons/EditIcon';
 import MessageCopyIcon from '../icons/MessageCopyIcon';
+import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 import SkillIcon from '../icons/SkillIcon';
 import MarkdownContent from '../MarkdownContent';
 import ImagePreviewModal, { type ImagePreviewSource } from './ImagePreviewModal';
@@ -116,13 +120,52 @@ const UserMessageSkillBadges: React.FC<{ skills: Skill[] }> = ({ skills }) => {
   );
 };
 
+const UserMessageKitBadges: React.FC<{ kitReferences: KitReference[] }> = ({ kitReferences }) => {
+  if (kitReferences.length === 0) return null;
+
+  return (
+    <>
+      {kitReferences.map(kitReference => {
+        const displayName = kitReference.name?.trim() || `@${kitReference.id}`;
+        return (
+          <div
+            key={kitReference.uri || kitReference.id}
+            className="inline-flex h-7 max-w-[240px] items-center gap-1.5 rounded-md bg-surface-raised px-2.5 text-[13px] font-normal leading-none text-foreground ring-1 ring-border/60"
+            title={kitReference.uri}
+          >
+            <SidebarKitsIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
+            <span className="min-w-0 truncate">
+              {displayName}
+            </span>
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
+const UserMessageCapabilityBadges: React.FC<{
+  kitReferences: KitReference[];
+  skills: Skill[];
+}> = ({ kitReferences, skills }) => {
+  if (kitReferences.length === 0 && skills.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <UserMessageKitBadges kitReferences={kitReferences} />
+      <UserMessageSkillBadges skills={skills} />
+    </div>
+  );
+};
+
 // ── UserMessageItem ──────────────────────────────────────────────────────────
 
 const UserMessageItem: React.FC<{
   message: CoworkMessage;
   skills: Skill[];
+  marketplaceKits?: MarketplaceKit[];
   onReEdit?: (message: CoworkMessage) => void;
-}> = React.memo(({ message, skills, onReEdit }) => {
+}> = React.memo(({ message, skills, marketplaceKits = [], onReEdit }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ImagePreviewSource | null>(null);
   const modelLabel = getMessageModelLabel(message.metadata);
@@ -143,12 +186,19 @@ const UserMessageItem: React.FC<{
     [message.content]
   );
 
-  const messageSkillIds = (message.metadata as CoworkMessageMetadata)?.skillIds || [];
+  const metadata = message.metadata as CoworkMessageMetadata | undefined;
+  const messageSkillIds = Array.isArray(metadata?.skillIds) ? metadata.skillIds : [];
   const messageSkills = messageSkillIds
     .map(id => skills.find(s => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
+  const metadataKitReferences = Array.isArray(metadata?.kitReferences) ? metadata.kitReferences : [];
+  const messageKitIds = Array.isArray(metadata?.kitIds) ? metadata.kitIds : [];
+  const messageKitReferences = metadataKitReferences.length > 0
+    ? metadataKitReferences
+    : buildKitReferences(messageKitIds, marketplaceKits);
 
-  const imageAttachments = ((message.metadata as CoworkMessageMetadata)?.imageAttachments ?? []) as CoworkImageAttachment[];
+  const imageAttachments = (metadata?.imageAttachments ?? []) as CoworkImageAttachment[];
+  const hasCapabilityBadges = messageKitReferences.length > 0 || messageSkills.length > 0;
 
   return (
     <div
@@ -164,9 +214,12 @@ const UserMessageItem: React.FC<{
           <div className="flex items-start gap-3 flex-row-reverse">
             <div className="w-full min-w-0 flex flex-col items-end">
               <div className="w-fit max-w-full rounded-2xl px-4 py-2.5 bg-surface text-foreground shadow-subtle">
-                {messageSkills.length > 0 && (
+                {hasCapabilityBadges && (
                   <div className={(displayContent?.trim() || imageAttachments.length > 0) ? 'mb-2' : ''}>
-                    <UserMessageSkillBadges skills={messageSkills} />
+                    <UserMessageCapabilityBadges
+                      kitReferences={messageKitReferences}
+                      skills={messageSkills}
+                    />
                   </div>
                 )}
                 {displayContent?.trim() && (

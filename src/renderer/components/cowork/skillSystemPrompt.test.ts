@@ -6,13 +6,13 @@ import {
 } from './skillSystemPrompt';
 
 describe('buildCoworkSystemPrompt', () => {
-  test('combines skill and base system prompts for a new session', () => {
-    expect(buildCoworkSystemPrompt('skill prompt', 'base prompt')).toBe('skill prompt\n\nbase prompt');
+  test('combines selected skill routing and base system prompts for a new session', () => {
+    expect(buildCoworkSystemPrompt('selected skill routing', 'base prompt')).toBe('selected skill routing\n\nbase prompt');
   });
 
   test('omits empty prompt parts', () => {
     expect(buildCoworkSystemPrompt('  ', 'base prompt')).toBe('base prompt');
-    expect(buildCoworkSystemPrompt('skill prompt', '')).toBe('skill prompt');
+    expect(buildCoworkSystemPrompt('selected skill routing', '')).toBe('selected skill routing');
     expect(buildCoworkSystemPrompt()).toBeUndefined();
   });
 });
@@ -24,6 +24,6 @@ describe('buildCoworkContinuationSystemPrompt', () => {
   });
 
   test('sends a refreshed prompt when the user selects a skill for this turn', () => {
-    expect(buildCoworkContinuationSystemPrompt('skill prompt', 'base prompt')).toBe('skill prompt\n\nbase prompt');
+    expect(buildCoworkContinuationSystemPrompt('selected skill routing', 'base prompt')).toBe('selected skill routing\n\nbase prompt');
   });
 });

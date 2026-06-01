@@ -2,7 +2,7 @@ import 'katex/dist/katex.min.css';
 import 'katex/contrib/mhchem';
 
 import { DocumentIcon, FolderIcon } from '@heroicons/react/24/outline';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 // @ts-ignore
 import rehypeKatex from 'rehype-katex';
@@ -15,8 +15,34 @@ import { i18nService } from '../services/i18n';
 import { type ShellActionResult, showShellFailureToast, showToast } from '../utils/localFileActions';
 import CodeBlock from './CodeBlock';
 
-const SAFE_URL_PROTOCOLS = new Set(['http', 'https', 'mailto', 'tel', 'file', 'localfile']);
+const SAFE_URL_PROTOCOLS = new Set(['http', 'https', 'mailto', 'tel', 'file', 'localfile', 'kit']);
+const INTERNAL_URL_PROTOCOLS = new Set(['kit']);
 const LINK_CLASS_NAME = 'text-primary hover:text-primary-hover underline decoration-primary/50 hover:decoration-primary transition-colors break-words [overflow-wrap:anywhere]';
+const LARGE_MARKDOWN_RENDER_THRESHOLD = 8 * 1024;
+const LARGE_MARKDOWN_PREVIEW_HEAD_LENGTH = 4 * 1024;
+const LARGE_MARKDOWN_PREVIEW_TAIL_LENGTH = 8 * 1024;
+
+export const shouldUseLargeMarkdownPreview = (content: string): boolean =>
+  content.length > LARGE_MARKDOWN_RENDER_THRESHOLD;
+
+export const getLargeMarkdownPreview = (content: string): string => (
+  content.length <= LARGE_MARKDOWN_PREVIEW_HEAD_LENGTH + LARGE_MARKDOWN_PREVIEW_TAIL_LENGTH
+    ? content
+    : [
+        content.slice(0, LARGE_MARKDOWN_PREVIEW_HEAD_LENGTH).trimEnd(),
+        '',
+        '...',
+        '',
+        content.slice(-LARGE_MARKDOWN_PREVIEW_TAIL_LENGTH).trimStart(),
+      ].join('\n')
+);
+
+const formatContentSize = (bytes: number): string => {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${Math.ceil(bytes / 1024)} KB`;
+};
 
 const encodeFileUrl = (url: string): string => {
   const encoded = encodeURI(url);
@@ -113,7 +139,7 @@ const normalizeDisplayMath = (content: string): string => {
   });
 };
 
-const safeUrlTransform = (url: string): string => {
+export const safeUrlTransform = (url: string): string => {
   const trimmed = url.trim();
   if (!trimmed) return trimmed;
 
@@ -144,7 +170,13 @@ const getHrefProtocol = (href: string): string | null => {
 const isExternalHref = (href: string): boolean => {
   const protocol = getHrefProtocol(href);
   if (!protocol) return false;
+  if (INTERNAL_URL_PROTOCOLS.has(protocol)) return false;
   return protocol !== 'file' && protocol !== 'localfile';
+};
+
+export const isInternalHref = (href: string): boolean => {
+  const protocol = getHrefProtocol(href);
+  return !!protocol && INTERNAL_URL_PROTOCOLS.has(protocol);
 };
 
 const openExternalViaDefaultBrowser = async (url: string): Promise<boolean> => {
@@ -445,12 +477,24 @@ const createMarkdownComponents = (
     }
 
     const hrefValue = typeof href === 'string' ? href.trim() : '';
+    const isInternalLink = !!hrefValue && isInternalHref(hrefValue);
     const isExternalLink = !!hrefValue && isExternalHref(hrefValue);
     const linkText = Array.isArray(children) ? children.join('') : String(children ?? '');
-    const resolvedPath = hrefValue && !isExternalLink && resolveLocalFilePath
+    const resolvedPath = hrefValue && !isInternalLink && !isExternalLink && resolveLocalFilePath
       ? resolveLocalFilePath(hrefValue, linkText)
       : null;
-    const isLocalFilePath = !!hrefValue && !isExternalLink && (resolvedPath || isLikelyLocalFilePath(hrefValue));
+    const isLocalFilePath = !!hrefValue && !isInternalLink && !isExternalLink && (resolvedPath || isLikelyLocalFilePath(hrefValue));
+
+    if (isInternalLink) {
+      return (
+        <span
+          className="inline-flex max-w-full items-center rounded-md bg-surface-raised px-1.5 py-0.5 text-[0.9em] font-medium leading-normal text-foreground ring-1 ring-border/60 align-baseline"
+          title={hrefValue}
+        >
+          <span className="min-w-0 truncate">{children}</span>
+        </span>
+      );
+    }
 
     if (isLocalFilePath) {
       const rawPath = resolvedPath
@@ -616,13 +660,56 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
   showRevealInFolderAction = false,
   onImageClick,
 }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const useLargePreview = shouldUseLargeMarkdownPreview(content) && !isExpanded;
   const components = useMemo(
     () => createMarkdownComponents(resolveLocalFilePath, showRevealInFolderAction, onImageClick),
     [resolveLocalFilePath, showRevealInFolderAction, onImageClick]
   );
-  const normalizedContent = useMemo(() => normalizeDisplayMath(encodeFileUrlsInMarkdown(content)), [content]);
+  const normalizedContent = useMemo(() => {
+    if (useLargePreview) {
+      return '';
+    }
+    return normalizeDisplayMath(encodeFileUrlsInMarkdown(content));
+  }, [content, useLargePreview]);
+
+  if (useLargePreview) {
+    return (
+      <div className={`markdown-content min-w-0 max-w-full text-[15px] leading-[23px] ${className}`}>
+        <div className="rounded-lg border border-border bg-surface-raised/60">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted">
+            <span>
+              {i18nService.t('markdownLargePreviewNotice')} ({formatContentSize(content.length)})
+            </span>
+            <button
+              type="button"
+              className="text-primary hover:text-primary-hover"
+              onClick={() => setIsExpanded(true)}
+            >
+              {i18nService.t('expand')}
+            </button>
+          </div>
+          <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words p-3 text-[13px] leading-5 text-foreground">
+            {getLargeMarkdownPreview(content)}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`markdown-content min-w-0 max-w-full text-[15px] leading-[23px] ${className}`}>
+      {shouldUseLargeMarkdownPreview(content) && (
+        <div className="mb-2 flex justify-end">
+          <button
+            type="button"
+            className="text-xs text-primary hover:text-primary-hover"
+            onClick={() => setIsExpanded(false)}
+          >
+            {i18nService.t('collapse')}
+          </button>
+        </div>
+      )}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}

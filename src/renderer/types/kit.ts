@@ -1,8 +1,9 @@
-import type { LocalizedText } from './skill';
+import type { InstalledKitRecord, LocalizedText } from '../../shared/kit/constants';
 
 export interface KitSkillRef {
   id: string;
-  name: string;
+  name: string | LocalizedText;
+  description?: string | LocalizedText;
 }
 
 export interface KitSkillBundle {
@@ -20,13 +21,8 @@ export interface MarketplaceKit {
   downloadCount?: string;
   tryAsking?: (string | LocalizedText)[];
   skills?: KitSkillBundle;
-  mcpServers?: any;
-  connectors?: any;
+  mcpServers?: unknown[] | null;
+  connectors?: unknown[] | null;
 }
 
-export interface InstalledKit {
-  id: string;
-  version: string;
-  installedAt: number;
-  skillIds: string[];
-}
+export type InstalledKit = InstalledKitRecord;

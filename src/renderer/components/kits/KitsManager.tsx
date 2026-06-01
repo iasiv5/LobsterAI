@@ -11,6 +11,12 @@ import Modal from '../common/Modal';
 import SearchIcon from '../icons/SearchIcon';
 import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 
+const KitOperationType = {
+  Install: 'install',
+  Uninstall: 'uninstall',
+} as const;
+
+type KitOperationType = typeof KitOperationType[keyof typeof KitOperationType];
 
 interface KitsManagerProps {
   onTryAsking?: (text: string, kitId: string) => void;
@@ -24,8 +30,9 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedKit, setSelectedKit] = useState<MarketplaceKit | null>(null);
   const [operatingKitId, setOperatingKitId] = useState<string | null>(null);
-  const [operationType, setOperationType] = useState<'install' | 'uninstall' | null>(null);
+  const [operationType, setOperationType] = useState<KitOperationType | null>(null);
   const [installPrompt, setInstallPrompt] = useState<{ kitId: string; text: string } | null>(null);
+  const [kitPendingUninstall, setKitPendingUninstall] = useState<MarketplaceKit | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -60,7 +67,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
 
   const handleInstall = async (kit: MarketplaceKit) => {
     setOperatingKitId(kit.id);
-    setOperationType('install');
+    setOperationType(KitOperationType.Install);
     try {
       const result = await kitService.installKit(kit);
       if (result.success) {
@@ -76,9 +83,18 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
     }
   };
 
+  const handleRequestUninstall = (kit: MarketplaceKit) => {
+    setKitPendingUninstall(kit);
+  };
+
+  const handleCancelUninstall = () => {
+    if (operationType === KitOperationType.Uninstall) return;
+    setKitPendingUninstall(null);
+  };
+
   const handleUninstall = async (kitId: string) => {
     setOperatingKitId(kitId);
-    setOperationType('uninstall');
+    setOperationType(KitOperationType.Uninstall);
     try {
       const result = await kitService.uninstallKit(kitId);
       if (result.success) {
@@ -91,7 +107,13 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
     } finally {
       setOperatingKitId(null);
       setOperationType(null);
+      setKitPendingUninstall(null);
     }
+  };
+
+  const handleConfirmUninstall = async () => {
+    if (!kitPendingUninstall || operationType === KitOperationType.Uninstall) return;
+    await handleUninstall(kitPendingUninstall.id);
   };
 
   const isKitInstalled = (kitId: string) => !!installedKits[kitId];
@@ -116,6 +138,42 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
       onTryAsking?.(text, kitId);
     }
   };
+
+  const uninstallConfirmModal = kitPendingUninstall ? (
+    <Modal
+      onClose={handleCancelUninstall}
+      overlayClassName="fixed inset-0 z-[9999] flex items-center justify-center modal-backdrop px-4"
+      className="modal-content w-full max-w-sm rounded-2xl border border-border bg-surface shadow-modal p-5"
+    >
+      <div className="text-lg font-semibold text-foreground">
+        {i18nService.t('kitUninstall')}
+      </div>
+      <p className="mt-2 text-sm text-secondary">
+        {i18nService.t('kitUninstallConfirm').replace(
+          '{name}',
+          resolveLocalizedText(kitPendingUninstall.name),
+        )}
+      </p>
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={handleCancelUninstall}
+          disabled={operationType === KitOperationType.Uninstall}
+          className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {i18nService.t('cancel')}
+        </button>
+        <button
+          type="button"
+          onClick={handleConfirmUninstall}
+          disabled={operationType === KitOperationType.Uninstall}
+          className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {i18nService.t('confirmDelete')}
+        </button>
+      </div>
+    </Modal>
+  ) : null;
 
   // Detail view
   if (selectedKit) {
@@ -148,7 +206,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
             <button
               type="button"
               disabled={operating}
-              onClick={() => handleUninstall(selectedKit.id)}
+              onClick={() => handleRequestUninstall(selectedKit)}
               className="p-1.5 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50"
             >
               <TrashIcon className="h-4 w-4" />
@@ -161,7 +219,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors disabled:opacity-50"
             >
               <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-              {operating && operationType === 'install'
+              {operating && operationType === KitOperationType.Install
                 ? i18nService.t('kitInstalling')
                 : i18nService.t('kitInstall')}
             </button>
@@ -206,7 +264,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
                   key={skill.id}
                   className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-lg bg-surface-raised text-secondary border border-border"
                 >
-                  {skill.name.replace(/^\//, '')}
+                  {resolveLocalizedText(skill.name).replace(/^\//, '')}
                 </span>
               ))}
             </div>
@@ -246,6 +304,8 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
             </div>
           </Modal>
         )}
+
+        {uninstallConfirmModal}
       </div>
     );
   }
@@ -328,7 +388,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
                     <button
                       type="button"
                       disabled={operating}
-                      onClick={(e) => { e.stopPropagation(); handleUninstall(kit.id); }}
+                      onClick={(e) => { e.stopPropagation(); handleRequestUninstall(kit); }}
                       className="p-1 rounded-lg text-secondary hover:text-red-500 dark:hover:text-red-400 transition-colors flex-shrink-0 disabled:opacity-50"
                     >
                       <TrashIcon className="h-4 w-4" />
@@ -341,7 +401,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
                       className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors flex-shrink-0 disabled:opacity-50"
                     >
                       <ArrowDownTrayIcon className="h-3 w-3" />
-                      {operating && operationType === 'install'
+                      {operating && operationType === KitOperationType.Install
                         ? i18nService.t('kitInstalling')
                         : i18nService.t('kitInstall')}
                     </button>
@@ -381,6 +441,8 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
           })}
         </div>
       )}
+
+      {uninstallConfirmModal}
     </div>
   );
 };

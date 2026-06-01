@@ -8,7 +8,6 @@ import { resolveLocalizedText } from '../../services/skill';
 import { RootState } from '../../store';
 import { setInstalledKits, setMarketplaceKits } from '../../store/slices/kitSlice';
 import type { MarketplaceKit } from '../../types/kit';
-import Cog6ToothIcon from '../icons/Cog6ToothIcon';
 import SearchIcon from '../icons/SearchIcon';
 import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 
@@ -24,12 +23,11 @@ const KitsPopover: React.FC<KitsPopoverProps> = ({
   isOpen,
   onClose,
   onSelectKit,
-  onManageKits,
   anchorRef,
 }) => {
   const dispatch = useDispatch();
   const [searchQuery, setSearchQuery] = useState('');
-  const [maxListHeight, setMaxListHeight] = useState(256);
+  const [maxListHeight, setMaxListHeight] = useState(300);
   const [isLoading, setIsLoading] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -81,7 +79,7 @@ const KitsPopover: React.FC<KitsPopoverProps> = ({
       if (anchorRef.current) {
         const anchorRect = anchorRef.current.getBoundingClientRect();
         const availableHeight = anchorRect.top - 120 - 60;
-        setMaxListHeight(Math.max(120, Math.min(256, availableHeight)));
+        setMaxListHeight(Math.max(120, Math.min(300, availableHeight)));
       }
       if (searchInputRef.current) {
         setTimeout(() => searchInputRef.current?.focus(), 0);
@@ -129,41 +127,37 @@ const KitsPopover: React.FC<KitsPopoverProps> = ({
     // Don't close popover to allow multi-selection
   };
 
-  const handleManageKits = () => {
-    onManageKits();
-    onClose();
-  };
-
   if (!isOpen) return null;
 
   return (
     <div
       ref={popoverRef}
-      className="absolute bottom-full left-0 mb-2 w-72 rounded-xl border border-border bg-surface shadow-xl z-50"
+      className="absolute bottom-full left-0 z-50 mb-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-popover"
+      role="menu"
     >
       {/* Search input */}
-      <div className="p-3 border-b border-border">
+      <div className="px-3 py-2 border-b border-border">
         <div className="relative">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
+          <SearchIcon className="absolute left-1.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-secondary" />
           <input
             ref={searchInputRef}
             type="text"
             placeholder={i18nService.t('searchKits')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-full rounded-md bg-transparent py-1.5 pl-8 pr-2 text-[13px] leading-5 text-foreground placeholder-secondary focus:bg-surface-raised/70 focus:outline-none"
           />
         </div>
       </div>
 
       {/* Kits list */}
-      <div className="overflow-y-auto py-1" style={{ maxHeight: `${maxListHeight}px` }}>
+      <div className="overflow-y-auto px-2 py-1.5" style={{ maxHeight: `${maxListHeight}px` }}>
         {isLoading ? (
-          <div className="px-4 py-6 text-center text-sm text-secondary">
+          <div className="px-3 py-5 text-center text-[13px] text-secondary">
             {i18nService.t('kitLoading')}
           </div>
         ) : filteredKits.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-secondary">
+          <div className="px-3 py-5 text-center text-[13px] text-secondary">
             {i18nService.t('noKitsInstalled')}
           </div>
         ) : (
@@ -173,56 +167,41 @@ const KitsPopover: React.FC<KitsPopoverProps> = ({
               <button
                 key={kit.id}
                 onClick={() => handleSelectKit(kit.id)}
-                className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors ${
+                className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                   isActive
                     ? 'bg-surface-raised'
                     : 'hover:bg-surface-raised'
                 }`}
               >
-                <div className={`mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                <div className={`mt-[3px] flex h-5 w-5 flex-shrink-0 items-center justify-center ${
                   isActive
-                    ? 'bg-gray-200 dark:bg-gray-700'
-                    : 'bg-surface-raised'
+                    ? 'text-foreground'
+                    : 'text-secondary'
                 }`}>
-                  <SidebarKitsIcon className={`h-4 w-4 ${isActive ? 'text-foreground' : 'text-secondary'}`} />
+                  <SidebarKitsIcon className="h-[18px] w-[18px]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-medium truncate ${
-                      isActive
-                        ? 'text-foreground'
-                        : 'text-foreground'
-                    }`}>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 truncate text-[13px] font-semibold leading-5 text-foreground">
                       {resolveLocalizedText(kit.name)}
                     </span>
                     {kit.author && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-primary/10 text-primary flex-shrink-0">
+                      <span className="flex-shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-[10px] font-medium leading-none text-secondary">
                         {i18nService.t('kitOfficial')}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-secondary truncate mt-0.5">
+                  <p className="mt-0.5 truncate text-[12px] leading-4 text-secondary">
                     {resolveLocalizedText(kit.description)}
                   </p>
                 </div>
                 {isActive && (
-                  <CheckIcon className="mt-1 h-4 w-4 flex-shrink-0 text-foreground" />
+                  <CheckIcon className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-primary" />
                 )}
               </button>
             );
           })
         )}
-      </div>
-
-      {/* Footer - Manage Kits */}
-      <div className="border-t border-border">
-        <button
-          onClick={handleManageKits}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground hover:bg-surface-raised transition-colors rounded-b-xl"
-        >
-          <span>{i18nService.t('manageKits')}</span>
-          <Cog6ToothIcon className="h-4 w-4 text-secondary" />
-        </button>
       </div>
     </div>
   );

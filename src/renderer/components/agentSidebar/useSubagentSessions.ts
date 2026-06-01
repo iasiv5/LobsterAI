@@ -46,6 +46,16 @@ export const useSubagentSessions = (
     }
   }, []);
 
+  const removeSubagent = useCallback((parentSessionId: string, runId: string) => {
+    setSubagentsBySessionId((prev) => {
+      const existing = prev[parentSessionId];
+      if (!existing) return prev;
+      const next = existing.filter((subagent) => subagent.id !== runId);
+      if (next.length === existing.length) return prev;
+      return { ...prev, [parentSessionId]: next };
+    });
+  }, []);
+
   useEffect(() => {
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
@@ -73,5 +83,5 @@ export const useSubagentSessions = (
     };
   }, [currentSessionId, currentSessionStatus, fetchSubagents]);
 
-  return { subagentsBySessionId, refetchSubagents: fetchSubagents };
+  return { subagentsBySessionId, refetchSubagents: fetchSubagents, removeSubagent };
 };

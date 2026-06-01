@@ -94,11 +94,11 @@ const ImageCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove, label 
         </div>
       )}
 
-      {/* Delete button — top-right, visible on hover */}
+      {/* Delete button — top-right */}
       <button
         type="button"
         onClick={() => onRemove(attachment.path)}
-        className="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 group-hover:flex"
+        className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800"
         aria-label={i18nService.t('coworkAttachmentRemove')}
         title={i18nService.t('coworkAttachmentRemove')}
       >
@@ -117,27 +117,29 @@ const FileCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove, label }
 
   return (
     <div
-      className="group relative flex h-16 w-40 flex-shrink-0 items-center gap-2 rounded-lg border dark:border-claude-darkBorder border-claude-border bg-claude-surface dark:bg-claude-darkSurface px-2"
+      className="group relative flex h-[68px] w-[220px] flex-shrink-0 items-center gap-3 rounded-xl border border-border bg-background px-3 shadow-subtle dark:bg-surface"
       title={attachment.path}
     >
       {/* File type icon */}
-      <FileTypeIcon fileName={attachment.name} className="h-8 w-8 flex-shrink-0" />
+      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.08]">
+        <FileTypeIcon fileName={attachment.name} className="h-7 w-7 flex-shrink-0" />
+      </div>
 
       {/* File name + type label */}
-      <div className="flex min-w-0 flex-1 flex-col justify-center">
-        <span className="truncate text-xs font-medium dark:text-claude-darkText text-claude-text">
+      <div className="flex min-w-0 flex-1 flex-col justify-center pr-4">
+        <span className="truncate text-sm font-medium text-foreground">
           {label ? `${label} · ${attachment.name}` : attachment.name}
         </span>
-        <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+        <span className="mt-0.5 text-xs text-secondary">
           {typeLabel}
         </span>
       </div>
 
-      {/* Delete button — top-right, visible on hover */}
+      {/* Delete button — top-right */}
       <button
         type="button"
         onClick={() => onRemove(attachment.path)}
-        className="absolute top-1 right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-claude-surfaceHover dark:bg-claude-darkSurfaceHover text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-text dark:hover:text-claude-darkText"
+        className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800"
         aria-label={i18nService.t('coworkAttachmentRemove')}
         title={i18nService.t('coworkAttachmentRemove')}
       >

@@ -140,6 +140,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return this.runtime.getSessionConfirmationMode(sessionId);
   }
 
+  async deleteSubagentSession(parentSessionId: string, runId: string): Promise<boolean> {
+    if (!this.runtime.deleteSubagentSession) {
+      return false;
+    }
+    return this.runtime.deleteSubagentSession(parentSessionId, runId);
+  }
+
   onSessionDeleted(sessionId: string): void {
     this.sessionEngine.delete(sessionId);
     this.clearRequestEngineBySession(sessionId);

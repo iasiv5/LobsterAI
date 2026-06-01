@@ -254,8 +254,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     HtmlShareAccessMode.Code,
   );
   const [isHtmlShareEnabled, setIsHtmlShareEnabled] = useState(isTestModeEnabled);
+  const [isArtifactActionsMenuOpen, setIsArtifactActionsMenuOpen] = useState(false);
   const fileListDrawerRef = useRef<HTMLDivElement>(null);
   const fileListButtonRef = useRef<HTMLButtonElement>(null);
+  const artifactActionsMenuRef = useRef<HTMLDivElement>(null);
+  const artifactActionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const fileListDrawerAnimationFrameRef = useRef<number | undefined>(undefined);
   const fileListDrawerCloseTimeoutRef = useRef<number | undefined>(undefined);
 
@@ -298,6 +301,38 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     isHtmlShareEnabled &&
       selectedArtifact?.type === ArtifactTypeValue.Html &&
       selectedArtifact.filePath,
+  );
+  const isCompactHtmlToolbar = selectedArtifact?.type === ArtifactTypeValue.Html;
+  const isCompactArtifactToolbar = Boolean(selectedArtifact);
+  const showRefreshAction = Boolean(selectedArtifact?.filePath);
+  const showCopyAction = Boolean(selectedArtifact && isCopyableArtifact(selectedArtifact));
+  const showOpenBrowserAction = Boolean(
+    selectedArtifact && BROWSER_OPENABLE_TYPES.has(selectedArtifact.type),
+  );
+  const showOpenWithAppAction = Boolean(
+    selectedArtifact &&
+      SYSTEM_OPENABLE_TYPES.has(selectedArtifact.type) &&
+      selectedArtifact.filePath,
+  );
+  const showRevealInFolderAction = Boolean(selectedArtifact?.filePath);
+  const showPrimaryOpenWithAppAction = Boolean(!isCompactHtmlToolbar && showOpenWithAppAction);
+  const showPrimaryRevealInFolderAction = Boolean(
+    !isCompactHtmlToolbar &&
+      !showPrimaryOpenWithAppAction &&
+      showRevealInFolderAction,
+  );
+  const showOpenBrowserActionInMenu = Boolean(!isCompactHtmlToolbar && showOpenBrowserAction);
+  const showOpenWithAppActionInMenu = Boolean(isCompactHtmlToolbar && showOpenWithAppAction);
+  const showRevealInFolderActionInMenu = Boolean(
+    showRevealInFolderAction && !showPrimaryRevealInFolderAction,
+  );
+  const showArtifactActionsMenu = Boolean(
+    isCompactArtifactToolbar &&
+      (showRefreshAction ||
+        showCopyAction ||
+        showOpenBrowserActionInMenu ||
+        showOpenWithAppActionInMenu ||
+        showRevealInFolderActionInMenu),
   );
 
   const handleBrowserAddressChange = useCallback(
@@ -445,11 +480,41 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   useEffect(() => {
     if (selectedArtifact) return;
     closeFileListDrawer();
+    setIsArtifactActionsMenuOpen(false);
   }, [closeFileListDrawer, selectedArtifact]);
 
   useEffect(() => {
     closeFileListDrawer();
+    setIsArtifactActionsMenuOpen(false);
   }, [activePreviewTab?.id, closeFileListDrawer]);
+
+  useEffect(() => {
+    if (!isArtifactActionsMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        artifactActionsMenuRef.current?.contains(target) ||
+        artifactActionsMenuButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setIsArtifactActionsMenuOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsArtifactActionsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isArtifactActionsMenuOpen]);
 
   useEffect(() => {
     if (!showFileListDrawer) return;
@@ -937,6 +1002,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const handleRefreshRef = useRef(handleRefresh);
   handleRefreshRef.current = handleRefresh;
 
+  const runArtifactMenuAction = useCallback((action: () => void) => {
+    setIsArtifactActionsMenuOpen(false);
+    action();
+  }, []);
+
   return (
     <>
       {/* Drag handle */}
@@ -961,32 +1031,80 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               </span>
               <span className="text-xs uppercase text-muted">{selectedArtifact.type}</span>
               <span className="flex-1" />
-              {selectedArtifact.filePath && (
-                <button
-                  onClick={handleRefresh}
-                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
-                  title={t('artifactRefresh')}
-                >
-                  <RefreshIcon />
-                </button>
-              )}
-              {isCopyableArtifact(selectedArtifact) && (
-                <button
-                  onClick={handleCopy}
-                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
-                  title={t('artifactCopyCode')}
-                >
-                  <CopyIcon className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {BROWSER_OPENABLE_TYPES.has(selectedArtifact.type) && (
-                <button
-                  onClick={handleOpenInBrowser}
-                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
-                  title={t('artifactOpenInBrowser')}
-                >
-                  <BrowserIcon />
-                </button>
+              {showArtifactActionsMenu && (
+                <div className="relative">
+                  <button
+                    ref={artifactActionsMenuButtonRef}
+                    type="button"
+                    onClick={() => setIsArtifactActionsMenuOpen(value => !value)}
+                    className={`p-1 rounded transition-colors ${
+                      isArtifactActionsMenuOpen
+                        ? 'bg-surface text-foreground'
+                        : 'text-secondary hover:text-foreground hover:bg-surface'
+                    }`}
+                    aria-label={t('artifactActionsMenu')}
+                    title={t('artifactActionsMenu')}
+                  >
+                    <MoreHorizontalToolbarIcon />
+                  </button>
+                  {isArtifactActionsMenuOpen && (
+                    <div
+                      ref={artifactActionsMenuRef}
+                      className="absolute right-0 top-7 z-40 w-32 rounded-lg border border-border bg-surface-raised p-1.5 text-sm text-foreground shadow-xl"
+                    >
+                      {showRefreshAction && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(handleRefresh)}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <RefreshIcon />
+                          <span>{t('artifactRefresh')}</span>
+                        </button>
+                      )}
+                      {showCopyAction && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(() => void handleCopy())}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <CopyIcon className="h-3.5 w-3.5" />
+                          <span>{t('artifactCopyCode')}</span>
+                        </button>
+                      )}
+                      {showOpenBrowserActionInMenu && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(handleOpenInBrowser)}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <BrowserIcon />
+                          <span>{t('artifactOpenInBrowser')}</span>
+                        </button>
+                      )}
+                      {showOpenWithAppActionInMenu && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(handleOpenWithApp)}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <OpenExternalIcon />
+                          <span>{t('artifactOpenWithApp')}</span>
+                        </button>
+                      )}
+                      {showRevealInFolderActionInMenu && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(handleRevealInFolder)}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <FolderIcon />
+                          <span>{t('artifactOpenFolder')}</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
               {canShareHtmlArtifact && (
                 <button
@@ -998,7 +1116,16 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   <ShareIcon />
                 </button>
               )}
-              {SYSTEM_OPENABLE_TYPES.has(selectedArtifact.type) && selectedArtifact.filePath && (
+              {isCompactHtmlToolbar && showOpenBrowserAction && (
+                <button
+                  onClick={handleOpenInBrowser}
+                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
+                  title={t('artifactOpenInBrowser')}
+                >
+                  <OpenExternalIcon />
+                </button>
+              )}
+              {showPrimaryOpenWithAppAction && (
                 <button
                   onClick={handleOpenWithApp}
                   className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
@@ -1007,7 +1134,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   <OpenExternalIcon />
                 </button>
               )}
-              {selectedArtifact.filePath && (
+              {showPrimaryRevealInFolderAction && (
                 <button
                   onClick={handleRevealInFolder}
                   className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors"
@@ -2865,6 +2992,14 @@ const ShareIcon = () => (
     <circle cx="11.5" cy="12" r="1.8" />
     <path d="M5.6 7.15l4.3-2.3" />
     <path d="M5.6 8.85l4.3 2.3" />
+  </svg>
+);
+
+const MoreHorizontalToolbarIcon = () => (
+  <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor" aria-hidden="true">
+    <circle cx="4" cy="8.6" r="1.15" />
+    <circle cx="8" cy="8.6" r="1.15" />
+    <circle cx="12" cy="8.6" r="1.15" />
   </svg>
 );
 

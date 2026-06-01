@@ -9,6 +9,11 @@ import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import { type HtmlShareAccessMode, HtmlShareIpc } from '../shared/htmlShare/constants';
+import type {
+  KitReference,
+  KitSkillMetadata,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -66,7 +71,15 @@ contextBridge.exposeInMainWorld('electron', {
   },
   kits: {
     fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
-    install: (params: { kitId: string; bundleUrl: string; version: string; skillListIds: string[] }) =>
+    install: (params: {
+      kitId: string;
+      bundleUrl: string;
+      version: string;
+      skillListIds: string[];
+      skillList?: KitSkillMetadata[];
+      mcpServers?: unknown[] | null;
+      connectors?: unknown[] | null;
+    }) =>
       ipcRenderer.invoke('kits:install', params),
     uninstall: (kitId: string) => ipcRenderer.invoke('kits:uninstall', kitId),
     listInstalled: () => ipcRenderer.invoke('kits:listInstalled'),
@@ -276,6 +289,10 @@ contextBridge.exposeInMainWorld('electron', {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       agentId?: string;
       modelOverride?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
@@ -286,6 +303,10 @@ contextBridge.exposeInMainWorld('electron', {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{
@@ -344,9 +365,11 @@ contextBridge.exposeInMainWorld('electron', {
       parentSessionId: string;
       agentId: string;
       sessionKey?: string;
-    }) => ipcRenderer.invoke('cowork:subTask:history', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SubTaskHistory, options),
     listSubagentSessions: (parentSessionId: string) =>
-      ipcRenderer.invoke('cowork:subagent:list', { parentSessionId }),
+      ipcRenderer.invoke(CoworkIpcChannel.SubagentList, { parentSessionId }),
+    deleteSubagentSession: (options: { parentSessionId: string; runId: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SubagentDelete, options),
 
     // Media task management
     cancelMediaTask: (taskId: string) =>

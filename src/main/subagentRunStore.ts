@@ -84,6 +84,38 @@ export class SubagentRunStore {
     }));
   }
 
+  getSubagentRun(id: string): SubagentRun | null {
+    interface Row {
+      id: string;
+      parent_session_id: string;
+      session_key: string | null;
+      agent_id: string | null;
+      task: string | null;
+      label: string | null;
+      status: string;
+      created_at: number;
+      ended_at: number | null;
+    }
+
+    const row = this.db
+      .prepare('SELECT * FROM subagent_runs WHERE id = ?')
+      .get(id) as Row | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      parentSessionId: row.parent_session_id,
+      sessionKey: row.session_key,
+      agentId: row.agent_id,
+      task: row.task,
+      label: row.label,
+      status: row.status as SubagentRunStatus,
+      createdAt: row.created_at,
+      endedAt: row.ended_at,
+    };
+  }
+
   markMessagesPersisted(id: string): void {
     this.db.prepare('UPDATE subagent_runs SET messages_persisted = 1 WHERE id = ?')
       .run(id);
@@ -106,5 +138,10 @@ export class SubagentRunStore {
   deleteSubagentRunsByParent(parentSessionId: string): void {
     this.db.prepare('DELETE FROM subagent_runs WHERE parent_session_id = ?')
       .run(parentSessionId);
+  }
+
+  deleteSubagentRun(id: string): void {
+    this.db.prepare('DELETE FROM subagent_runs WHERE id = ?')
+      .run(id);
   }
 }

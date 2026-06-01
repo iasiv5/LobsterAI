@@ -9,11 +9,13 @@ import { selectIsStreaming } from '../../store/selectors/coworkSelectors';
 import DiffView, { extractDiffFromToolInput } from './DiffView';
 import {
   formatToolInput,
+  getLargeToolResultSummary,
+  getRetainedMediaPollCount,
   getToolDisplayName,
   getToolInputSummary,
-  getRetainedMediaPollCount,
+  getToolResultCollapsedDisplay,
   getToolResultDisplay,
-  getToolResultLineCount,
+  getToolResultLineCountSummary,
   hasText,
   isBashLikeToolName,
   isCronToolName,
@@ -22,8 +24,8 @@ import {
   isMediaStatusPollRunning,
   isTodoWriteToolName,
   normalizeToolName,
-  parseMediaStreamingInfo,
   type ParsedTodoItem,
+  parseMediaStreamingInfo,
   parseTodoWriteItems,
   type TodoStatus,
   type ToolGroupItem,
@@ -98,18 +100,31 @@ const ToolCallGroup: React.FC<{
   const toolInputDisplay = toolInputDisplayRaw ? mapText(toolInputDisplayRaw) : null;
   const toolInputSummaryRaw = getToolInputSummary(rawToolName, toolInput) ?? toolInputDisplayRaw;
   const toolInputSummary = toolInputSummaryRaw ? mapText(toolInputSummaryRaw) : null;
-  const toolResultDisplayRaw = toolResult ? getToolResultDisplay(toolResult) : '';
-  const toolResultDisplay = mapText(toolResultDisplayRaw);
-  const hasToolResultText = hasText(toolResultDisplay);
+  const [isExpanded, setIsExpanded] = useState(shouldExpandByDefault);
+  const collapsedToolResult = toolResult ? getToolResultCollapsedDisplay(toolResult) : null;
+  const toolResultDisplayRaw = toolResult && isExpanded ? getToolResultDisplay(toolResult) : '';
+  const toolResultDisplay = toolResultDisplayRaw ? mapText(toolResultDisplayRaw) : '';
+  const hasExpandedToolResultText = hasText(toolResultDisplay);
+  const hasToolResultText = isExpanded
+    ? hasExpandedToolResultText
+    : Boolean(collapsedToolResult?.hasText);
   const isToolError = Boolean(toolResult?.metadata?.isError || toolResult?.metadata?.error);
   const showNoDetailError = isToolError && !hasToolResultText;
   const toolResultFallback = showNoDetailError ? i18nService.t('coworkToolNoErrorDetail') : '';
-  const displayToolResult = hasToolResultText ? toolResultDisplay : toolResultFallback;
-  const [isExpanded, setIsExpanded] = useState(shouldExpandByDefault);
-  const resultLineCount = hasToolResultText ? getToolResultLineCount(toolResultDisplay) : 0;
-  const toolResultSummary = isCronTool && hasToolResultText
-    ? truncatePreview(toolResultDisplay.replace(/\s+/g, ' '))
-    : null;
+  const displayToolResult = hasExpandedToolResultText ? toolResultDisplay : toolResultFallback;
+  const collapsedToolResultPreview = collapsedToolResult?.text
+    ? mapText(collapsedToolResult.text)
+    : '';
+  const toolResultSummary = (() => {
+    if (!collapsedToolResult?.hasText) return null;
+    if (isCronTool && hasText(collapsedToolResultPreview)) {
+      return truncatePreview(collapsedToolResultPreview.replace(/\s+/g, ' '));
+    }
+    if (collapsedToolResult.isLarge && collapsedToolResult.sizeLabel) {
+      return getLargeToolResultSummary(collapsedToolResult.sizeLabel);
+    }
+    return getToolResultLineCountSummary(collapsedToolResult.lineCount);
+  })();
 
   const isBashTool = isBashLikeToolName(rawToolName);
 
@@ -157,7 +172,7 @@ const ToolCallGroup: React.FC<{
                   : 'text-muted'
             }`}>
               {hasToolResultText
-                ? (toolResultSummary ?? `${resultLineCount} ${resultLineCount === 1 ? 'line' : 'lines'} of output`)
+                ? toolResultSummary
                 : toolResultFallback}
             </div>
           )}

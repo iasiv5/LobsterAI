@@ -546,7 +546,7 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled 
         className={`flex h-[34px] w-[34px] items-center justify-center rounded-lg transition-colors ${
           selection && selection.mode !== 'none'
             ? 'text-foreground hover:bg-surface-raised'
-            : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+            : 'text-secondary hover:bg-surface-raised hover:text-foreground/80'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         {triggerIcon}

@@ -14,6 +14,10 @@ import {
   CoworkForkMode,
   type CoworkForkMode as CoworkForkModeType,
 } from '../shared/cowork/constants';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 
 
 // Default working directory for new users
@@ -384,6 +388,9 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   skillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;

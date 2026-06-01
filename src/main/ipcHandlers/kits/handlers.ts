@@ -5,6 +5,11 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 
+import type {
+  InstalledKitRecord,
+  KitSkillMetadata,
+  LocalizedText,
+} from '../../../shared/kit/constants';
 import { cpRecursiveSync } from '../../fsCompat';
 import type { SkillManager } from '../../skillManager';
 import type { SqliteStore } from '../../sqliteStore';
@@ -44,14 +49,52 @@ export interface KitHandlerDeps {
   getSkillManager: () => SkillManager;
 }
 
-interface InstalledKitRecord {
-  id: string;
-  version: string;
-  installedAt: number;
-  skillIds: string[];
-}
-
 type InstalledKitsMap = Record<string, InstalledKitRecord>;
+
+const normalizeCapabilityList = (value: unknown): unknown[] => (
+  Array.isArray(value) ? value : []
+);
+
+const normalizeLocalizedText = (value: unknown): string | LocalizedText | undefined => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const en = typeof record.en === 'string' ? record.en.trim() : '';
+  const zh = typeof record.zh === 'string' ? record.zh.trim() : '';
+  if (!en && !zh) return undefined;
+  return {
+    en: en || zh,
+    zh: zh || en,
+  };
+};
+
+const normalizeKitSkillMetadataList = (value: unknown): Map<string, KitSkillMetadata> => {
+  const metadata = new Map<string, KitSkillMetadata>();
+  if (!Array.isArray(value)) return metadata;
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    if (!id) continue;
+
+    const name = normalizeLocalizedText(record.name);
+    const description = normalizeLocalizedText(record.description);
+    metadata.set(id, {
+      id,
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {}),
+    });
+  }
+
+  return metadata;
+};
 
 function getSkillsRoot(): string {
   return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
@@ -109,6 +152,7 @@ function collectSkillDirs(source: string): string[] {
 function listSkillDirs(root: string): string[] {
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root)
+    .sort((a, b) => a.localeCompare(b))
     .map(entry => path.join(root, entry))
     .filter(entryPath => {
       try {
@@ -176,6 +220,9 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
     bundleUrl: string;
     version: string;
     skillListIds: string[];
+    skillList?: KitSkillMetadata[];
+    mcpServers?: unknown[] | null;
+    connectors?: unknown[] | null;
   }) => {
     const { kitId, bundleUrl, version, skillListIds: _skillListIds } = params;
     console.log(`[KitStore] Installing kit "${kitId}" v${version} from ${bundleUrl}`);
@@ -211,6 +258,8 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
       // 4. Copy skills to user SKILLs directory
       const root = ensureSkillsRoot();
       const installedSkillIds: string[] = [];
+      const installedSkillMetadata: Record<string, KitSkillMetadata> = {};
+      const sourceSkillMetadata = normalizeKitSkillMetadataList(params.skillList);
 
       for (const skillDir of skillDirs) {
         const folderName = normalizeFolderName(path.basename(skillDir));
@@ -222,7 +271,18 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
         }
         cpRecursiveSync(skillDir, targetDir);
         normalizeWindowsAttrs(targetDir);
-        installedSkillIds.push(path.basename(targetDir));
+        const installedSkillId = path.basename(targetDir);
+        installedSkillIds.push(installedSkillId);
+
+        const sourceSkillId = path.basename(skillDir);
+        const metadata = sourceSkillMetadata.get(sourceSkillId) ?? sourceSkillMetadata.get(folderName);
+        if (metadata?.name || metadata?.description) {
+          installedSkillMetadata[installedSkillId] = {
+            id: installedSkillId,
+            ...(metadata.name ? { name: metadata.name } : {}),
+            ...(metadata.description ? { description: metadata.description } : {}),
+          };
+        }
       }
 
       // 5. Enable installed skills
@@ -239,7 +299,14 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
         id: kitId,
         version,
         installedAt: Date.now(),
-        skillIds: installedSkillIds,
+        skills: installedSkillIds.length > 0
+          ? {
+            skillIds: installedSkillIds,
+            ...(Object.keys(installedSkillMetadata).length > 0 ? { metadata: installedSkillMetadata } : {}),
+          }
+          : null,
+        mcpServers: normalizeCapabilityList(params.mcpServers),
+        connectors: normalizeCapabilityList(params.connectors),
       };
       getStore().set(KITS_INSTALLED_KEY, installedMap);
 
@@ -276,7 +343,7 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
       const root = getSkillsRoot();
       const stateMap = getStore().get<Record<string, { enabled: boolean }>>('skills_state') ?? {};
 
-      for (const skillId of kitRecord.skillIds) {
+      for (const skillId of kitRecord.skills?.skillIds ?? []) {
         const skillDir = path.resolve(root, skillId);
         if (fs.existsSync(skillDir)) {
           try {

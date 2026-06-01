@@ -10,6 +10,10 @@ import {
   CoworkSystemMessageKind,
 } from '../../../common/coworkSystemMessages';
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../../../shared/kit/constants';
 import type { CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
@@ -1425,6 +1429,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private static readonly GATEWAY_RPC_DEGRADED_MS = 30_000;
   private static readonly SESSION_MODEL_PATCH_CONFIRMED_TTL_MS = 10 * 60_000;
   private static readonly SESSION_PATCH_TIMEOUT_MS = 30_000;
+  private static readonly SESSION_PATCH_SLOW_LOG_MS = 5_000;
 
   private emitSessionStatus(sessionId: string, status: CoworkSessionStatus): void {
     this.emit('sessionStatus', sessionId, status);
@@ -1720,6 +1725,75 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private recordGatewayRpcFailure(method: string, error: unknown): void {
     if (this.isGatewayRequestTimeout(error, method)) {
       this.markGatewayRpcTimeout(method, error);
+    }
+  }
+
+  private async requestSessionPatchWithProfile(options: {
+    sessionId: string;
+    sessionKey: string;
+    patch: OpenClawSessionPatch;
+    source: string;
+    reason: string;
+    timeoutMs?: number;
+  }): Promise<void> {
+    const { sessionId, sessionKey, patch, source, reason } = options;
+    const timeoutMs = options.timeoutMs ?? OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS;
+    const patchKeys = Object.entries(patch)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => key);
+    const model = typeof patch.model === 'string' && patch.model ? patch.model : '-';
+    const startedAtMs = Date.now();
+
+    console.debug(
+      '[OpenClawRuntime] sessions.patch started.',
+      `Session ${sessionId}.`,
+      `OpenClaw key ${sessionKey}.`,
+      `Reason ${reason}.`,
+      `Source ${source}.`,
+      `Patch fields ${patchKeys.join(',') || 'none'}.`,
+      `Model ${model}.`,
+      `Timeout ${timeoutMs}ms.`,
+    );
+
+    try {
+      const client = this.requireGatewayClient();
+      await client.request('sessions.patch', {
+        key: sessionKey,
+        ...patch,
+      }, { timeoutMs });
+    } catch (error) {
+      const elapsedMs = Date.now() - startedAtMs;
+      console.warn(
+        `[OpenClawRuntime] sessions.patch failed after ${elapsedMs}ms.`,
+        `Session ${sessionId}.`,
+        `OpenClaw key ${sessionKey}.`,
+        `Reason ${reason}.`,
+        `Source ${source}.`,
+        `Patch fields ${patchKeys.join(',') || 'none'}.`,
+        `Model ${model}.`,
+        `Timeout ${timeoutMs}ms.`,
+        error,
+      );
+      throw error;
+    }
+
+    const elapsedMs = Date.now() - startedAtMs;
+    const message = elapsedMs >= OpenClawRuntimeAdapter.SESSION_PATCH_SLOW_LOG_MS
+      ? `[OpenClawRuntime] sessions.patch completed slowly in ${elapsedMs}ms.`
+      : `[OpenClawRuntime] sessions.patch completed in ${elapsedMs}ms.`;
+    const details = [
+      `Session ${sessionId}.`,
+      `OpenClaw key ${sessionKey}.`,
+      `Reason ${reason}.`,
+      `Source ${source}.`,
+      `Patch fields ${patchKeys.join(',') || 'none'}.`,
+      `Model ${model}.`,
+      `Timeout ${timeoutMs}ms.`,
+    ];
+    if (elapsedMs >= OpenClawRuntimeAdapter.SESSION_PATCH_SLOW_LOG_MS) {
+      console.warn(message, ...details);
+    } else {
+      console.debug(message, ...details);
     }
   }
 
@@ -2487,6 +2561,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
+      messageSkillIds: options.messageSkillIds,
+      kitIds: options.kitIds,
+      kitReferences: options.kitReferences,
+      resolvedKitCapabilities: options.resolvedKitCapabilities,
       systemPrompt: options.systemPrompt,
       confirmationMode: options.confirmationMode,
       imageAttachments: options.imageAttachments,
@@ -2501,6 +2579,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage: false,
       systemPrompt: options.systemPrompt,
       skillIds: options.skillIds,
+      messageSkillIds: options.messageSkillIds,
+      kitIds: options.kitIds,
+      kitReferences: options.kitReferences,
+      resolvedKitCapabilities: options.resolvedKitCapabilities,
       imageAttachments: options.imageAttachments,
       mediaSelection: options.mediaSelection,
       mediaReferences: options.mediaReferences,
@@ -2541,12 +2623,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
 
     const sendPatch = async (): Promise<void> => {
-      const client = this.requireGatewayClient();
       try {
-        await client.request('sessions.patch', {
-          key: targetSessionKey,
-          ...normalizedPatch,
-        }, { timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS });
+        await this.requestSessionPatchWithProfile({
+          sessionId,
+          sessionKey: targetSessionKey,
+          patch: normalizedPatch,
+          source: 'patchSession',
+          reason: 'user-requested session patch',
+          timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS,
+        });
         this.markGatewayRpcSuccess();
       } catch (error) {
         this.recordGatewayRpcFailure('sessions.patch', error);
@@ -2698,10 +2783,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const confirmedState = this.getConfirmedSessionModelPatch(sessionId, sessionKey, model, source);
     if (source === SessionModelPatchSource.AgentModel && confirmedState) {
+      console.debug(
+        '[OpenClawRuntime] skipped sessions.patch before chat.send because the agent model is already confirmed.',
+        `Session ${sessionId}.`,
+        `OpenClaw key ${sessionKey}.`,
+        `Model ${model}.`,
+      );
       return;
     }
     if (confirmedState && this.isGatewayRpcDegraded()) {
-      console.warn(`[OpenClawRuntime] skipped redundant session model patch for session ${sessionId} because gateway session RPCs are degraded.`);
+      console.warn(
+        '[OpenClawRuntime] skipped redundant sessions.patch before chat.send because gateway session RPCs are degraded.',
+        `Session ${sessionId}.`,
+        `OpenClaw key ${sessionKey}.`,
+        `Model ${model}.`,
+        `Source ${source}.`,
+      );
       return;
     }
 
@@ -2709,21 +2806,31 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       await this.enqueueSessionModelPatch(sessionId, async () => {
         const currentConfirmedState = this.getConfirmedSessionModelPatch(sessionId, sessionKey, model, source);
         if (source === SessionModelPatchSource.AgentModel && currentConfirmedState) {
+          console.debug(
+            '[OpenClawRuntime] skipped queued sessions.patch before chat.send because the agent model is already confirmed.',
+            `Session ${sessionId}.`,
+            `OpenClaw key ${sessionKey}.`,
+            `Model ${model}.`,
+          );
           return;
         }
         if (currentConfirmedState && this.isGatewayRpcDegraded()) {
+          console.warn(
+            '[OpenClawRuntime] skipped queued redundant sessions.patch before chat.send because gateway session RPCs are degraded.',
+            `Session ${sessionId}.`,
+            `OpenClaw key ${sessionKey}.`,
+            `Model ${model}.`,
+            `Source ${source}.`,
+          );
           return;
         }
 
-        const client = this.requireGatewayClient();
-        console.debug(
-          '[OpenClawRuntime] patching the session model before chat.send',
-          `sessionId=${sessionId}`,
-          `sessionKey=${sessionKey}`,
-          `model=${model}`,
-          `source=${source}`,
-        );
-        await client.request('sessions.patch', { key: sessionKey, model }, {
+        await this.requestSessionPatchWithProfile({
+          sessionId,
+          sessionKey,
+          patch: { model },
+          source,
+          reason: 'model sync before chat.send',
           timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS,
         });
         this.markGatewayRpcSuccess();
@@ -2751,6 +2858,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage?: boolean;
       systemPrompt?: string;
       skillIds?: string[];
+      messageSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       confirmationMode?: 'modal' | 'text';
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       agentId?: string;
@@ -2779,9 +2890,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.confirmationModeBySession.set(sessionId, confirmationMode);
 
     if (!options.skipInitialUserMessage) {
-      const metadata = (options.skillIds?.length || options.imageAttachments?.length)
+      const messageSkillIds = options.messageSkillIds ?? options.skillIds;
+      const metadata = (messageSkillIds?.length || options.kitIds?.length || options.imageAttachments?.length)
         ? {
-          ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
+          ...(messageSkillIds?.length ? { skillIds: messageSkillIds } : {}),
+          ...(options.kitIds?.length ? {
+            kitIds: options.kitIds,
+            ...(options.kitReferences?.length ? { kitReferences: options.kitReferences } : {}),
+            ...(options.resolvedKitCapabilities ? { resolvedKitCapabilities: options.resolvedKitCapabilities } : {}),
+          } : {}),
           ...(options.imageAttachments?.length ? { imageAttachments: options.imageAttachments } : {}),
         }
         : undefined;
@@ -3904,8 +4021,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private handleGatewayEvent(event: GatewayEventFrame): void {
+    // Any event from the gateway proves the connection is alive.
+    // Previously only 'tick' updated this timestamp, but during heavy exec
+    // streaming the gateway's tick timer gets starved by I/O while other
+    // events (agent, tool updates) keep flowing — causing false-positive
+    // disconnect from the TickWatchdog.
+    this.lastTickTimestamp = Date.now();
+
     if (event.event === 'tick') {
-      this.lastTickTimestamp = Date.now();
       return;
     }
 
@@ -7005,6 +7128,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     sessionKey?: string,
   ) {
     return this.subagentTracker.getSubTaskHistory(parentSessionId, agentId, sessionKey);
+  }
+
+  async deleteSubagentSession(parentSessionId: string, runId: string): Promise<boolean> {
+    return this.subagentTracker.deleteSubagentRun(parentSessionId, runId);
   }
 
   /**

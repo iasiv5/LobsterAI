@@ -7,7 +7,7 @@ export interface Skill {
   isOfficial: boolean;    // "官方" badge
   isBuiltIn: boolean;     // Bundled with app, cannot be deleted
   updatedAt: number;      // Timestamp
-  prompt: string;         // System prompt content
+  prompt: string;         // SKILL.md body for management; do not inline into Cowork prompts
   skillPath: string;      // Absolute path to SKILL.md
   version?: string;       // Skill version from SKILL.md frontmatter
 }

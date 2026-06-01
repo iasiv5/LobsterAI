@@ -33,6 +33,7 @@ import {
   selectPanelWidth,
   togglePanel,
 } from '../../store/slices/artifactSlice';
+import { setActiveKitIds } from '../../store/slices/kitSlice';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { Artifact } from '../../types/artifact';
 import { ArtifactTypeValue, PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
@@ -507,6 +508,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const lastMessageContent = useSelector(selectLastMessageContent);
   const messagesLength = useSelector(selectCurrentMessagesLength);
   const skills = useSelector((state: RootState) => state.skill.skills);
+  const marketplaceKits = useSelector((state: RootState) => state.kit.marketplaceKits);
   const contextUsage = useSelector((state: RootState) =>
     currentSession?.id ? state.cowork.contextUsageBySessionId[currentSession.id] : undefined
   );
@@ -1926,10 +1928,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const imageAttachments = ((message.metadata as CoworkMessageMetadata)?.imageAttachments ?? []) as CoworkImageAttachment[];
     ref.setImageAttachments(imageAttachments);
     // Restore active skills
-    const skillIds = (message.metadata as CoworkMessageMetadata)?.skillIds;
-    if (skillIds && skillIds.length > 0) {
-      dispatch(setActiveSkillIds(skillIds));
-    }
+    const skillIds = (message.metadata as CoworkMessageMetadata)?.skillIds ?? [];
+    dispatch(setActiveSkillIds(skillIds));
+    const kitIds = (message.metadata as CoworkMessageMetadata)?.kitIds ?? [];
+    dispatch(setActiveKitIds(kitIds));
     // Focus the input
     ref.focus();
   }, [dispatch]);
@@ -2045,14 +2047,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const alwaysRender = index >= turns.length - 3;
 
       // Compute rail indices for user/assistant messages (must match rail IIFE logic)
-      let asstContent = '';
-      for (const item of turn.assistantItems) {
-        if (item.type === 'assistant' && item.message?.content) {
-          asstContent += item.message.content;
-        }
-      }
+      const hasAssistantContent = turn.assistantItems.some(
+        item => item.type === 'assistant' && Boolean(item.message?.content),
+      );
       const userRailIdx = turn.userMessage ? railCounter++ : -1;
-      const asstRailIdx = asstContent ? railCounter++ : -1;
+      const asstRailIdx = hasAssistantContent ? railCounter++ : -1;
 
       const turnMessageIds = new Set<string>();
       for (const item of turn.assistantItems) {
@@ -2073,7 +2072,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <LazyRenderTurn key={turn.id} turnId={turn.id} alwaysRender={alwaysRender} data-turn-index={index}>
           {turn.userMessage && (
             <div data-export-role="user-message" className={isLastTurn ? 'animate-message-in' : undefined} {...(userRailIdx >= 0 ? { 'data-rail-index': userRailIdx } : undefined)}>
-              <UserMessageItem message={turn.userMessage} skills={skills} onReEdit={remoteManaged ? undefined : handleReEdit} />
+              <UserMessageItem
+                message={turn.userMessage}
+                skills={skills}
+                marketplaceKits={marketplaceKits}
+                onReEdit={remoteManaged ? undefined : handleReEdit}
+              />
             </div>
           )}
           {showAssistantBlock && (

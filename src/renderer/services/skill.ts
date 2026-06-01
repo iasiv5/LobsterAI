@@ -38,6 +38,7 @@ class SkillService {
   private initialized = false;
   private localSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private marketplaceSkillDescriptions: Map<string, string | LocalizedText> = new Map();
+  private installedKitSkillDescriptions: Map<string, string | LocalizedText> = new Map();
   private marketplaceCache: { skills: MarketplaceSkill[]; tags: MarketTag[] } | null = null;
   private marketplaceFetchPromise: Promise<{ skills: MarketplaceSkill[]; tags: MarketTag[] }> | null = null;
 
@@ -55,6 +56,7 @@ class SkillService {
       } else {
         this.skills = [];
       }
+      await this.loadInstalledKitSkillDescriptions();
       return this.skills;
     } catch (error) {
       console.error('Failed to load skills:', error);
@@ -226,7 +228,9 @@ class SkillService {
     }
   }
   hasLocalizedSkillDescriptions(): boolean {
-    return this.localSkillDescriptions.size > 0 || this.marketplaceSkillDescriptions.size > 0;
+    return this.localSkillDescriptions.size > 0
+      || this.marketplaceSkillDescriptions.size > 0
+      || this.installedKitSkillDescriptions.size > 0;
   }
 
   async fetchMarketplaceSkills(): Promise<{ skills: MarketplaceSkill[]; tags: MarketTag[] }> {
@@ -275,11 +279,32 @@ class SkillService {
     }
   }
 
+  private async loadInstalledKitSkillDescriptions(): Promise<void> {
+    this.installedKitSkillDescriptions.clear();
+    try {
+      const result = await window.electron.kits.listInstalled();
+      if (!result.success || !result.installed) return;
+
+      for (const kit of Object.values(result.installed)) {
+        const metadata = kit.skills?.metadata ?? {};
+        for (const [skillId, skillMetadata] of Object.entries(metadata)) {
+          if (skillMetadata.description != null) {
+            this.installedKitSkillDescriptions.set(skillId, skillMetadata.description);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load installed kit skill descriptions:', error);
+    }
+  }
+
   getLocalizedSkillDescription(skillId: string, skillName: string, fallback: string): string {
     const localDesc = this.localSkillDescriptions.get(skillName) ?? this.localSkillDescriptions.get(skillId);
     if (localDesc != null) return resolveLocalizedText(localDesc);
     const marketDesc = this.marketplaceSkillDescriptions.get(skillId);
     if (marketDesc != null) return resolveLocalizedText(marketDesc);
+    const kitDesc = this.installedKitSkillDescriptions.get(skillId);
+    if (kitDesc != null) return resolveLocalizedText(kitDesc);
     return fallback;
   }
 }

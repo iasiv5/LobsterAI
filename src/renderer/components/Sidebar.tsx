@@ -341,18 +341,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             type="button"
             onClick={() => {
               setIsSearchOpen(false);
-              onShowSkills();
-            }}
-            className={activeView === 'skills' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === 'skills' ? 'page' : undefined}
-          >
-            <SkillIcon className="h-4 w-4 shrink-0" />
-            {i18nService.t('skills')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(false);
               onShowKits();
             }}
             className={activeView === 'kits' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
@@ -360,6 +348,18 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <SidebarKitsIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('kits')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              onShowSkills();
+            }}
+            className={activeView === 'skills' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'skills' ? 'page' : undefined}
+          >
+            <SkillIcon className="h-4 w-4 shrink-0" />
+            {i18nService.t('skills')}
           </button>
           <button
             type="button"

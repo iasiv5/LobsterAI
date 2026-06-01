@@ -672,6 +672,10 @@ class CoworkService {
       prompt: options.prompt,
       systemPrompt: options.systemPrompt,
       activeSkillIds: options.activeSkillIds,
+      runtimeSkillIds: options.runtimeSkillIds,
+      kitIds: options.kitIds,
+      kitReferences: options.kitReferences,
+      resolvedKitCapabilities: options.resolvedKitCapabilities,
       imageAttachments: options.imageAttachments,
       mediaSelection: options.mediaSelection,
       mediaReferences: options.mediaReferences,
@@ -757,6 +761,19 @@ class CoworkService {
     }
 
     console.error('Failed to batch delete sessions:', result.error);
+    return false;
+  }
+
+  async deleteSubagentSession(parentSessionId: string, runId: string): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.deleteSubagentSession) return false;
+
+    const result = await cowork.deleteSubagentSession({ parentSessionId, runId });
+    if (result.success) {
+      return result.deleted ?? true;
+    }
+
+    console.error('Failed to delete subagent session:', result.error);
     return false;
   }
 
