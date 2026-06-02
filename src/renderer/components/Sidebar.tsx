@@ -13,6 +13,12 @@ import {
 } from '../store/selectors/coworkSelectors';
 import type { CoworkSessionSummary } from '../types/cowork';
 import { getAgentDisplayNameById } from '../utils/agentDisplay';
+import {
+  type AgentSidebarBatchItem,
+  AgentSidebarBatchItemKind,
+  type AgentSidebarSubagentBatchItem,
+  createSessionBatchKey,
+} from './agentSidebar/batchSelection';
 import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
 import Modal from './common/Modal';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
@@ -75,9 +81,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [batchAgentId, setBatchAgentId] = useState<string | null>(null);
-  const [batchSelectableIds, setBatchSelectableIds] = useState<string[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchSelectableItems, setBatchSelectableItems] = useState<AgentSidebarBatchItem[]>([]);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>([]);
+  const [deletedSubagentItems, setDeletedSubagentItems] = useState<AgentSidebarSubagentBatchItem[]>([]);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -87,12 +94,20 @@ const Sidebar: React.FC<SidebarProps> = ({
   const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const agentScrollContainerRef = useRef<HTMLDivElement>(null);
   const isMac = window.electron.platform === 'darwin';
-  const batchSelectableIdSet = useMemo(() => new Set(batchSelectableIds), [batchSelectableIds]);
+  const batchSelectableKeySet = useMemo(
+    () => new Set(batchSelectableItems.map((item) => item.key)),
+    [batchSelectableItems],
+  );
+  const batchSelectableItemByKey = useMemo(() => {
+    const itemByKey = new Map<string, AgentSidebarBatchItem>();
+    batchSelectableItems.forEach((item) => itemByKey.set(item.key, item));
+    return itemByKey;
+  }, [batchSelectableItems]);
   const selectedBatchSelectableCount = useMemo(() => {
-    return batchSelectableIds.filter((sessionId) => selectedIds.has(sessionId)).length;
-  }, [batchSelectableIds, selectedIds]);
+    return batchSelectableItems.filter((item) => selectedKeys.has(item.key)).length;
+  }, [batchSelectableItems, selectedKeys]);
   const isBatchSelectAllChecked =
-    batchSelectableIds.length > 0 && selectedBatchSelectableCount === batchSelectableIds.length;
+    batchSelectableItems.length > 0 && selectedBatchSelectableCount === batchSelectableItems.length;
   const batchAgentName = batchAgentId ? getAgentDisplayNameById(batchAgentId, agents) : null;
 
   useEffect(() => {
@@ -111,8 +126,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     setIsSearchOpen(false);
     setIsBatchMode(false);
     setBatchAgentId(null);
-    setBatchSelectableIds([]);
-    setSelectedIds(new Set());
+    setBatchSelectableItems([]);
+    setSelectedKeys(new Set());
     setShowBatchDeleteConfirm(false);
   }, [isCollapsed]);
 
@@ -129,24 +144,24 @@ const Sidebar: React.FC<SidebarProps> = ({
   const handleEnterBatchMode = useCallback((sessionId: string, agentId: string) => {
     setIsBatchMode(true);
     setBatchAgentId(agentId);
-    setBatchSelectableIds([]);
-    setSelectedIds(new Set([sessionId]));
+    setBatchSelectableItems([]);
+    setSelectedKeys(new Set([createSessionBatchKey(sessionId)]));
   }, []);
 
   const handleExitBatchMode = useCallback(() => {
     setIsBatchMode(false);
     setBatchAgentId(null);
-    setBatchSelectableIds([]);
-    setSelectedIds(new Set());
+    setBatchSelectableItems([]);
+    setSelectedKeys(new Set());
     setShowBatchDeleteConfirm(false);
   }, []);
 
-  const handleBatchSelectableIdsChange = useCallback((sessionIds: string[]) => {
-    setBatchSelectableIds(sessionIds);
-    setSelectedIds((previous) => {
-      if (!batchAgentId || sessionIds.length === 0) return previous;
-      const sessionIdSet = new Set(sessionIds);
-      const next = new Set(Array.from(previous).filter((sessionId) => sessionIdSet.has(sessionId)));
+  const handleBatchSelectableItemsChange = useCallback((items: AgentSidebarBatchItem[]) => {
+    setBatchSelectableItems(items);
+    setSelectedKeys((previous) => {
+      if (!batchAgentId || items.length === 0) return previous;
+      const itemKeySet = new Set(items.map((item) => item.key));
+      const next = new Set(Array.from(previous).filter((key) => itemKeySet.has(key)));
       return next.size === previous.size ? previous : next;
     });
   }, [batchAgentId]);
@@ -177,46 +192,72 @@ const Sidebar: React.FC<SidebarProps> = ({
     updateAgentScrollEdges(event.currentTarget);
   }, [updateAgentScrollEdges]);
 
-  const handleToggleSelection = useCallback((sessionId: string, agentId: string) => {
+  const handleToggleSelection = useCallback((selectionKey: string, agentId: string) => {
     if (batchAgentId && normalizeAgentId(agentId) !== batchAgentId) return;
-    setSelectedIds(prev => {
+    setSelectedKeys(prev => {
       const next = new Set(prev);
-      if (next.has(sessionId)) {
-        next.delete(sessionId);
+      if (next.has(selectionKey)) {
+        next.delete(selectionKey);
       } else {
-        next.add(sessionId);
+        next.add(selectionKey);
       }
       return next;
     });
   }, [batchAgentId]);
 
   const handleSelectAll = useCallback(() => {
-    if (batchSelectableIds.length === 0) return;
-    setSelectedIds(prev => {
-      const selectedVisibleCount = batchSelectableIds.filter((sessionId) => prev.has(sessionId)).length;
-      if (selectedVisibleCount === batchSelectableIds.length) {
+    if (batchSelectableItems.length === 0) return;
+    setSelectedKeys(prev => {
+      const selectedVisibleCount = batchSelectableItems.filter((item) => prev.has(item.key)).length;
+      if (selectedVisibleCount === batchSelectableItems.length) {
         return new Set();
       }
-      return new Set(batchSelectableIds);
+      return new Set(batchSelectableItems.map((item) => item.key));
     });
-  }, [batchSelectableIds]);
+  }, [batchSelectableItems]);
 
   const handleBatchDeleteClick = useCallback(() => {
-    if (selectedIds.size === 0) return;
+    if (selectedKeys.size === 0) return;
     setShowBatchDeleteConfirm(true);
-  }, [selectedIds.size]);
+  }, [selectedKeys.size]);
 
   const handleBatchDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds).filter((sessionId) => {
-      return batchSelectableIdSet.size === 0 || batchSelectableIdSet.has(sessionId);
-    });
-    if (ids.length === 0) return;
-    const deleted = await coworkService.deleteSessions(ids);
-    if (!deleted) return;
-    setDeletedSessionIds(ids);
+    if (selectedKeys.size === 0) return;
+    const items = Array.from(selectedKeys)
+      .filter((key) => batchSelectableKeySet.size === 0 || batchSelectableKeySet.has(key))
+      .map((key) => batchSelectableItemByKey.get(key))
+      .filter((item): item is AgentSidebarBatchItem => Boolean(item));
+    if (items.length === 0) return;
+
+    const subagentItems = items.filter(
+      (item): item is AgentSidebarSubagentBatchItem => item.kind === AgentSidebarBatchItemKind.Subagent,
+    );
+    const sessionIds = items
+      .filter((item) => item.kind === AgentSidebarBatchItemKind.Session)
+      .map((item) => item.sessionId);
+
+    const deletedSubagents: AgentSidebarSubagentBatchItem[] = [];
+    for (const item of subagentItems) {
+      const deleted = await coworkService.deleteSubagentSession(item.parentSessionId, item.runId);
+      if (deleted) {
+        deletedSubagents.push(item);
+      }
+    }
+
+    let deletedSessions = false;
+    if (sessionIds.length > 0) {
+      deletedSessions = await coworkService.deleteSessions(sessionIds);
+    }
+
+    if (!deletedSessions && deletedSubagents.length === 0) return;
+    if (deletedSessions) {
+      setDeletedSessionIds(sessionIds);
+    }
+    if (deletedSubagents.length > 0) {
+      setDeletedSubagentItems(deletedSubagents);
+    }
     handleExitBatchMode();
-  }, [batchSelectableIdSet, selectedIds, handleExitBatchMode]);
+  }, [batchSelectableItemByKey, batchSelectableKeySet, selectedKeys, handleExitBatchMode]);
 
   const handleResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (isCollapsed) return;
@@ -385,11 +426,12 @@ const Sidebar: React.FC<SidebarProps> = ({
             isBatchMode={isBatchMode}
             batchAgentId={batchAgentId}
             deletedSessionIds={deletedSessionIds}
-            selectedIds={selectedIds}
+            deletedSubagentItems={deletedSubagentItems}
+            selectedKeys={selectedKeys}
             onShowCowork={onShowCowork}
             onToggleSelection={handleToggleSelection}
             onEnterBatchMode={handleEnterBatchMode}
-            onBatchSelectableIdsChange={handleBatchSelectableIdsChange}
+            onBatchSelectableItemsChange={handleBatchSelectableItemsChange}
           />
         </div>
         <div
@@ -428,7 +470,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               {i18nService
                 .t('batchSelectionScope')
                 .replace('{agent}', batchAgentName ?? '')
-                .replace('{count}', String(selectedIds.size))}
+                .replace('{count}', String(selectedKeys.size))}
             </span>
             <button
               type="button"
@@ -444,7 +486,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 type="checkbox"
                 checked={isBatchSelectAllChecked}
                 onChange={handleSelectAll}
-                disabled={batchSelectableIds.length === 0}
+                disabled={batchSelectableItems.length === 0}
                 className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 accent-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600"
               />
               <span className="truncate">{i18nService.t('batchSelectAll')}</span>
@@ -452,15 +494,15 @@ const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={handleBatchDeleteClick}
-              disabled={selectedIds.size === 0}
+              disabled={selectedKeys.size === 0}
               className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] font-medium transition-colors ${
-                selectedIds.size > 0
+                selectedKeys.size > 0
                   ? 'bg-red-500 text-white hover:bg-red-600'
                   : 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-gray-700 dark:text-gray-500'
               }`}
             >
               <TrashIcon className="h-3.5 w-3.5" />
-              {i18nService.t('batchDelete')} ({selectedIds.size})
+              {i18nService.t('batchDelete')} ({selectedKeys.size})
             </button>
           </div>
         </div>
@@ -500,7 +542,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-sm text-secondary">
               {i18nService
                 .t('batchDeleteConfirmMessage')
-                .replace('{count}', String(selectedIds.size))}
+                .replace('{count}', String(selectedKeys.size))}
             </p>
           </div>
           <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border">
@@ -514,7 +556,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={handleBatchDelete}
               className="px-4 py-2 text-sm font-medium rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
             >
-              {i18nService.t('batchDelete')} ({selectedIds.size})
+              {i18nService.t('batchDelete')} ({selectedKeys.size})
             </button>
           </div>
         </Modal>

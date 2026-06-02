@@ -9,9 +9,11 @@ import TrashIcon from '../icons/TrashIcon';
 
 interface SubagentTaskRowProps {
   subagent: SubagentSessionSummary;
+  isBatchMode?: boolean;
   isSelected?: boolean;
   onSelect: () => void;
   onDelete: () => Promise<void>;
+  onToggleSelection?: () => void;
 }
 
 const formatDuration = (createdAt: number): string => {
@@ -26,24 +28,53 @@ const formatDuration = (createdAt: number): string => {
   return `${days}d`;
 };
 
-const SubagentTaskRow: React.FC<SubagentTaskRowProps> = ({ subagent, isSelected = false, onSelect, onDelete }) => {
+const SubagentTaskRow: React.FC<SubagentTaskRowProps> = ({
+  subagent,
+  isBatchMode = false,
+  isSelected = false,
+  onSelect,
+  onDelete,
+  onToggleSelection,
+}) => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const displayName = subagent.label ?? subagent.agentId ?? i18nService.t('subagentUnnamed');
   const duration = formatDuration(subagent.createdAt);
+  const handleRowClick = () => {
+    if (isBatchMode) {
+      onToggleSelection?.();
+      return;
+    }
+    onSelect();
+  };
 
   return (
     <>
       <div
-        className={`group relative -ml-[6px] flex h-[26px] w-[calc(100%+12px)] cursor-pointer items-center gap-1.5 rounded-md pl-[52px] pr-2.5 text-[13px] font-normal transition-colors ${
+        className={`group relative -ml-[6px] flex h-[26px] w-[calc(100%+12px)] cursor-pointer items-center gap-1.5 rounded-md ${
+          isBatchMode ? 'pl-9' : 'pl-[52px]'
+        } pr-2.5 text-[13px] font-normal transition-colors ${
           isSelected
             ? 'bg-black/[0.06] text-foreground/80 dark:bg-white/[0.07]'
             : 'text-foreground/60 hover:bg-black/[0.03] hover:text-foreground/80 dark:hover:bg-white/[0.04]'
         }`}
-        onClick={onSelect}
+        onClick={handleRowClick}
         role="treeitem"
         aria-level={3}
         aria-selected={isSelected}
       >
+        {isBatchMode && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(event) => {
+              event.stopPropagation();
+              onToggleSelection?.();
+            }}
+            onClick={(event) => event.stopPropagation()}
+            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 accent-primary"
+          />
+        )}
+
         <span className="min-w-0 flex-1 truncate pr-5">
           {displayName}
         </span>
@@ -62,18 +93,20 @@ const SubagentTaskRow: React.FC<SubagentTaskRowProps> = ({ subagent, isSelected 
           </span>
         )}
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setShowConfirmDelete(true);
-          }}
-          className="absolute right-1 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-foreground opacity-0 transition-opacity hover:opacity-[0.46] group-hover:opacity-[0.3]"
-          aria-label={i18nService.t('deleteSession')}
-          title={i18nService.t('deleteSession')}
-        >
-          <TrashIcon className="h-3.5 w-3.5" />
-        </button>
+        {!isBatchMode && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowConfirmDelete(true);
+            }}
+            className="absolute right-1 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-foreground opacity-0 transition-opacity hover:opacity-[0.46] group-hover:opacity-[0.3]"
+            aria-label={i18nService.t('deleteSession')}
+            title={i18nService.t('deleteSession')}
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {showConfirmDelete && (
