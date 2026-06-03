@@ -5,16 +5,16 @@ import type {
 } from '../../shared/cowork/constants';
 import type { CoworkSelectedTextSnippet } from '../../shared/cowork/selectedText';
 import type {
+  CoworkImageAttachmentPayload,
+  CoworkImageAttachmentPreview,
+} from '../../shared/cowork/imageAttachments';
+import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
 
 // Cowork image attachment for vision-capable models
-export interface CoworkImageAttachment {
-  name: string;
-  mimeType: string;
-  base64Data: string;
-}
+export type CoworkImageAttachment = CoworkImageAttachmentPayload;
 
 // Cowork session status
 export const CoworkSessionStatusValue = {
@@ -63,6 +63,8 @@ export interface CoworkMessageMetadata {
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
+  imageAttachments?: CoworkImageAttachment[];
+  imageAttachmentPreviews?: CoworkImageAttachmentPreview[];
   usage?: {
     inputTokens?: number;
     outputTokens?: number;

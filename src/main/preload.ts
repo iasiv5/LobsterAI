@@ -8,7 +8,11 @@ import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAcce
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
-import { type HtmlShareAccessMode, HtmlShareIpc } from '../shared/htmlShare/constants';
+import {
+  type HtmlShareConfigurableStatus,
+  HtmlShareIpc,
+  type HtmlShareStatus,
+} from '../shared/htmlShare/constants';
 import type {
   KitReference,
   KitSkillMetadata,
@@ -19,6 +23,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { McpIpcChannel } from '../shared/mcp/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -61,13 +66,19 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   mcp: {
-    list: () => ipcRenderer.invoke('mcp:list'),
-    create: (data: any) => ipcRenderer.invoke('mcp:create', data),
-    update: (id: string, data: any) => ipcRenderer.invoke('mcp:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
+    list: () => ipcRenderer.invoke(McpIpcChannel.List),
+    create: (data: any) => ipcRenderer.invoke(McpIpcChannel.Create, data),
+    update: (id: string, data: any) => ipcRenderer.invoke(McpIpcChannel.Update, id, data),
+    delete: (id: string) => ipcRenderer.invoke(McpIpcChannel.Delete, id),
     setEnabled: (options: { id: string; enabled: boolean }) =>
-      ipcRenderer.invoke('mcp:setEnabled', options),
-    fetchMarketplace: () => ipcRenderer.invoke('mcp:fetchMarketplace'),
+      ipcRenderer.invoke(McpIpcChannel.SetEnabled, options),
+    retryLaunchResolution: (id: string) => ipcRenderer.invoke(McpIpcChannel.RetryLaunchResolution, id),
+    fetchMarketplace: () => ipcRenderer.invoke(McpIpcChannel.FetchMarketplace),
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(McpIpcChannel.Changed, handler);
+      return () => ipcRenderer.removeListener(McpIpcChannel.Changed, handler);
+    },
   },
   kits: {
     fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
@@ -296,7 +307,7 @@ contextBridge.exposeInMainWorld('electron', {
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId: string; sourceMessageType: 'assistant'; createdAt: number; startOffset?: number; endOffset?: number }>;
       agentId?: string;
       modelOverride?: string;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string }; mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: {
@@ -309,7 +320,7 @@ contextBridge.exposeInMainWorld('electron', {
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId: string; sourceMessageType: 'assistant'; createdAt: number; startOffset?: number; endOffset?: number }>;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{
         token: string;
@@ -554,7 +565,6 @@ contextBridge.exposeInMainWorld('electron', {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
     }) => ipcRenderer.invoke(HtmlShareIpc.CreateFromHtmlFile, options),
     updateFromHtmlFile: (options: {
       shareId: string;
@@ -562,10 +572,12 @@ contextBridge.exposeInMainWorld('electron', {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
+      currentStatus?: HtmlShareStatus;
     }) => ipcRenderer.invoke(HtmlShareIpc.UpdateFromHtmlFile, options),
     getByHtmlFile: (options: { filePath: string }) =>
       ipcRenderer.invoke(HtmlShareIpc.GetByHtmlFile, options),
+    updateStatus: (options: { shareId: string; status: HtmlShareConfigurableStatus }) =>
+      ipcRenderer.invoke(HtmlShareIpc.UpdateStatus, options),
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
   },

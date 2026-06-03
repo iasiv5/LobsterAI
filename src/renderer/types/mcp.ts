@@ -15,7 +15,28 @@ export interface McpServerConfig {
   isBuiltIn: boolean;            // installed from built-in registry
   githubUrl?: string;            // GitHub repository URL
   registryId?: string;           // matching registry entry ID
+  launchResolution?: McpLaunchResolution;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface McpLaunchResolution {
+  serverId: string;
+  resolverKind: 'npx' | 'uvx' | 'python' | 'raw';
+  sourceFingerprint: string;
+  status: 'pending' | 'installing' | 'ready' | 'failed' | 'unsupported';
+  packageName?: string;
+  requestedVersion?: string;
+  resolvedVersion?: string;
+  installDir?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  error?: string;
+  installedAt?: number;
+  resolvedAt?: number;
+  lastProbeAt?: number;
+  lastProbeStatus?: string;
   updatedAt: number;
 }
 

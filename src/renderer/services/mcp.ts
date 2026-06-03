@@ -104,6 +104,24 @@ class McpService {
     }
   }
 
+  async retryLaunchResolution(id: string): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    try {
+      const result = await window.electron.mcp.retryLaunchResolution(id);
+      if (result.success && result.servers) {
+        this.servers = result.servers;
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to retry MCP launch resolution';
+      console.error('Failed to retry MCP launch resolution:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  onChanged(callback: () => void): () => void {
+    return window.electron.mcp.onChanged(callback);
+  }
+
   getServers(): McpServerConfig[] {
     return this.servers;
   }

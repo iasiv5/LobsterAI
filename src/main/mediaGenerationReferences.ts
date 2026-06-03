@@ -52,6 +52,46 @@ const resolveReferencedMediaValue = (ref: MediaAttachmentRefMain): string | unde
   ref.localPath || ref.dataUrl || ref.remoteUrl
 );
 
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+);
+
+const buildReferenceValueByToken = (refs?: MediaAttachmentRefMain[]): Map<string, string> => {
+  const values = new Map<string, string>();
+  for (const ref of refs ?? []) {
+    const token = ref.token.trim();
+    const value = resolveReferencedMediaValue(ref);
+    if (token && value) {
+      values.set(token, value);
+    }
+  }
+  return values;
+};
+
+const replaceMediaReferenceTokens = (
+  value: unknown,
+  valueByToken: Map<string, string>,
+): unknown => {
+  if (typeof value === 'string') {
+    return valueByToken.get(value.trim()) ?? value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => replaceMediaReferenceTokens(item, valueByToken));
+  }
+
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      replaceMediaReferenceTokens(item, valueByToken),
+    ]),
+  );
+};
+
 const dedupeValues = (values: string[]): string[] => {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -82,6 +122,7 @@ const removeProviderMedia = (value: unknown): unknown => {
 };
 
 const removeConflictingImageInputs = (params: Record<string, unknown>): void => {
+  delete params.image;
   delete params.firstFrame;
   delete params.lastFrame;
   delete params.referenceImages;
@@ -96,9 +137,10 @@ export const applyMediaReferencesToGenerationParams = ({
   params,
   refs,
 }: ApplyMediaReferencesInput): Record<string, unknown> => {
-  const next: Record<string, unknown> = { ...params };
+  const valueByToken = buildReferenceValueByToken(refs);
+  const next = replaceMediaReferenceTokens(params, valueByToken) as Record<string, unknown>;
   const resolvedRefs = (refs ?? [])
-    .map(ref => ({ ref, value: resolveReferencedMediaValue(ref) }))
+    .map(ref => ({ ref, value: valueByToken.get(ref.token.trim()) }))
     .filter((item): item is { ref: MediaAttachmentRefMain; value: string } => Boolean(item.value));
 
   const imageRefs = resolvedRefs.filter(item => item.ref.mediaType === MediaAttachmentKind.Image);
@@ -108,16 +150,16 @@ export const applyMediaReferencesToGenerationParams = ({
     removeConflictingImageInputs(next);
 
     if (mediaType === MediaGenerationRequestType.Video) {
-      const referencedImages = imageRefs.map(item => item.value);
+      const referencedImages = dedupeValues(imageRefs.map(item => item.value));
       const referencedRoles = imageRefs.map((item, index) => normalizeVideoImageRole(item.ref.role, index === 0));
 
       next.images = referencedImages;
-      next.imageRoles = referencedRoles;
+      next.imageRoles = referencedRoles.slice(0, referencedImages.length);
     } else {
-      const referencedImages = imageRefs.map(item => item.value);
+      const referencedImages = dedupeValues(imageRefs.map(item => item.value));
       const referencedRoles = imageRefs.map(() => normalizeReferenceImageRole());
       next.images = referencedImages;
-      next.imageRoles = referencedRoles;
+      next.imageRoles = referencedRoles.slice(0, referencedImages.length);
     }
   }
 

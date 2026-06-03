@@ -1,3 +1,4 @@
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import { AgentId } from '@shared/agent';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -120,14 +121,30 @@ const CoworkSearchModal: React.FC<CoworkSearchModalProps> = ({
         aria-modal="true"
         aria-label={i18nService.t('search')}
       >
-        <input
-          ref={searchInputRef}
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder={i18nService.t('searchConversations')}
-          aria-label={i18nService.t('search')}
-          className="h-12 w-full bg-transparent px-4 text-[13px] text-foreground placeholder-secondary outline-none"
-        />
+        <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-4">
+          <div className="min-w-0 text-base font-semibold text-foreground">
+            {i18nService.t('search')}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={i18nService.t('close')}
+            title={i18nService.t('close')}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="px-4 pb-3">
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={i18nService.t('searchConversations')}
+            aria-label={i18nService.t('search')}
+            className="h-10 w-full rounded-xl border border-border bg-background px-3 text-[13px] text-foreground placeholder-secondary outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
         <div className="px-2 pb-2">
           <div className="px-2 pb-1 text-[12px] text-secondary">
             {i18nService.t('searchRecentTasks')}

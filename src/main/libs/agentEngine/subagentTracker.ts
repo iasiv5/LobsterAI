@@ -62,6 +62,16 @@ export type GatewayClientLike = {
   ) => Promise<T>;
 };
 
+interface GatewaySessionDeleteTask {
+  sessionKey: string;
+  attempt: number;
+}
+
+const GATEWAY_SESSION_DELETE_CONCURRENCY = 2;
+const GATEWAY_SESSION_DELETE_MAX_ATTEMPTS = 3;
+const GATEWAY_SESSION_DELETE_BASE_DELAY_MS = 5_000;
+const GATEWAY_SESSION_DELETE_MAX_DELAY_MS = 20_000;
+
 /**
  * Encapsulates all subagent (child session) tracking logic:
  * state maps, lifecycle detection, history fetching, and persistence.
@@ -82,6 +92,9 @@ export class SubagentTracker {
   private readonly agentIdToToolCallIds = new Map<string, Set<string>>();
   /** Run ids explicitly deleted by the user. Suppresses late spawn/backfill re-inserts. */
   private readonly deletedSubagentRunIds = new Set<string>();
+  private readonly gatewaySessionDeleteQueue = new Map<string, GatewaySessionDeleteTask>();
+  private readonly gatewaySessionDeleteInFlight = new Set<string>();
+  private readonly gatewaySessionDeleteRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Pending spawn info stored at tool start, used for DB insertion when result arrives */
   private readonly pendingSpawnInfo = new Map<string, {
     agentId: string;
@@ -253,7 +266,7 @@ export class SubagentTracker {
     this.store.deleteSubagentRun(runId);
 
     if (sessionKey) {
-      await this.deleteGatewaySession(sessionKey);
+      this.enqueueGatewaySessionDelete(sessionKey);
     }
 
     return true;
@@ -432,17 +445,79 @@ export class SubagentTracker {
     }
   }
 
-  private async deleteGatewaySession(sessionKey: string): Promise<void> {
+  private enqueueGatewaySessionDelete(sessionKey: string): void {
+    if (
+      this.gatewaySessionDeleteQueue.has(sessionKey)
+      || this.gatewaySessionDeleteInFlight.has(sessionKey)
+      || this.gatewaySessionDeleteRetryTimers.has(sessionKey)
+    ) {
+      return;
+    }
+
+    this.gatewaySessionDeleteQueue.set(sessionKey, { sessionKey, attempt: 1 });
+    this.processGatewaySessionDeleteQueue();
+  }
+
+  private processGatewaySessionDeleteQueue(): void {
+    while (
+      this.gatewaySessionDeleteInFlight.size < GATEWAY_SESSION_DELETE_CONCURRENCY
+      && this.gatewaySessionDeleteQueue.size > 0
+    ) {
+      const task = this.gatewaySessionDeleteQueue.values().next().value as GatewaySessionDeleteTask | undefined;
+      if (!task) return;
+      this.gatewaySessionDeleteQueue.delete(task.sessionKey);
+      this.gatewaySessionDeleteInFlight.add(task.sessionKey);
+      void this.runGatewaySessionDeleteTask(task);
+    }
+  }
+
+  private async runGatewaySessionDeleteTask(task: GatewaySessionDeleteTask): Promise<void> {
+    try {
+      const deleted = await this.deleteGatewaySession(task.sessionKey);
+      if (!deleted) {
+        this.scheduleGatewaySessionDeleteRetry(task);
+      }
+    } finally {
+      this.gatewaySessionDeleteInFlight.delete(task.sessionKey);
+      this.processGatewaySessionDeleteQueue();
+    }
+  }
+
+  private scheduleGatewaySessionDeleteRetry(task: GatewaySessionDeleteTask): void {
+    if (task.attempt >= GATEWAY_SESSION_DELETE_MAX_ATTEMPTS) {
+      console.warn('[SubagentTracker] gateway subagent session cleanup reached the retry limit');
+      return;
+    }
+
+    const delayMs = Math.min(
+      GATEWAY_SESSION_DELETE_BASE_DELAY_MS * (2 ** (task.attempt - 1)),
+      GATEWAY_SESSION_DELETE_MAX_DELAY_MS,
+    );
+    const timer = setTimeout(() => {
+      this.gatewaySessionDeleteRetryTimers.delete(task.sessionKey);
+      this.gatewaySessionDeleteQueue.set(task.sessionKey, {
+        sessionKey: task.sessionKey,
+        attempt: task.attempt + 1,
+      });
+      this.processGatewaySessionDeleteQueue();
+    }, delayMs);
+    this.gatewaySessionDeleteRetryTimers.set(task.sessionKey, timer);
+    console.warn('[SubagentTracker] gateway subagent session cleanup failed, retrying later');
+  }
+
+  private async deleteGatewaySession(sessionKey: string): Promise<boolean> {
     const client = this.getGatewayClient();
-    if (!client) return;
+    if (!client) return false;
 
     try {
       await client.request('sessions.delete', {
         key: sessionKey,
         deleteTranscript: true,
       }, { timeoutMs: 5_000 });
+      return true;
     } catch (error) {
       console.warn('[SubagentTracker] Failed to delete gateway subagent session:', error);
+      return false;
     }
   }
 

@@ -3,6 +3,11 @@ import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import {
+  COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES,
+  formatCoworkImageAttachmentLimit,
+  validateCoworkImageAttachmentSize,
+} from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
@@ -68,6 +73,8 @@ import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
 type CoworkAttachment = DraftAttachment;
 
+const IMAGE_ATTACHMENT_PREVIEW_MAX_DIMENSION = 512;
+const IMAGE_ATTACHMENT_PREVIEW_QUALITY = 0.78;
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.tif', '.ico', '.avif']);
 
@@ -86,6 +93,35 @@ const extractBase64FromDataUrl = (dataUrl: string): { mimeType: string; base64Da
   const match = /^data:(.+);base64,(.*)$/.exec(dataUrl);
   if (!match) return null;
   return { mimeType: match[1], base64Data: match[2] };
+};
+
+const showToast = (message: string): void => {
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+};
+
+const createImagePreviewDataUrl = async (dataUrl: string): Promise<string> => {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load image preview'));
+    image.src = dataUrl;
+  });
+
+  const scale = Math.min(
+    1,
+    IMAGE_ATTACHMENT_PREVIEW_MAX_DIMENSION / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1),
+  );
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Failed to create image preview canvas');
+  }
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', IMAGE_ATTACHMENT_PREVIEW_QUALITY);
 };
 
 const getFileNameFromPath = (path: string): string => {
@@ -262,7 +298,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     },
     setImageAttachments: (images: CoworkImageAttachment[]) => {
       const newAttachments: CoworkAttachment[] = images.map((img, idx) => ({
-        path: `inline:${img.name}:reedit-${Date.now()}-${idx}`,
+        path: img.localPath ?? `inline:${img.name}:reedit-${Date.now()}-${idx}`,
         name: img.name,
         isImage: true,
         dataUrl: `data:${img.mimeType};base64,${img.base64Data}`,
@@ -630,9 +666,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const trimmedValue = value.trim();
     if (isStreaming) {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: i18nService.t('coworkSessionStillRunning'),
-      }));
+      showToast(i18nService.t('coworkSessionStillRunning'));
       return;
     }
     if ((!trimmedValue && attachments.length === 0) || disabled || isPatchingModel) return;
@@ -669,10 +703,47 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (attachment.isImage && attachment.dataUrl) {
         const extracted = extractBase64FromDataUrl(attachment.dataUrl);
         if (extracted) {
+          const sizeValidation = validateCoworkImageAttachmentSize({
+            base64Data: extracted.base64Data,
+          });
+          if (!sizeValidation.ok) {
+            showToast(
+              i18nService.t('coworkImageAttachmentTooLarge')
+                .replace('{name}', attachment.name)
+                .replace('{limit}', formatCoworkImageAttachmentLimit(sizeValidation.maxBytes)),
+            );
+            return;
+          }
+
+          let previewMimeType: string | undefined;
+          let previewBase64Data: string | undefined;
+          if (sizeValidation.sizeBytes > COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES) {
+            try {
+              const previewDataUrl = await createImagePreviewDataUrl(attachment.dataUrl);
+              const preview = extractBase64FromDataUrl(previewDataUrl);
+              if (preview) {
+                previewMimeType = preview.mimeType;
+                previewBase64Data = preview.base64Data;
+              }
+            } catch (error) {
+              console.warn('[CoworkPromptInput] failed to create image preview:', error);
+            }
+            if (!previewBase64Data) {
+              showToast(
+                i18nService.t('coworkImageAttachmentPreviewFailed')
+                  .replace('{name}', attachment.name),
+              );
+              return;
+            }
+          }
+
           imageAtts.push({
             name: attachment.name,
             mimeType: extracted.mimeType,
             base64Data: extracted.base64Data,
+            sizeBytes: sizeValidation.sizeBytes,
+            ...(!attachment.path.startsWith('inline:') ? { localPath: attachment.path } : {}),
+            ...(previewMimeType && previewBase64Data ? { previewMimeType, previewBase64Data } : {}),
           });
         } else {
           console.warn('[CoworkPromptInput] handleSubmit: extractBase64FromDataUrl returned null', {

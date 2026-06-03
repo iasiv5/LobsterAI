@@ -12,7 +12,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import type { McpServerRecord } from '../mcpStore';
+import type { McpServerRecord } from '../mcp/mcpStore';
 import { getElectronNodeRuntimePath } from './coworkUtil';
 
 export interface ResolvedStdioCommand {

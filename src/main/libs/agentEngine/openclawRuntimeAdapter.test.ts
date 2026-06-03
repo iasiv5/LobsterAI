@@ -541,6 +541,7 @@ function createRunTurnAdapter(options: {
   modelPatchError?: Error;
   holdFirstModelPatch?: boolean;
   sessionCwd?: string;
+  chatSendError?: Error;
 } = {}) {
   const session = {
     id: 'session-1',
@@ -634,6 +635,9 @@ function createRunTurnAdapter(options: {
         return { messages: [] };
       }
       if (method === 'chat.send') {
+        if (options.chatSendError) {
+          throw options.chatSendError;
+        }
         const runId = typeof requestParams.idempotencyKey === 'string'
           ? requestParams.idempotencyKey
           : 'run-1';
@@ -772,6 +776,21 @@ test('continueSession sends the session cwd to OpenClaw chat.send', async () => 
   expect(chatSend?.params).toMatchObject({
     cwd: path.resolve('/tmp/lobsterai-selected-project'),
   });
+});
+
+test('continueSession clears the pending turn when chat.send fails immediately', async () => {
+  const { adapter } = createRunTurnAdapter({
+    chatSendError: new Error('attachment image: exceeds size limit'),
+  });
+  adapter.on('error', () => undefined);
+
+  await expect(adapter.continueSession('session-1', 'hello'))
+    .rejects.toThrow('attachment image: exceeds size limit');
+
+  const pendingTurns = (adapter as unknown as {
+    pendingTurns: Map<string, unknown>;
+  }).pendingTurns;
+  expect(pendingTurns.has('session-1')).toBe(false);
 });
 
 // ==================== Reconcile tests ====================

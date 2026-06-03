@@ -6,7 +6,10 @@ import path from 'path';
 
 import type { CoworkStore, PluginSource } from '../coworkStore';
 import { getElectronNodeRuntimePath } from './coworkUtil';
-import { findThirdPartyExtensionsDir, listBundledOpenClawExtensionManifests } from './openclawLocalExtensions';
+import {
+  findThirdPartyExtensionsDir,
+  listBundledOpenClawExtensionManifests,
+} from './openclawLocalExtensions';
 
 export interface PluginInstallParams {
   source: PluginSource;
@@ -245,6 +248,7 @@ export class PluginManager {
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
+    const hiddenIds = getHiddenPluginIds();
     const userPlugins = this.store.listUserPlugins();
     const dirsToSearch = [
       getExtensionsDir(),
@@ -254,6 +258,8 @@ export class PluginManager {
     const items: PluginListItem[] = [];
 
     for (const plugin of userPlugins) {
+      if (isHiddenPlugin(plugin.pluginId, hiddenIds)) continue;
+
       let description: string | undefined;
       let version = plugin.version;
       let hasConfig = false;
@@ -860,6 +866,8 @@ const INTERNAL_PLUGIN_IDS = [
   'qqbot',
   'acpx',
   'browser',
+  'llm-task',
+  'thread-ownership',
 
   // Provider plugins auto-injected by OpenClaw runtime — not user-installable.
   // Keep in sync with OpenClawProviderId in src/shared/providers/constants.ts.
@@ -885,6 +893,7 @@ const INTERNAL_PLUGIN_IDS = [
   'github-copilot',
   'lobsterai-copilot',
   'lobster',
+  'kimi',
 
   // Aliases / legacy IDs for preinstalled channel plugins.
   // The canonical IDs are in package.json openclaw.plugins and get hidden
@@ -897,6 +906,13 @@ const INTERNAL_PLUGIN_IDS = [
   'nim',
   'nimsuite-openclaw-nim-channel',
   'email',
+
+  // OpenClaw runtime-bundled channel and optional backend plugins.
+  'discord',
+  'telegram',
+  'talk-voice',
+  'memory-lancedb',
+  'memory-wiki',
 ];
 
 /** Read preinstalled plugin IDs from package.json openclaw.plugins field. */
@@ -939,6 +955,10 @@ function getHiddenPluginIds(): Set<string> {
 /** Check if a plugin should be hidden from the user. */
 function isHiddenPlugin(pluginId: string, hiddenIds: Set<string>): boolean {
   return hiddenIds.has(pluginId);
+}
+
+export function isHiddenUserPluginId(pluginId: string): boolean {
+  return isHiddenPlugin(pluginId, getHiddenPluginIds());
 }
 
 /** Read plugins.entries from the openclaw.json config file. */

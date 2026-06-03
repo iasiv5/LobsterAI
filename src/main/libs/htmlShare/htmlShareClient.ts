@@ -2,14 +2,15 @@ import fs from 'fs';
 
 import {
   HtmlShareAccessMode,
+  type HtmlShareConfigurableStatus,
   HtmlShareSourceType,
-  type HtmlShareStatus,
+  HtmlShareStatus,
+  type HtmlShareStatus as HtmlShareStatusValue,
 } from '../../../shared/htmlShare/constants';
 
 export interface CreateHtmlShareUploadInput {
   archivePath: string;
   sourceType: (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];
-  accessMode: (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode];
   clientSourceKey?: string;
   sessionId?: string;
   artifactId?: string;
@@ -25,9 +26,12 @@ export interface HtmlShareCreateResult {
   accessMode?: (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode];
   shareCode?: string;
   shareCodeUnavailable?: boolean;
-  status?: HtmlShareStatus;
+  status?: HtmlShareStatusValue;
+  moderationStatus?: string;
   updatedAt?: string;
   contentUpdatedAt?: string;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
   error?: string;
   code?: number;
 }
@@ -50,10 +54,19 @@ interface HtmlShareApiResponse {
     accessMode?: (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode];
     shareCode?: string;
     shareCodeUnavailable?: boolean;
-    status?: HtmlShareStatus;
+    status?: HtmlShareStatusValue;
+    moderationStatus?: string;
     updatedAt?: string;
     contentUpdatedAt?: string;
+    disabledAt?: string | null;
+    disabledReason?: string | null;
   };
+}
+
+interface HtmlShareListApiResponse {
+  code: number;
+  message?: string;
+  data?: unknown;
 }
 
 export function buildHtmlSharePublicUrl(publicBaseUrl: string, shareId: string): string {
@@ -66,7 +79,6 @@ function appendHtmlShareFormData(form: FormData, input: CreateHtmlShareUploadInp
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength,
   ) as ArrayBuffer;
-  form.set('accessMode', input.accessMode);
   if (input.clientSourceKey) form.set('clientSourceKey', input.clientSourceKey);
   if (input.sessionId) form.set('sessionId', input.sessionId);
   if (input.artifactId) form.set('artifactId', input.artifactId);
@@ -94,9 +106,68 @@ function buildHtmlShareResult(
     shareCode: payload.data.shareCode,
     shareCodeUnavailable: payload.data.shareCodeUnavailable,
     status: payload.data.status,
+    moderationStatus: payload.data.moderationStatus,
     updatedAt: payload.data.updatedAt,
     contentUpdatedAt: payload.data.contentUpdatedAt,
+    disabledAt: payload.data.disabledAt,
+    disabledReason: payload.data.disabledReason,
   };
+}
+
+function getRecordString(record: Record<string, unknown>, fieldName: string): string | undefined {
+  const value = record[fieldName];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function getNestedRecord(record: Record<string, unknown>, fieldName: string): Record<string, unknown> | null {
+  const value = record[fieldName];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function getHtmlShareListItems(data: unknown): Record<string, unknown>[] {
+  const source = (() => {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return [];
+    const record = data as Record<string, unknown>;
+    for (const fieldName of ['items', 'shares', 'list', 'records', 'rows']) {
+      const value = record[fieldName];
+      if (Array.isArray(value)) return value;
+    }
+    return [];
+  })();
+
+  return source.filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item && typeof item === 'object' && !Array.isArray(item)),
+  );
+}
+
+function getShareRecordSourceType(record: Record<string, unknown>): string | undefined {
+  return getRecordString(record, 'sourceType') ?? getRecordString(getNestedRecord(record, 'source') ?? {}, 'type');
+}
+
+function getShareRecordClientSourceKey(record: Record<string, unknown>): string | undefined {
+  return (
+    getRecordString(record, 'clientSourceKey') ??
+    getRecordString(record, 'sourceKey') ??
+    getRecordString(getNestedRecord(record, 'source') ?? {}, 'clientSourceKey') ??
+    getRecordString(getNestedRecord(record, 'source') ?? {}, 'key')
+  );
+}
+
+function findHtmlShareByClientSourceKey(
+  data: unknown,
+  sourceType: (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType],
+  clientSourceKey: string,
+): Record<string, unknown> | null {
+  return (
+    getHtmlShareListItems(data).find(item => {
+      const itemSourceType = getShareRecordSourceType(item);
+      const itemClientSourceKey = getShareRecordClientSourceKey(item);
+      return itemSourceType === sourceType && itemClientSourceKey === clientSourceKey;
+    }) ?? null
+  );
 }
 
 export async function uploadHtmlShare(
@@ -110,7 +181,7 @@ export async function uploadHtmlShare(
     `[HtmlShare] prepared ${buffer.length} bytes for ${input.sourceType} upload to ${serverBaseUrl}`,
   );
   console.debug(
-    `[HtmlShare] upload request uses ${input.accessMode} access, entry ${input.entryFile}, and hash ${input.sourceSha256}`,
+    `[HtmlShare] upload request uses share-code access, entry ${input.entryFile}, and hash ${input.sourceSha256}`,
   );
   const form = new FormData();
   form.set('sourceType', input.sourceType);
@@ -181,6 +252,41 @@ export async function updateHtmlShare(
   return result;
 }
 
+export async function updateHtmlShareStatus(
+  serverBaseUrl: string,
+  publicBaseUrl: string,
+  fetchWithAuth: FetchWithAuth,
+  shareId: string,
+  status: HtmlShareConfigurableStatus,
+): Promise<HtmlShareCreateResult> {
+  if (status !== HtmlShareStatus.Live && status !== HtmlShareStatus.Disabled) {
+    return {
+      success: false,
+      error: 'HTML share status must be live or disabled.',
+    };
+  }
+  const response = await fetchWithAuth(
+    `${serverBaseUrl}/api/html-shares/${encodeURIComponent(shareId)}/status`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status }),
+    },
+  );
+  const payload = (await response.json().catch((): null => null)) as HtmlShareApiResponse | null;
+  const result = payload ? buildHtmlShareResult(payload, publicBaseUrl) : null;
+  if (!response.ok || payload?.code !== 0 || !result) {
+    return {
+      success: false,
+      error: payload?.message || `Share status update failed: ${response.status}`,
+      code: payload?.code,
+    };
+  }
+  return result;
+}
+
 export async function getHtmlShareBySource(
   serverBaseUrl: string,
   publicBaseUrl: string,
@@ -191,6 +297,7 @@ export async function getHtmlShareBySource(
   const params = new URLSearchParams({
     sourceType,
     clientSourceKey,
+    includeDisabled: 'true',
   });
   const response = await fetchWithAuth(`${serverBaseUrl}/api/html-shares/source?${params.toString()}`);
   const payload = (await response.json().catch((): null => null)) as HtmlShareApiResponse | null;
@@ -201,8 +308,40 @@ export async function getHtmlShareBySource(
       code: payload?.code,
     };
   }
+  const share = payload ? buildHtmlShareResult(payload, publicBaseUrl) : null;
+  if (share) {
+    return {
+      success: true,
+      share,
+    };
+  }
+
+  const listResponse = await fetchWithAuth(`${serverBaseUrl}/api/html-shares/my`);
+  const listPayload = (await listResponse.json().catch((): null => null)) as
+    | HtmlShareListApiResponse
+    | null;
+  if (!listResponse.ok || listPayload?.code !== 0) {
+    return {
+      success: false,
+      error: listPayload?.message || `Share list failed: ${listResponse.status}`,
+      code: listPayload?.code,
+    };
+  }
+  const fallbackShare = listPayload
+    ? buildHtmlShareResult(
+        {
+          code: 0,
+          data: findHtmlShareByClientSourceKey(
+            listPayload.data,
+            sourceType,
+            clientSourceKey,
+          ) as HtmlShareApiResponse['data'],
+        },
+        publicBaseUrl,
+      )
+    : null;
   return {
     success: true,
-    share: payload ? buildHtmlShareResult(payload, publicBaseUrl) : null,
+    share: fallbackShare,
   };
 }

@@ -2,6 +2,7 @@ export const HtmlShareIpc = {
   CreateFromHtmlFile: 'htmlShare:createFromHtmlFile',
   UpdateFromHtmlFile: 'htmlShare:updateFromHtmlFile',
   GetByHtmlFile: 'htmlShare:getByHtmlFile',
+  UpdateStatus: 'htmlShare:updateStatus',
   Disable: 'htmlShare:disable',
   Get: 'htmlShare:get',
 } as const;
@@ -16,7 +17,6 @@ export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof Html
 
 export const HtmlShareAccessMode = {
   Code: 'code',
-  Public: 'public',
 } as const;
 
 export type HtmlShareAccessMode = (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode];
@@ -28,13 +28,19 @@ export const HtmlShareStatus = {
 } as const;
 
 export type HtmlShareStatus = (typeof HtmlShareStatus)[keyof typeof HtmlShareStatus];
+export type HtmlShareConfigurableStatus =
+  | typeof HtmlShareStatus.Live
+  | typeof HtmlShareStatus.Disabled;
 
 export const HtmlShareErrorCode = {
+  ReopenUnavailable: 41304,
   SubscriptionRequired: 41307,
   AccessCodeInvalid: 41308,
   AccessCodeRateLimited: 41309,
   AccessModeInvalid: 41310,
-  FeatureUnavailable: 41311,
+  ActiveShareLimitReached: 41311,
+  FeatureUnavailable: 49001,
+  DisabledCannotUpdate: 49002,
 } as const;
 
 export const HtmlSharePublicRoute = {

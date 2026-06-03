@@ -1,5 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { SubagentMessageStore } from '../../subagentMessageStore';
 import { SubagentRunStore } from '../../subagentRunStore';
@@ -44,6 +44,11 @@ beforeEach(() => {
   setupDb();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
 test('deleteSubagentRun removes a single run, messages, and gateway transcript', async () => {
   const gatewayClient: GatewayClientLike = {
     request: vi.fn().mockResolvedValue({}),
@@ -78,6 +83,70 @@ test('deleteSubagentRun removes a single run, messages, and gateway transcript',
     { key: 'agent:main:subagent:run-1', deleteTranscript: true },
     { timeoutMs: 5_000 },
   );
+});
+
+test('deleteSubagentRun returns after local deletion without waiting for gateway cleanup', async () => {
+  let resolveGatewayDelete: (() => void) | null = null;
+  const gatewayDeletePromise = new Promise<void>((resolve) => {
+    resolveGatewayDelete = resolve;
+  });
+  const gatewayClient: GatewayClientLike = {
+    request: vi.fn().mockReturnValue(gatewayDeletePromise),
+  };
+  const tracker = new SubagentTracker(runStore, messageStore, () => gatewayClient);
+
+  runStore.insertSubagentRun({
+    id: 'run-1',
+    parentSessionId: 'parent-1',
+    sessionKey: 'agent:main:subagent:run-1',
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'worker',
+    status: 'done',
+    createdAt: 1000,
+  });
+
+  const deleted = await tracker.deleteSubagentRun('parent-1', 'run-1');
+
+  expect(deleted).toBe(true);
+  expect(runStore.getSubagentRun('run-1')).toBeNull();
+  expect(gatewayClient.request).toHaveBeenCalledTimes(1);
+
+  resolveGatewayDelete?.();
+});
+
+test('gateway cleanup retries are capped when delete keeps failing', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const gatewayClient: GatewayClientLike = {
+    request: vi.fn().mockRejectedValue(new Error('gateway busy')),
+  };
+  const tracker = new SubagentTracker(runStore, messageStore, () => gatewayClient);
+
+  runStore.insertSubagentRun({
+    id: 'run-1',
+    parentSessionId: 'parent-1',
+    sessionKey: 'agent:main:subagent:run-1',
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'worker',
+    status: 'done',
+    createdAt: 1000,
+  });
+
+  const deleted = await tracker.deleteSubagentRun('parent-1', 'run-1');
+
+  expect(deleted).toBe(true);
+  expect(gatewayClient.request).toHaveBeenCalledTimes(1);
+
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(gatewayClient.request).toHaveBeenCalledTimes(2);
+
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(gatewayClient.request).toHaveBeenCalledTimes(3);
+
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(gatewayClient.request).toHaveBeenCalledTimes(3);
 });
 
 test('deleteSubagentRun refuses to delete a run from another parent session', async () => {

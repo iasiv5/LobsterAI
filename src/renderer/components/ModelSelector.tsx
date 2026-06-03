@@ -47,10 +47,10 @@ const MODEL_ICON_PROVIDER_HINTS: Array<{ pattern: RegExp; providerName: Provider
   { pattern: /kimi|moonshot/i, providerName: ProviderName.Moonshot },
   { pattern: /glm|zhipu/i, providerName: ProviderName.Zhipu },
   { pattern: /qwen|qwq|qvq/i, providerName: ProviderName.Qwen },
-  { pattern: /hy3|youdao/i, providerName: ProviderName.Youdaozhiyun },
   { pattern: /claude|anthropic/i, providerName: ProviderName.Anthropic },
   { pattern: /gemini/i, providerName: ProviderName.Gemini },
   { pattern: /gpt|openai/i, providerName: ProviderName.OpenAI },
+  { pattern: /hy3|youdao/i, providerName: ProviderName.Youdaozhiyun },
 ];
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -221,6 +221,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     setIsOpen(false);
   };
 
+  React.useEffect(() => {
+    if (!isOpen) setHoveredModel(null);
+  }, [isOpen]);
+
   // 如果没有可用模型，显示提示
   if (availableModels.length === 0) {
     return (
@@ -301,10 +305,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
     setHoveredModel(null);
   };
-
-  React.useEffect(() => {
-    if (!isOpen) setHoveredModel(null);
-  }, [isOpen]);
 
   const renderModelItem = (model: Model) => {
     const selected = isSelected(model);

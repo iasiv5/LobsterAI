@@ -53,16 +53,24 @@ import {
   CoworkIpcChannel,
 } from '../shared/cowork/constants';
 import {
+  buildCoworkImageAttachmentPreviews,
+  type CoworkImageAttachmentPreview,
+  formatCoworkImageAttachmentLimit,
+  validateCoworkImageAttachmentSize,
+} from '../shared/cowork/imageAttachments';
+import {
   type CoworkSelectedTextSnippet,
   normalizeCoworkSelectedTextSnippets,
 } from '../shared/cowork/selectedText';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
   HtmlShareAccessMode,
-  type HtmlShareAccessMode as HtmlShareAccessModeType,
+  type HtmlShareConfigurableStatus,
   HtmlShareErrorCode,
   HtmlShareIpc,
   HtmlShareSourceType,
+  HtmlShareStatus,
+  type HtmlShareStatus as HtmlShareStatusValue,
 } from '../shared/htmlShare/constants';
 import type {
   KitReference,
@@ -104,6 +112,7 @@ import type {
 } from './im/types';
 import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
+import { registerMcpHandlers } from './ipcHandlers/mcp';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
 import {
@@ -147,7 +156,6 @@ import {
 } from './libs/coworkOpenAICompatProxy';
 import {
   generateSessionTitle,
-  getElectronNodeRuntimePath,
   probeCoworkModelReadiness,
 } from './libs/coworkUtil';
 import {
@@ -171,11 +179,15 @@ import {
   isPreviewServerUrl,
   stopHtmlPreviewServer,
 } from './libs/htmlPreviewServer';
-import { getHtmlShareBySource, updateHtmlShare, uploadHtmlShare } from './libs/htmlShare/htmlShareClient';
+import {
+  getHtmlShareBySource,
+  updateHtmlShare,
+  updateHtmlShareStatus,
+  uploadHtmlShare,
+} from './libs/htmlShare/htmlShareClient';
 import { packageHtmlFile } from './libs/htmlShare/htmlSharePackager';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
-import { McpBridgeServer, type MediaGenerationRequest, type MediaGenerationResponse } from './libs/mcpBridgeServer';
 import { type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
 import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
@@ -193,7 +205,7 @@ import {
   OpenClawConfigImpactReason,
   removeImpactDecisionReasons,
 } from './libs/openclawConfigImpact';
-import { buildProviderSelection, OpenClawConfigSync, type ResolvedMcpServer } from './libs/openclawConfigSync';
+import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
 import {
   addMemoryEntry,
@@ -211,8 +223,8 @@ import {
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
+import { isHiddenUserPluginId } from './libs/pluginManager';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
-import { resolveStdioCommand } from './libs/resolveStdioCommand';
 import { serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -223,7 +235,7 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
-import { type McpServerFormData, McpStore } from './mcpStore';
+import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import {
   MediaGenerationGateReason,
   MediaGenerationTool,
@@ -323,15 +335,20 @@ interface HtmlShareCreateFromHtmlFileInput {
   artifactId: string;
   filePath: string;
   title: string;
-  accessMode: HtmlShareAccessModeType;
 }
 
 interface HtmlShareUpdateFromHtmlFileInput extends HtmlShareCreateFromHtmlFileInput {
   shareId: string;
+  currentStatus?: HtmlShareStatusValue;
 }
 
 interface HtmlShareGetByHtmlFileInput {
   filePath: string;
+}
+
+interface HtmlShareUpdateStatusInput {
+  shareId: string;
+  status: HtmlShareConfigurableStatus;
 }
 
 function sanitizeHtmlShareString(
@@ -356,12 +373,36 @@ function sanitizeHtmlShareTitle(value: unknown): string {
   return sanitizeHtmlShareString(value, 'title', 255);
 }
 
-function sanitizeHtmlShareAccessMode(value: unknown): HtmlShareAccessModeType {
+function validateHtmlShareAccessMode(value: unknown): void {
+  if (value === undefined) return;
   const accessMode = sanitizeHtmlShareString(value, 'accessMode', 32);
-  if (accessMode !== HtmlShareAccessMode.Code && accessMode !== HtmlShareAccessMode.Public) {
-    throw new Error('accessMode must be code or public.');
+  if (accessMode !== HtmlShareAccessMode.Code) {
+    throw new Error('accessMode must be code.');
   }
-  return accessMode;
+}
+
+function sanitizeHtmlShareConfigurableStatus(
+  value: unknown,
+): HtmlShareConfigurableStatus | undefined {
+  if (value === undefined) return undefined;
+  const status = sanitizeHtmlShareString(value, 'status', 32);
+  if (status !== HtmlShareStatus.Live && status !== HtmlShareStatus.Disabled) {
+    throw new Error('status must be live or disabled.');
+  }
+  return status;
+}
+
+function sanitizeHtmlShareStatus(value: unknown): HtmlShareStatusValue | undefined {
+  if (value === undefined) return undefined;
+  const status = sanitizeHtmlShareString(value, 'currentStatus', 32);
+  if (
+    status !== HtmlShareStatus.Live &&
+    status !== HtmlShareStatus.Disabled &&
+    status !== HtmlShareStatus.Failed
+  ) {
+    throw new Error('currentStatus must be live, disabled, or failed.');
+  }
+  return status;
 }
 
 function sanitizeCreateFromHtmlFileInput(input: unknown): HtmlShareCreateFromHtmlFileInput {
@@ -369,12 +410,12 @@ function sanitizeCreateFromHtmlFileInput(input: unknown): HtmlShareCreateFromHtm
     throw new Error('Invalid HTML share request.');
   }
   const source = input as Record<string, unknown>;
+  validateHtmlShareAccessMode(source.accessMode);
   return {
     sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
     artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
     filePath: sanitizeHtmlShareString(source.filePath, 'filePath', 4096),
     title: sanitizeHtmlShareTitle(source.title),
-    accessMode: sanitizeHtmlShareAccessMode(source.accessMode),
   };
 }
 
@@ -384,6 +425,7 @@ function sanitizeUpdateFromHtmlFileInput(input: unknown): HtmlShareUpdateFromHtm
   return {
     ...source,
     shareId: sanitizeHtmlShareString(record.shareId, 'shareId', 64),
+    currentStatus: sanitizeHtmlShareStatus(record.currentStatus),
   };
 }
 
@@ -394,6 +436,21 @@ function sanitizeGetByHtmlFileInput(input: unknown): HtmlShareGetByHtmlFileInput
   const source = input as Record<string, unknown>;
   return {
     filePath: sanitizeHtmlShareString(source.filePath, 'filePath', 4096),
+  };
+}
+
+function sanitizeUpdateHtmlShareStatusInput(input: unknown): HtmlShareUpdateStatusInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid HTML share status request.');
+  }
+  const source = input as Record<string, unknown>;
+  const status = sanitizeHtmlShareConfigurableStatus(source.status);
+  if (!status) {
+    throw new Error('status is required.');
+  }
+  return {
+    shareId: sanitizeHtmlShareString(source.shareId, 'shareId', 64),
+    status,
   };
 }
 
@@ -863,16 +920,19 @@ const sanitizeCoworkMessageForIpc = (message: unknown): unknown => {
   }
   const messageRecord = message as { metadata?: unknown; content?: unknown };
 
-  // Preserve imageAttachments in metadata as-is (base64 data can be very large
-  // and must not be truncated by the generic sanitizer).
+  // Preserve image metadata as-is; previews are already size-bounded, while
+  // legacy imageAttachments may contain historical base64 payloads.
   let sanitizedMetadata: unknown;
   if (messageRecord.metadata && typeof messageRecord.metadata === 'object') {
-    const { imageAttachments, ...rest } = messageRecord.metadata as Record<string, unknown>;
+    const { imageAttachments, imageAttachmentPreviews, ...rest } = messageRecord.metadata as Record<string, unknown>;
     const sanitizedRest = sanitizeIpcPayload(rest) as Record<string, unknown> | undefined;
     sanitizedMetadata = {
       ...(sanitizedRest && typeof sanitizedRest === 'object' ? sanitizedRest : {}),
       ...(Array.isArray(imageAttachments) && imageAttachments.length > 0
         ? { imageAttachments }
+        : {}),
+      ...(Array.isArray(imageAttachmentPreviews) && imageAttachmentPreviews.length > 0
+        ? { imageAttachmentPreviews }
         : {}),
     };
   } else {
@@ -1211,15 +1271,7 @@ let coworkStore: CoworkStore | null = null;
 let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let skillManager: SkillManager | null = null;
-let mcpStore: McpStore | null = null;
-let mcpBridgeServer: McpBridgeServer | null = null;
-// Generated eagerly so the secret is available before the first syncOpenClawConfig
-// call — the gateway process inherits it via LOBSTER_MCP_BRIDGE_SECRET env var at
-// spawn time, avoiding a restart just to pick up the correct secret.
-let mcpBridgeSecret: string = require('crypto').randomUUID();
-// Cache of resolved MCP server configs for the synchronous configSync callback.
-// Populated asynchronously before each syncOpenClawConfig() call.
-let resolvedMcpServersCache: ResolvedMcpServer[] = [];
+let mcpRuntime: McpRuntime | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let sqliteBackupManager: SqliteBackupManager | null = null;
@@ -1343,7 +1395,7 @@ const bootstrapOpenClawEngine = async (
         console.error(`[OpenClaw] bootstrap: AskUser server startup failed (non-fatal):`, err);
       });
       console.log(
-        `[OpenClaw] bootstrap: AskUser server setup done (${elapsed()}), askUserUrl=${mcpBridgeServer?.askUserCallbackUrl || 'null'}`,
+        `[OpenClaw] bootstrap: AskUser server setup done (${elapsed()}), askUserUrl=${getMcpRuntime().getAskUserCallbackUrl() || 'null'}`,
       );
 
       // Ensure IDENTITY.md has default content in the main agent workspace
@@ -1606,16 +1658,17 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       },
       getResolvedMcpServers: () => {
         // Synchronous wrapper: returns last resolved servers from cache.
-        // The async resolution happens during syncOpenClawConfig via getResolvedMcpServers().
-        return resolvedMcpServersCache;
+        // The async resolution happens during syncOpenClawConfig via McpRuntime.
+        return getMcpRuntime().getResolvedServersCache();
       },
-      getAskUserCallbackUrl: () => mcpBridgeServer?.askUserCallbackUrl ?? null,
-      getMediaCallbackUrl: () => mcpBridgeServer?.mediaCallbackUrl ?? null,
-      getMcpBridgeSecret: () => mcpBridgeSecret,
+      getAskUserCallbackUrl: () => getMcpRuntime().getAskUserCallbackUrl(),
+      getMediaCallbackUrl: () => getMcpRuntime().getMediaCallbackUrl(),
+      getMcpBridgeSecret: () => getMcpRuntime().getBridgeSecret(),
       getAgents: () => getCoworkStore().listAgents(),
       getUserPlugins: () =>
         getCoworkStore()
           .listUserPlugins()
+          .filter(p => !isHiddenUserPluginId(p.pluginId))
           .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
       canUseMediaGeneration: () => cachedMediaGenerationEntitled,
     });
@@ -1704,10 +1757,10 @@ const syncOpenClawConfig = async (
 
   // Resolve MCP servers before sync (async → cache for synchronous callback)
   try {
-    resolvedMcpServersCache = await getResolvedMcpServers();
+    await getMcpRuntime().refreshResolvedServersCache();
   } catch (err) {
     console.warn(`[OpenClaw] getResolvedMcpServers failed (non-fatal):`, err);
-    resolvedMcpServersCache = [];
+    getMcpRuntime().clearResolvedServersCache();
   }
 
   const syncResult = getOpenClawConfigSync().sync(options.reason);
@@ -2034,124 +2087,18 @@ const getSkillManager = () => {
   return skillManager;
 };
 
-const getMcpStore = () => {
-  if (!mcpStore) {
-    const sqliteStore = getStore();
-    mcpStore = new McpStore(sqliteStore.getDatabase());
+const getMcpRuntime = (): McpRuntime => {
+  if (!mcpRuntime) {
+    mcpRuntime = new McpRuntime({
+      getStore,
+      syncOpenClawConfig,
+    });
   }
-  return mcpStore;
+  return mcpRuntime;
 };
 
-/**
- * Start the MCP Bridge: server manager + HTTP callback.
- * Called during OpenClaw bootstrap before config sync.
- * Returns the bridge config to be written into openclaw.json.
- *
- * The HTTP callback server is always started (even without MCP servers)
- * because the AskUserQuestion plugin also uses it for user confirmation dialogs.
- */
-/**
- * Start the AskUser HTTP callback server (serves ask-user-question plugin).
- * MCP server connections are now handled natively by OpenClaw via mcp.servers config.
- */
 const startAskUserServer = async (): Promise<void> => {
-  if (mcpBridgeServer?.port) return; // already running
-
-  if (!mcpBridgeServer) {
-    mcpBridgeServer = new McpBridgeServer(mcpBridgeSecret);
-  }
-  console.log('[AskUser] starting HTTP callback server...');
-  await mcpBridgeServer.start();
-
-  // Register AskUserQuestion callback — shows a permission modal when the
-  // ask-user-question OpenClaw plugin sends a request via HTTP.
-  mcpBridgeServer.onAskUser(request => {
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:permission', {
-          sessionId: '__askuser__',
-          request: {
-            requestId: request.requestId,
-            toolName: 'AskUserQuestion',
-            toolInput: { questions: request.questions },
-          },
-        });
-      } catch (error) {
-        console.error('[AskUser] failed to send permission request to window:', error);
-      }
-    });
-  });
-
-  // Dismiss the AskUser modal when timeout or resolved from server side.
-  mcpBridgeServer.onAskUserDismiss(requestId => {
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach(win => {
-      if (win.isDestroyed()) return;
-      try {
-        win.webContents.send('cowork:stream:permissionDismiss', { requestId });
-      } catch {
-        // ignore
-      }
-    });
-  });
-
-  // Media generation tool callback — handles lobsterai_image_generate / lobsterai_video_generate
-  mcpBridgeServer.onMediaGeneration(async (request) => {
-    if (!mediaGenerationHandler) {
-      return {
-        content: [{ type: 'text', text: 'Media generation service is not ready yet.' }],
-        isError: true,
-      };
-    }
-    return await mediaGenerationHandler(request);
-  });
-};
-
-/**
- * Get resolved MCP server configs for writing into openclaw.json mcp.servers.
- * Resolves stdio commands for the current platform (Windows/macOS packaged builds).
- */
-const getResolvedMcpServers = async (): Promise<ResolvedMcpServer[]> => {
-  const enabledServers = getMcpStore().getEnabledServers();
-  const resolved: ResolvedMcpServer[] = [];
-
-  // The MCP SDK's StdioClientTransport only inherits a limited set of env vars
-  // (PATH, APPDATA, TEMP, etc.). Our node/npx shims in PATH need these vars.
-  // Inject them into each stdio server's env so they're passed through.
-  const electronPath = getElectronNodeRuntimePath();
-  const npmBinDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
-    : '';
-
-  for (const server of enabledServers) {
-    if (server.transportType === 'stdio') {
-      const r = await resolveStdioCommand(server);
-      // Merge gateway env vars needed by shims as fallback
-      const shimEnv: Record<string, string> = {
-        LOBSTERAI_ELECTRON_PATH: electronPath,
-      };
-      if (npmBinDir) {
-        shimEnv.LOBSTERAI_NPM_BIN_DIR = npmBinDir;
-      }
-      resolved.push({
-        name: server.name,
-        transportType: 'stdio',
-        command: r.command,
-        args: r.args,
-        env: { ...shimEnv, ...(r.env || {}) },
-      });
-    } else {
-      resolved.push({
-        name: server.name,
-        transportType: server.transportType,
-        url: server.url,
-        headers: server.headers,
-      });
-    }
-  }
-  return resolved;
+  await getMcpRuntime().startAskUserServer();
 };
 
 const getIMGatewayManager = () => {
@@ -2381,15 +2328,34 @@ type CoworkImageAttachmentMain = {
   name: string;
   mimeType: string;
   base64Data: string;
+  sizeBytes?: number;
+  localPath?: string;
+  previewMimeType?: string;
+  previewBase64Data?: string;
 };
+
+function validateCoworkImageAttachmentsForRuntime(
+  imageAttachments?: CoworkImageAttachmentMain[],
+): { ok: true } | { ok: false; error: string } {
+  for (const attachment of imageAttachments ?? []) {
+    const validation = validateCoworkImageAttachmentSize(attachment);
+    if (!validation.ok) {
+      return {
+        ok: false,
+        error: `Image attachment ${attachment.name} exceeds the ${formatCoworkImageAttachmentLimit(validation.maxBytes)} limit.`,
+      };
+    }
+  }
+  return { ok: true };
+}
 
 function buildCoworkUserSelectionMetadata(options: {
   skillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
-  imageAttachments?: CoworkImageAttachmentMain[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
+  imageAttachmentPreviews?: CoworkImageAttachmentPreview[];
 }): Record<string, unknown> | undefined {
   const metadata: Record<string, unknown> = {};
 
@@ -2405,8 +2371,8 @@ function buildCoworkUserSelectionMetadata(options: {
       metadata.resolvedKitCapabilities = options.resolvedKitCapabilities;
     }
   }
-  if (options.imageAttachments?.length) {
-    metadata.imageAttachments = options.imageAttachments;
+  if (options.imageAttachmentPreviews?.length) {
+    metadata.imageAttachmentPreviews = options.imageAttachmentPreviews;
   }
   if (options.selectedTextSnippets?.length) {
     metadata.selectedTextSnippets = options.selectedTextSnippets;
@@ -2449,7 +2415,6 @@ const activeStreamControllers = new Map<string, AbortController>();
 
 // Media generation selection per session (for turn-level tool gating)
 const mediaSelectionBySession = new Map<string, MediaSelectionState>();
-let mediaGenerationHandler: ((request: MediaGenerationRequest) => Promise<MediaGenerationResponse>) | null = null;
 
 // Media attachment references per session (for @ mentions, FR-9)
 const mediaReferencesBySession = new Map<string, MediaAttachmentRefMain[]>();
@@ -3323,7 +3288,7 @@ if (!gotTheLock) {
       const endpoint = mediaType === 'image' ? '/api/media/images/generate' : '/api/media/videos/generate';
 
       // Video generation confirmation: inform user about cost and duration
-      if (mediaType === 'video' && mcpBridgeServer) {
+      if (mediaType === 'video') {
         const durationSec = typeof args.durationSeconds === 'number' ? args.durationSeconds : null;
         const costPoints = durationSec ? durationSec * 100 : null;
         const portalTasksUrl = getPortalTasksUrl();
@@ -3337,7 +3302,7 @@ if (!gotTheLock) {
           `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
           '~~（链接有时效性，请尽快下载）~~',
         ].join('\n');
-        const confirmResponse = await mcpBridgeServer.askUserInternal([{
+        const confirmResponse = await getMcpRuntime().askUserInternal([{
           question: questionText,
           title: '确认生成视频？',
           subtitle,
@@ -3347,8 +3312,8 @@ if (!gotTheLock) {
           ],
         }]);
 
-        const userCancelled = confirmResponse.behavior === 'deny'
-          || confirmResponse.answers?.[questionText] === '取消';
+        const userCancelled = confirmResponse?.behavior === 'deny'
+          || confirmResponse?.answers?.[questionText] === '取消';
 
         if (userCancelled) {
           console.log('[MediaGeneration] user cancelled video generation confirmation.');
@@ -3648,7 +3613,7 @@ if (!gotTheLock) {
     }
   };
 
-  mediaGenerationHandler = handleMediaGenerationCallback;
+  getMcpRuntime().setMediaGenerationHandler(handleMediaGenerationCallback);
 
   const registerMediaTaskForPolling = (tracker: MediaTaskTracker) => {
     pendingMediaTasks.set(tracker.taskId, tracker);
@@ -4210,7 +4175,7 @@ if (!gotTheLock) {
         `[HtmlShare] received HTML file share request for session ${options.sessionId} and artifact ${options.artifactId}`,
       );
       console.debug(
-        `[HtmlShare] HTML file share uses ${options.accessMode} access and source file ${options.filePath}`,
+        `[HtmlShare] HTML file share uses share-code access and source file ${options.filePath}`,
       );
       const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
       const packaged = await packageHtmlFile(options.filePath);
@@ -4225,7 +4190,6 @@ if (!gotTheLock) {
         {
           archivePath: packaged.archivePath,
           sourceType: HtmlShareSourceType.HtmlFile,
-          accessMode: options.accessMode,
           clientSourceKey,
           sessionId: options.sessionId,
           artifactId: options.artifactId,
@@ -4290,6 +4254,9 @@ if (!gotTheLock) {
         return { success: false, code: HtmlShareErrorCode.FeatureUnavailable };
       }
       const options = sanitizeUpdateFromHtmlFileInput(input);
+      if (options.currentStatus === HtmlShareStatus.Disabled) {
+        return { success: false, code: HtmlShareErrorCode.DisabledCannotUpdate };
+      }
       const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
       const packaged = await packageHtmlFile(options.filePath);
       archivePath = packaged.archivePath;
@@ -4301,7 +4268,6 @@ if (!gotTheLock) {
         {
           archivePath: packaged.archivePath,
           sourceType: HtmlShareSourceType.HtmlFile,
-          accessMode: options.accessMode,
           clientSourceKey,
           sessionId: options.sessionId,
           artifactId: options.artifactId,
@@ -4330,6 +4296,28 @@ if (!gotTheLock) {
             return undefined;
           });
       }
+    }
+  });
+
+  ipcMain.handle(HtmlShareIpc.UpdateStatus, async (_event, input: unknown) => {
+    try {
+      if (!isTestModeEnabled()) {
+        return { success: false, code: HtmlShareErrorCode.FeatureUnavailable };
+      }
+      const options = sanitizeUpdateHtmlShareStatusInput(input);
+      return await updateHtmlShareStatus(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        options.shareId,
+        options.status,
+      );
+    } catch (error) {
+      console.error('[HtmlShare] failed to update share status:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update share status',
+      };
     }
   });
 
@@ -4365,20 +4353,13 @@ if (!gotTheLock) {
         return { success: false, code: HtmlShareErrorCode.FeatureUnavailable };
       }
       const id = sanitizeHtmlShareString(shareId, 'shareId', 64);
-      const resp = await fetchWithAuth(
-        `${getServerApiBaseUrl()}/api/html-shares/${encodeURIComponent(id)}`,
-        {
-          method: 'DELETE',
-        },
+      return await updateHtmlShareStatus(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        id,
+        HtmlShareStatus.Disabled,
       );
-      const body = (await resp.json().catch((): null => null)) as {
-        code?: number;
-        message?: string;
-      } | null;
-      if (!resp.ok || body?.code !== 0) {
-        return { success: false, error: body?.message || `Share disable failed: ${resp.status}` };
-      }
-      return { success: true };
     } catch (error) {
       return {
         success: false,
@@ -4703,156 +4684,7 @@ if (!gotTheLock) {
     }
   });
 
-  // MCP Server IPC handlers
-  ipcMain.handle('mcp:list', () => {
-    try {
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list MCP servers',
-      };
-    }
-  });
-
-  ipcMain.handle(
-    'mcp:create',
-    async (
-      _event,
-      data: {
-        name: string;
-        description: string;
-        transportType: string;
-        command?: string;
-        args?: string[];
-        env?: Record<string, string>;
-        url?: string;
-        headers?: Record<string, string>;
-      },
-    ) => {
-      try {
-        getMcpStore().createServer(data as McpServerFormData);
-        const servers = getMcpStore().listServers();
-        // Sync openclaw.json with updated mcp.servers (OpenClaw handles hot-reload)
-        syncOpenClawConfig({ reason: 'mcp-server-created' }).catch(err =>
-          console.error('[MCP] config sync error:', err),
-        );
-        return { success: true, servers };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to create MCP server',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'mcp:update',
-    async (
-      _event,
-      id: string,
-      data: {
-        name?: string;
-        description?: string;
-        transportType?: string;
-        command?: string;
-        args?: string[];
-        env?: Record<string, string>;
-        url?: string;
-        headers?: Record<string, string>;
-      },
-    ) => {
-      try {
-        getMcpStore().updateServer(id, data as Partial<McpServerFormData>);
-        const servers = getMcpStore().listServers();
-        syncOpenClawConfig({ reason: 'mcp-server-updated' }).catch(err =>
-          console.error('[MCP] config sync error:', err),
-        );
-        return { success: true, servers };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update MCP server',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('mcp:delete', async (_event, id: string) => {
-    try {
-      getMcpStore().deleteServer(id);
-      const servers = getMcpStore().listServers();
-      syncOpenClawConfig({ reason: 'mcp-server-deleted' }).catch(err =>
-        console.error('[MCP] config sync error:', err),
-      );
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete MCP server',
-      };
-    }
-  });
-
-  ipcMain.handle('mcp:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      getMcpStore().setEnabled(options.id, options.enabled);
-      const servers = getMcpStore().listServers();
-      syncOpenClawConfig({ reason: 'mcp-server-toggled' }).catch(err =>
-        console.error('[MCP] config sync error:', err),
-      );
-      return { success: true, servers };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update MCP server',
-      };
-    }
-  });
-
-  ipcMain.handle('mcp:fetchMarketplace', async () => {
-    const url = app.isPackaged
-      ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/mcp-marketplace'
-      : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/mcp-marketplace';
-    try {
-      const https = await import('https');
-      const data = await new Promise<string>((resolve, reject) => {
-        const req = https.get(url, { timeout: 10000 }, res => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}`));
-            res.resume();
-            return;
-          }
-          let body = '';
-          res.setEncoding('utf8');
-          res.on('data', (chunk: string) => {
-            body += chunk;
-          });
-          res.on('end', () => resolve(body));
-          res.on('error', reject);
-        });
-        req.on('error', reject);
-        req.on('timeout', () => {
-          req.destroy();
-          reject(new Error('Request timeout'));
-        });
-      });
-      const json = JSON.parse(data);
-      const value = json?.data?.value;
-      if (!value) {
-        return { success: false, error: 'Invalid response: missing data.value' };
-      }
-      const marketplace = typeof value === 'string' ? JSON.parse(value) : value;
-      return { success: true, data: marketplace };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch marketplace',
-      };
-    }
-  });
+  registerMcpHandlers({ getMcpRuntime, syncOpenClawConfig });
 
   // Cowork IPC handlers
   ipcMain.handle(
@@ -4884,6 +4716,13 @@ if (!gotTheLock) {
       },
     ) => {
       try {
+        const ipcStartedAtMs = Date.now();
+        console.log(
+          '[CoworkFirstResponseTiming] start IPC received.',
+          `Prompt length ${options.prompt.length}.`,
+          `Image attachments ${options.imageAttachments?.length ?? 0}.`,
+          `Agent ${options.agentId || 'main'}.`,
+        );
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
@@ -4901,6 +4740,13 @@ if (!gotTheLock) {
           return {
             success: false,
             error: 'Please select a task folder before submitting.',
+          };
+        }
+        const imageAttachmentValidation = validateCoworkImageAttachmentsForRuntime(options.imageAttachments);
+        if (imageAttachmentValidation.ok === false) {
+          return {
+            success: false,
+            error: imageAttachmentValidation.error,
           };
         }
 
@@ -4959,13 +4805,14 @@ if (!gotTheLock) {
             })),
           });
         }
+        const imageAttachmentPreviews = buildCoworkImageAttachmentPreviews(options.imageAttachments);
         const messageMetadata = buildCoworkUserSelectionMetadata({
           skillIds: options.activeSkillIds,
           kitIds: options.kitIds,
           kitReferences: options.kitReferences,
           resolvedKitCapabilities: options.resolvedKitCapabilities,
-          imageAttachments: options.imageAttachments,
           selectedTextSnippets,
+          imageAttachmentPreviews,
         });
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
@@ -4976,6 +4823,11 @@ if (!gotTheLock) {
         coworkStoreInstance.updateSession(session.id, { status: 'running' });
 
         const runtime = getCoworkEngineRouter();
+        console.log(
+          '[CoworkFirstResponseTiming] start IPC dispatched to runtime.',
+          `Session ${session.id}.`,
+          `Elapsed ${Date.now() - ipcStartedAtMs}ms.`,
+        );
         runtime
           .startSession(session.id, options.prompt, {
             skipInitialUserMessage: true,
@@ -5055,6 +4907,13 @@ if (!gotTheLock) {
       },
     ) => {
       try {
+        const ipcStartedAtMs = Date.now();
+        console.log(
+          '[CoworkFirstResponseTiming] continue IPC received.',
+          `Session ${options.sessionId}.`,
+          `Prompt length ${options.prompt.length}.`,
+          `Image attachments ${options.imageAttachments?.length ?? 0}.`,
+        );
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
@@ -5068,6 +4927,13 @@ if (!gotTheLock) {
             `[CoworkSelectedText] accepted ${selectedTextSnippets.length} excerpts with `
             + `${selectedTextSnippets.reduce((total, snippet) => total + snippet.text.length, 0)} characters for session ${options.sessionId}`,
           );
+        }
+        const imageAttachmentValidation = validateCoworkImageAttachmentsForRuntime(options.imageAttachments);
+        if (imageAttachmentValidation.ok === false) {
+          return {
+            success: false,
+            error: imageAttachmentValidation.error,
+          };
         }
 
         if (options.mediaSelection && options.mediaSelection.mode !== 'none') {
@@ -5094,6 +4960,11 @@ if (!gotTheLock) {
           });
         }
 
+        console.log(
+          '[CoworkFirstResponseTiming] continue IPC dispatched to runtime.',
+          `Session ${options.sessionId}.`,
+          `Elapsed ${Date.now() - ipcStartedAtMs}ms.`,
+        );
         runtime
           .continueSession(options.sessionId, options.prompt, {
             systemPrompt: mergeCoworkSystemPrompt(
@@ -5797,9 +5668,9 @@ if (!gotTheLock) {
       // Both calls are safe to invoke unconditionally; exactly one will match.
 
         // AskUserQuestion plugin responses go to the bridge server, not the runtime
-        if (mcpBridgeServer && options.requestId) {
+        if (options.requestId) {
           const result = options.result;
-          const askUserResponse: import('./libs/mcpBridgeServer').AskUserResponse = {
+          const askUserResponse: AskUserResponse = {
             behavior: result.behavior === 'allow' ? 'allow' : 'deny',
             answers:
               result.behavior === 'allow' &&
@@ -5810,7 +5681,7 @@ if (!gotTheLock) {
                     | undefined)
                 : undefined,
           };
-          mcpBridgeServer.resolveAskUser(options.requestId, askUserResponse);
+          getMcpRuntime().resolveAskUser(options.requestId, askUserResponse);
         }
 
         const runtime = getCoworkEngineRouter();
@@ -9137,7 +9008,7 @@ end tell'`,
     if (enterpriseConfigPath) {
       try {
         const imStoreInstance = getIMGatewayManager().getIMStore();
-        const mcpStoreInstance = getMcpStore();
+        const mcpStoreInstance = getMcpRuntime().getStore();
         syncEnterpriseConfig(
           enterpriseConfigPath,
           store,

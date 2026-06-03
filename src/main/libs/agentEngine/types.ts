@@ -1,4 +1,5 @@
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import type { CoworkImageAttachmentPayload } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import type {
   KitReference,
@@ -69,11 +70,7 @@ export type CoworkForkCompactionSummary = {
   truncated?: boolean;
 };
 
-export type CoworkImageAttachment = {
-  name: string;
-  mimeType: string;
-  base64Data: string;
-};
+export type CoworkImageAttachment = CoworkImageAttachmentPayload;
 
 export type CoworkMediaAttachmentRef = {
   token: string;

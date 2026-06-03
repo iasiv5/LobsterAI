@@ -8,7 +8,11 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
-import type { HtmlShareAccessMode, HtmlShareStatus } from '../../shared/htmlShare/constants';
+import type {
+  HtmlShareAccessMode,
+  HtmlShareConfigurableStatus,
+  HtmlShareStatus,
+} from '../../shared/htmlShare/constants';
 import type {
   InstalledKitRecord,
   KitReference,
@@ -264,6 +268,25 @@ interface McpServerConfigIPC {
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
+  launchResolution?: {
+    serverId: string;
+    resolverKind: 'npx' | 'uvx' | 'python' | 'raw';
+    sourceFingerprint: string;
+    status: 'pending' | 'installing' | 'ready' | 'failed' | 'unsupported';
+    packageName?: string;
+    requestedVersion?: string;
+    resolvedVersion?: string;
+    installDir?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    error?: string;
+    installedAt?: number;
+    resolvedAt?: number;
+    lastProbeAt?: number;
+    lastProbeStatus?: string;
+    updatedAt: number;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -320,8 +343,11 @@ interface HtmlShareResult {
   shareCode?: string;
   shareCodeUnavailable?: boolean;
   status?: HtmlShareStatus;
+  moderationStatus?: string;
   updatedAt?: string;
   contentUpdatedAt?: string;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
   error?: string;
   code?: number;
   warnings?: string[];
@@ -401,11 +427,15 @@ interface IElectronAPI {
       id: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    retryLaunchResolution: (
+      id: string,
+    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     fetchMarketplace: () => Promise<{
       success: boolean;
       data?: McpMarketplaceData;
       error?: string;
     }>;
+    onChanged: (callback: () => void) => () => void;
   };
   kits: {
     fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;
@@ -552,7 +582,7 @@ interface IElectronAPI {
       resolvedKitCapabilities?: ResolvedKitCapabilities;
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId: string; sourceMessageType: 'assistant'; createdAt: number; startOffset?: number; endOffset?: number }>;
       agentId?: string;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
@@ -572,7 +602,7 @@ interface IElectronAPI {
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId: string; sourceMessageType: 'assistant'; createdAt: number; startOffset?: number; endOffset?: number }>;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
@@ -829,7 +859,6 @@ interface IElectronAPI {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
     }) => Promise<HtmlShareResult>;
     updateFromHtmlFile: (options: {
       shareId: string;
@@ -837,12 +866,16 @@ interface IElectronAPI {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
+      currentStatus?: HtmlShareStatus;
     }) => Promise<HtmlShareResult>;
     getByHtmlFile: (options: {
       filePath: string;
     }) => Promise<{ success: boolean; share?: HtmlShareResult | null; error?: string; code?: number }>;
-    disable: (shareId: string) => Promise<{ success: boolean; error?: string }>;
+    updateStatus: (options: {
+      shareId: string;
+      status: HtmlShareConfigurableStatus;
+    }) => Promise<HtmlShareResult>;
+    disable: (shareId: string) => Promise<HtmlShareResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
   };
   voice: {

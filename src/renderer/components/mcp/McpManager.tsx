@@ -22,6 +22,14 @@ const TRANSPORT_BADGE_COLORS: Record<string, string> = {
   http: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
 };
 
+const LAUNCH_STATUS_COLORS: Record<string, string> = {
+  pending: 'bg-gray-500/10 text-gray-600 dark:text-gray-300',
+  installing: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  ready: 'bg-green-500/10 text-green-600 dark:text-green-400',
+  failed: 'bg-red-500/10 text-red-600 dark:text-red-400',
+  unsupported: 'bg-gray-500/10 text-gray-600 dark:text-gray-300',
+};
+
 type McpTab = 'installed' | 'marketplace' | 'custom';
 
 /**
@@ -99,6 +107,13 @@ const McpManager: React.FC = () => {
   }, [dispatch]);
 
   useEffect(() => {
+    return mcpService.onChanged(async () => {
+      const loaded = await mcpService.loadServers();
+      dispatch(setMcpServers(loaded));
+    });
+  }, [dispatch]);
+
+  useEffect(() => {
     let isActive = true;
     const fetchMarketplace = async () => {
       const result = await mcpService.fetchMarketplace();
@@ -166,6 +181,26 @@ const McpManager: React.FC = () => {
     return server.url || '';
   };
 
+  const getLaunchStatusLabel = (server: McpServerConfig): string | null => {
+    if (server.transportType !== 'stdio') return null;
+    const command = (server.command || '').trim().toLowerCase();
+    const isManagedCandidate = command === 'npx' || command === 'npx.cmd';
+    if (!server.launchResolution && !isManagedCandidate) return null;
+    const status = server.launchResolution?.status;
+    if (!status) return i18nService.t('mcpLaunchPending');
+    if (status === 'pending') return i18nService.t('mcpLaunchPending');
+    if (status === 'installing') return i18nService.t('mcpLaunchInstalling');
+    if (status === 'ready') return i18nService.t('mcpLaunchReady');
+    if (status === 'failed') return i18nService.t('mcpLaunchFailed');
+    if (status === 'unsupported') return i18nService.t('mcpLaunchUnsupported');
+    return null;
+  };
+
+  const getLaunchStatusClass = (server: McpServerConfig): string => {
+    const status = server.launchResolution?.status || 'pending';
+    return LAUNCH_STATUS_COLORS[status] || LAUNCH_STATUS_COLORS.pending;
+  };
+
   const getInstalledDescription = useCallback((server: McpServerConfig): string => {
     const persistedDescription = server.description?.trim();
     if (persistedDescription) return persistedDescription;
@@ -220,6 +255,18 @@ const McpManager: React.FC = () => {
       setActionError('');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : i18nService.t('mcpUpdateFailed'));
+    }
+  };
+
+  const handleRetryLaunchResolution = async (serverId: string) => {
+    setActionError('');
+    const result = await mcpService.retryLaunchResolution(serverId);
+    if (!result.success) {
+      setActionError(result.error || i18nService.t('mcpUpdateFailed'));
+      return;
+    }
+    if (result.servers) {
+      dispatch(setMcpServers(result.servers));
     }
   };
 
@@ -429,6 +476,7 @@ const McpManager: React.FC = () => {
             filteredInstalled.map((server) => {
               const registryEntry = getRegistryEntryForServer(server);
               const installedDescription = getInstalledDescription(server);
+              const launchStatusLabel = getLaunchStatusLabel(server);
               return (
                 <div
                   key={server.id}
@@ -481,6 +529,23 @@ const McpManager: React.FC = () => {
                     <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}>
                       {server.transportType}
                     </span>
+                    {launchStatusLabel && (
+                      <span
+                        className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${getLaunchStatusClass(server)}`}
+                        title={server.launchResolution?.error || ''}
+                      >
+                        {launchStatusLabel}
+                      </span>
+                    )}
+                    {server.launchResolution?.status === 'failed' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRetryLaunchResolution(server.id)}
+                        className="shrink-0 px-1.5 py-0.5 rounded bg-surface-raised text-primary hover:bg-primary/10 transition-colors"
+                      >
+                        {i18nService.t('mcpLaunchRetry')}
+                      </button>
+                    )}
                     {server.transportType === 'stdio' && server.command && (
                       <>
                         <span className="shrink-0">·</span>
@@ -586,7 +651,9 @@ const McpManager: React.FC = () => {
             >
               + {i18nService.t('addMcpServer')}
             </button>
-            {filteredCustom.map((server) => (
+            {filteredCustom.map((server) => {
+              const launchStatusLabel = getLaunchStatusLabel(server);
+              return (
                 <div
                   key={server.id}
                   className="rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
@@ -638,6 +705,23 @@ const McpManager: React.FC = () => {
                     <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}>
                       {server.transportType}
                     </span>
+                    {launchStatusLabel && (
+                      <span
+                        className={`shrink-0 px-1.5 py-0.5 rounded font-medium ${getLaunchStatusClass(server)}`}
+                        title={server.launchResolution?.error || ''}
+                      >
+                        {launchStatusLabel}
+                      </span>
+                    )}
+                    {server.launchResolution?.status === 'failed' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRetryLaunchResolution(server.id)}
+                        className="shrink-0 px-1.5 py-0.5 rounded bg-surface-raised text-primary hover:bg-primary/10 transition-colors"
+                      >
+                        {i18nService.t('mcpLaunchRetry')}
+                      </button>
+                    )}
                     {server.transportType === 'stdio' && server.command && (
                       <>
                         <span className="shrink-0">·</span>
@@ -652,7 +736,8 @@ const McpManager: React.FC = () => {
                     )}
                   </div>
                 </div>
-              ))}
+              );
+            })}
           </div>
         </div>
       )}

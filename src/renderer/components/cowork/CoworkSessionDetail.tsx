@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import type { CoworkImageAttachmentPreview } from '../../../shared/cowork/imageAttachments';
 import {
   type CoworkSelectedTextSnippet,
   CoworkSelectedTextSource,
@@ -98,6 +99,16 @@ const SELECTED_TEXT_ERROR_I18N_KEYS: Record<CoworkSelectedTextValidationError, s
   too_many: 'coworkSelectedTextTooMany',
   total_too_long: 'coworkSelectedTextTotalTooLong',
   duplicate: 'coworkSelectedTextDuplicate',
+};
+
+const extractBase64FromDataUrl = (dataUrl: string): { mimeType: string; base64Data: string } | null => {
+  const match = /^data:(.+);base64,(.*)$/s.exec(dataUrl);
+  if (!match) return null;
+  return { mimeType: match[1], base64Data: match[2] };
+};
+
+const showToast = (message: string): void => {
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
 };
 
 const sanitizeExportFileName = (value: string): string => {
@@ -2123,22 +2134,62 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const handleReEdit = useCallback((message: CoworkMessage) => {
     const ref = promptInputRef.current;
     if (!ref) return;
-    // Set text content
-    if (message.content?.trim()) {
-      ref.setValue(message.content);
-    }
-    // Restore image attachments (always call to clear previous attachments)
-    const imageAttachments = ((message.metadata as CoworkMessageMetadata)?.imageAttachments ?? []) as CoworkImageAttachment[];
-    ref.setImageAttachments(imageAttachments);
-    const selectedTextSnippets = ((message.metadata as CoworkMessageMetadata)?.selectedTextSnippets ?? []) as CoworkSelectedTextSnippet[];
-    ref.setSelectedTextSnippets(selectedTextSnippets);
-    // Restore active skills
-    const skillIds = (message.metadata as CoworkMessageMetadata)?.skillIds ?? [];
-    dispatch(setActiveSkillIds(skillIds));
-    const kitIds = (message.metadata as CoworkMessageMetadata)?.kitIds ?? [];
-    dispatch(setActiveKitIds(kitIds));
-    // Focus the input
-    ref.focus();
+    void (async () => {
+      const metadata = message.metadata as CoworkMessageMetadata | undefined;
+      const imagePreviews = Array.isArray(metadata?.imageAttachmentPreviews)
+        ? metadata.imageAttachmentPreviews as CoworkImageAttachmentPreview[]
+        : [];
+      let imageAttachments = ((metadata?.imageAttachments ?? []) as CoworkImageAttachment[]);
+
+      if (imagePreviews.length > 0 && imageAttachments.length === 0) {
+        const restoredImages: CoworkImageAttachment[] = [];
+        for (const preview of imagePreviews) {
+          if (!preview.localPath) {
+            showToast(i18nService.t('coworkImageAttachmentOriginalMissing'));
+            return;
+          }
+          try {
+            const readResult = await window.electron.dialog.readFileAsDataUrl(preview.localPath);
+            if (!readResult.success || !readResult.dataUrl) {
+              showToast(i18nService.t('coworkImageAttachmentOriginalMissing'));
+              return;
+            }
+            const extracted = extractBase64FromDataUrl(readResult.dataUrl);
+            if (!extracted) {
+              showToast(i18nService.t('coworkImageAttachmentOriginalMissing'));
+              return;
+            }
+            restoredImages.push({
+              name: preview.name,
+              mimeType: extracted.mimeType,
+              base64Data: extracted.base64Data,
+              localPath: preview.localPath,
+            });
+          } catch (error) {
+            console.warn('[CoworkSessionDetail] failed to restore image attachment for re-edit:', error);
+            showToast(i18nService.t('coworkImageAttachmentOriginalMissing'));
+            return;
+          }
+        }
+        imageAttachments = restoredImages;
+      }
+
+      // Set text content
+      if (message.content?.trim()) {
+        ref.setValue(message.content);
+      }
+      // Restore image attachments (always call to clear previous attachments)
+      ref.setImageAttachments(imageAttachments);
+      const selectedTextSnippets = (metadata?.selectedTextSnippets ?? []) as CoworkSelectedTextSnippet[];
+      ref.setSelectedTextSnippets(selectedTextSnippets);
+      // Restore active skills
+      const skillIds = metadata?.skillIds ?? [];
+      dispatch(setActiveSkillIds(skillIds));
+      const kitIds = metadata?.kitIds ?? [];
+      dispatch(setActiveKitIds(kitIds));
+      // Focus the input
+      ref.focus();
+    })();
   }, [dispatch]);
 
   const handleBrowserAnnotationCaptured = useCallback((payload: BrowserAnnotationPayload) => {
