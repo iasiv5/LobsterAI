@@ -1,6 +1,10 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
 import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type {
+  AsrRecognizeRequest,
+  AsrRecognizeResult,
+} from '../../shared/asr/constants';
+import type {
   BrowserDiagnosticResult,
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
@@ -878,8 +882,8 @@ interface IElectronAPI {
     disable: (shareId: string) => Promise<HtmlShareResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
   };
-  voice: {
-    triggerDictation: () => Promise<{ success: boolean; error?: string }>;
+  asr: {
+    recognize: (options: AsrRecognizeRequest) => Promise<AsrRecognizeResult>;
   };
   artifact: {
     watchFile: (filePath: string) => Promise<void>;

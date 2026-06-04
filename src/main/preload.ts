@@ -4,6 +4,10 @@ import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
+import {
+  AsrIpcChannel,
+  type AsrRecognizeRequest,
+} from '../shared/asr/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
@@ -582,8 +586,9 @@ contextBridge.exposeInMainWorld('electron', {
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
   },
-  voice: {
-    triggerDictation: () => ipcRenderer.invoke('voice:triggerDictation'),
+  asr: {
+    recognize: (options: AsrRecognizeRequest) =>
+      ipcRenderer.invoke(AsrIpcChannel.Recognize, options),
   },
   artifact: {
     watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),

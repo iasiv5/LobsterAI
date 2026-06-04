@@ -1,0 +1,5 @@
+export const VOICE_INPUT_TARGET_SAMPLE_RATE = 16000;
+export const VOICE_INPUT_MAX_RECORDING_MS = 60_000;
+export const VOICE_INPUT_MIN_RECORDING_MS = 300;
+
+export const buildVoiceInputFileName = (): string => `voice-input-${Date.now()}.wav`;
