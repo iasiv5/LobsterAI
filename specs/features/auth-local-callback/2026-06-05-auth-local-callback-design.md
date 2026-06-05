@@ -234,6 +234,107 @@ lobsterai://auth/callback?code=<authCode>
 
 推荐优先只允许 `127.0.0.1`，减少 localhost 被 hosts 或代理环境影响的可能性。
 
+### 4.7 Portal 现状与兼容改造
+
+当前网页端代码位于：
+
+`/Users/admin/Desktop/disk/work/lobsterai-portal`
+
+客户端当前打开的生产登录地址为：
+
+```text
+https://c.youdao.com/dict/hardware/octopus/lobsterai-portal.html#/login?source=electron
+```
+
+网页端登录主入口为：
+
+`/Users/admin/Desktop/disk/work/lobsterai-portal/src/views/LoginView.vue`
+
+现有逻辑：
+
+- `route.query.source` 决定是否为 Electron 登录，默认值为 `portal`。
+- 普通 URS 登录成功后，`handleLoginSuccess()` 调用 `POST /api/auth/callback`，服务端返回 `data.authCode`。
+- 当 `source === 'electron' && authCode` 时，页面创建隐藏 iframe：
+
+```ts
+iframe.src = `lobsterai://auth/callback?code=${authCode}`;
+```
+
+- 员工 OpenID 登录成功后，`handleOpenIdCallback()` 也使用同样的隐藏 iframe 触发 deep link。
+
+为了兼容旧版本客户端，网页端不能直接删除 deep link 代码。推荐改造为：
+
+```ts
+function resolveElectronCallbackUrl(authCode: string): string {
+  const localRedirectUri = route.query.redirect_uri as string | undefined;
+  const state = route.query.state as string | undefined;
+
+  if (localRedirectUri && isAllowedLoopbackCallback(localRedirectUri)) {
+    const callbackUrl = new URL(localRedirectUri);
+    callbackUrl.searchParams.set('code', authCode);
+    if (state) callbackUrl.searchParams.set('state', state);
+    return callbackUrl.toString();
+  }
+
+  return `lobsterai://auth/callback?code=${encodeURIComponent(authCode)}`;
+}
+```
+
+然后把普通 URS 登录和 OpenID 登录中重复的 iframe 逻辑抽为一个 helper：
+
+```ts
+function notifyElectronClient(authCode: string): void {
+  const callbackUrl = resolveElectronCallbackUrl(authCode);
+
+  if (callbackUrl.startsWith('http://127.0.0.1:')) {
+    window.location.href = callbackUrl;
+    return;
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = callbackUrl;
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 3000);
+}
+```
+
+新旧客户端兼容关系：
+
+| 客户端版本 | 打开的登录 URL | 网页端行为 |
+|------------|----------------|------------|
+| 旧版本 | `#/login?source=electron` | 没有 `redirect_uri`，继续使用 `lobsterai://auth/callback?code=...` |
+| 新版本 | `#/login?source=electron&redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fauth%2Fcallback&state=...` | 优先跳转本地 callback URL |
+| Web 普通登录 | `#/login` 或 `#/login?source=portal` | 不通知客户端，按现有页面逻辑进入 `/profile` |
+
+Portal 侧 loopback 校验建议：
+
+- 只允许 `http:` 协议。
+- hostname 只允许 `127.0.0.1`；如确需支持本地开发可额外允许 `localhost`。
+- pathname 必须为 `/auth/callback`。
+- port 必须存在且为 `1..65535`。
+- 不允许 URL 自带 `username`、`accessToken`、`refreshToken` 等敏感参数。
+
+注意：如果使用 `window.location.href = http://127.0.0.1:<port>/auth/callback?...`，网页端会离开 portal 登录页并进入客户端本地成功页。客户端本地 server 应返回友好 HTML，避免用户看到空白页。
+
+### 4.8 OpenID 员工登录参数透传
+
+OpenID 员工登录当前通过 `handleOpenIdLogin()` 跳转后端：
+
+```ts
+params.set('source', openidSource);
+params.set('callbackUrl', callbackUrl);
+window.location.href = `${API_BASE_URL}/api/auth/openid/login?${params.toString()}`;
+```
+
+如果新客户端登录 URL 携带 `redirect_uri` 与 `state`，员工登录链路也需要保留这些参数。推荐：
+
+- Portal 在 `handleOpenIdLogin()` 调用后端 `/api/auth/openid/login` 时带上 `redirect_uri` 和 `state`。
+- 后端把这两个值放入 OpenID 流程 state 或服务端 session 中。
+- 后端 302 回到 portal `callbackUrl` 时继续带回 `authCode`，Portal 再按 4.7 的统一 helper 通知客户端。
+
+这样普通 URS 登录与 OpenID 登录都能支持新本地回调，同时旧客户端仍走 deep link。
+
 ## 5. 端口策略
 
 ### 5.1 不使用 LobsterAI 应用端口
@@ -280,6 +381,8 @@ http://127.0.0.1:<actualPort>/auth/callback
 | `src/shared/auth/constants.ts` | 如新增 IPC 事件或状态常量，则在此集中定义 |
 | `src/main/libs/authLocalCallbackServer.test.ts` | 新建，覆盖 callback path、state、code、server close 等逻辑 |
 | `src/main/libs/authCallbackRouter.test.ts` | 修改，覆盖直接投递 code 的 buffer/deliver 行为 |
+| `/Users/admin/Desktop/disk/work/lobsterai-portal/src/views/LoginView.vue` | 修改，优先使用 `redirect_uri` 通知新客户端，并保留 deep link 兼容旧客户端 |
+| `/Users/admin/Desktop/disk/work/lobsterai-portal/docs/server-integration/*` | 可选修改，补充 portal 与后端对 `redirect_uri` / `state` 的协作说明 |
 
 ## 7. 边界情况
 
@@ -316,6 +419,9 @@ http://127.0.0.1:<actualPort>/auth/callback
 4. 确认 renderer 收到 callback，并调用现有 `auth:exchange`。
 5. 确认登录成功后 Redux auth 状态、quota、server models 与现有 deep link 流程一致。
 6. 确认本地 callback server 在成功后关闭，再访问同一 callback URL 应连接失败或无响应。
+7. 在 portal 登录页使用 `#/login?source=electron&redirect_uri=http%3A%2F%2F127.0.0.1%3A<port>%2Fauth%2Fcallback&state=abc`，普通 URS 登录成功后跳转到本地 callback URL。
+8. 在 portal 登录页使用 `#/login?source=electron`，普通 URS 登录成功后仍触发 `lobsterai://auth/callback?code=...`。
+9. 员工 OpenID 登录成功后同样遵循 `redirect_uri` 优先、deep link fallback 的规则。
 
 ### 8.3 回归测试
 
