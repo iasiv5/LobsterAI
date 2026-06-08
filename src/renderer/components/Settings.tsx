@@ -1983,6 +1983,7 @@ const Settings: React.FC<SettingsProps> = ({
     setNoticeMessage(null);
     setIsRestoringOpenClawData(true);
     try {
+      await waitForNextPaint();
       const result = await window.electron.openclaw.dataMigration.restore();
       if (!result.success) {
         setError(result.error || i18nService.t('openClawDataMigrationFailed'));
@@ -4314,21 +4315,29 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           )}
 
-          {isBackingUpOpenClawData && (
+          {(isBackingUpOpenClawData || isRestoringOpenClawData) && (
             <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4">
               <div className="w-full max-w-md rounded-2xl border border-border bg-surface px-5 py-5 text-center shadow-xl">
                 <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-primary-muted text-primary">
                   <ArrowPathIcon className="h-5 w-5 animate-spin" />
                 </div>
                 <h3 className="mt-4 text-base font-semibold text-foreground">
-                  {i18nService.t('openClawDataBackupBlockingTitle')}
+                  {i18nService.t(isBackingUpOpenClawData
+                    ? 'openClawDataBackupBlockingTitle'
+                    : 'openClawDataMigrationBlockingTitle')}
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-secondary">
-                  {i18nService.t('openClawDataBackupBlockingDesc')}
+                  {i18nService.t(isBackingUpOpenClawData
+                    ? 'openClawDataBackupBlockingDesc'
+                    : 'openClawDataMigrationBlockingDesc')}
                 </p>
                 <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
                   <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{i18nService.t('openClawDataBackupBlockingWarning')}</span>
+                  <span>
+                    {i18nService.t(isBackingUpOpenClawData
+                      ? 'openClawDataBackupBlockingWarning'
+                      : 'openClawDataMigrationBlockingWarning')}
+                  </span>
                 </div>
               </div>
             </div>

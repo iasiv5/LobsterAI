@@ -712,6 +712,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openClawDataMigrationSuccess: '数据迁移已完成。',
     openClawDataMigrationFailed: '数据迁移失败',
     openClawDataMigrationRestarting: '已选择备份文件，应用将重启并导入数据。',
+    openClawDataMigrationBlockingTitle: '正在准备导入 LobsterAI 数据',
+    openClawDataMigrationBlockingDesc: '导入期间应用会暂时锁定。选择备份文件后，应用会自动重启并完成导入。',
+    openClawDataMigrationBlockingWarning: '请不要关闭应用。关闭应用会中断导入准备流程，可能需要重新选择备份文件。',
     openClawDataMigrationConfirmTitle: '导入 LobsterAI 数据备份？',
     openClawDataMigrationConfirmDesc: '导入会替换当前应用数据，包括登录态、会话、配置、技能、记忆和 OpenClaw 状态。',
     openClawDataMigrationConfirmSafeDesc: '应用会先为当前数据生成回滚备份，然后重启并完成导入。项目工作目录不会被导入包覆盖。',
@@ -3184,6 +3187,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openClawDataMigrationSuccess: 'Data migration completed.',
     openClawDataMigrationFailed: 'Data migration failed',
     openClawDataMigrationRestarting: 'Backup file selected. The app will restart and import the data.',
+    openClawDataMigrationBlockingTitle: 'Preparing to import LobsterAI data',
+    openClawDataMigrationBlockingDesc:
+      'The app is temporarily locked during import preparation. After you choose a backup file, the app will restart and finish the import.',
+    openClawDataMigrationBlockingWarning:
+      'Do not close the app. Closing it will interrupt import preparation and may require choosing the backup file again.',
     openClawDataMigrationConfirmTitle: 'Import LobsterAI data backup?',
     openClawDataMigrationConfirmDesc:
       'Importing replaces current app data, including login state, sessions, settings, skills, memory, and OpenClaw state.',

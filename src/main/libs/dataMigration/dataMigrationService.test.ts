@@ -165,6 +165,35 @@ test('performPendingDataMigrationRestoreSync creates rollback and restores backu
   expect(fs.readFileSync(path.join(targetUserData, 'SKILLs', 'demo', 'SKILL.md'), 'utf8')).toBe('# Demo');
 });
 
+test('performPendingDataMigrationRestoreSync replaces data in place and preserves runtime locks', () => {
+  const root = makeTempDir();
+  const sourceUserData = path.join(root, 'source', 'LobsterAI');
+  const targetUserData = path.join(root, 'target', 'LobsterAI');
+  const rollbackRoot = path.join(root, 'rollbacks');
+  const archivePath = path.join(root, 'source-backup.tar.gz');
+
+  writeFile(path.join(sourceUserData, DB_FILENAME), 'source-db');
+  writeFile(path.join(sourceUserData, 'openclaw', 'state', 'openclaw.json'), '{"source":true}');
+  writeFile(path.join(targetUserData, DB_FILENAME), 'target-db');
+  writeFile(path.join(targetUserData, 'old-only.txt'), 'old');
+  writeFile(path.join(targetUserData, 'SingletonLock'), 'runtime-lock');
+
+  createMigrationArchiveSync({ userDataPath: sourceUserData, outputPath: archivePath });
+  writePendingRestoreRequestSync(targetUserData, archivePath);
+
+  const result = performPendingDataMigrationRestoreSync({
+    userDataPath: targetUserData,
+    rollbackRootPath: rollbackRoot,
+    now: new Date('2026-06-08T01:02:03Z'),
+  });
+
+  expect(result?.status).toBe(DataMigrationRestoreStatus.Success);
+  expect(fs.readFileSync(path.join(targetUserData, DB_FILENAME), 'utf8')).toBe('source-db');
+  expect(fs.readFileSync(path.join(targetUserData, 'openclaw', 'state', 'openclaw.json'), 'utf8')).toBe('{"source":true}');
+  expect(fs.existsSync(path.join(targetUserData, 'old-only.txt'))).toBe(false);
+  expect(fs.readFileSync(path.join(targetUserData, 'SingletonLock'), 'utf8')).toBe('runtime-lock');
+});
+
 test('performPendingDataMigrationRestoreSync keeps existing data when restore fails', () => {
   const root = makeTempDir();
   const targetUserData = path.join(root, 'target', 'LobsterAI');

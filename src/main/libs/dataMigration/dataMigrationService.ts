@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -25,9 +24,13 @@ const EXCLUDED_TOP_LEVEL_NAMES = new Set([
   'DawnGraphiteCache',
   'DawnWebGPUCache',
   'Service Worker',
+  'SingletonCookie',
+  'SingletonLock',
+  'SingletonSocket',
   'blob_storage',
   'Crashpad',
   'logs',
+  'lockfile',
   PENDING_RESTORE_FILE_NAME,
   LAST_RESTORE_RESULT_FILE_NAME,
 ]);
@@ -435,10 +438,26 @@ const buildFailedRestoreResult = (
   error: error instanceof Error ? error.message : String(error),
 });
 
-const restoreOldUserDataIfNeeded = (userDataPath: string, oldUserDataPath: string | null): void => {
-  if (!oldUserDataPath || !fs.existsSync(oldUserDataPath)) return;
-  removeDirIfExistsSync(userDataPath);
-  fs.renameSync(oldUserDataPath, userDataPath);
+const clearRestorableUserDataSync = (userDataPath: string): void => {
+  ensureDirSync(userDataPath);
+  for (const entry of fs.readdirSync(userDataPath)) {
+    if (isExcludedTopLevelEntry(entry)) continue;
+    removeDirIfExistsSync(path.join(userDataPath, entry));
+  }
+};
+
+const replaceRestorableUserDataSync = (sourceRoot: string, userDataPath: string): void => {
+  clearRestorableUserDataSync(userDataPath);
+  copyDirectorySync(sourceRoot, userDataPath);
+};
+
+const restoreRollbackArchiveSync = (rollbackPath: string, userDataPath: string): void => {
+  const rollback = extractMigrationArchiveToTempSync(rollbackPath);
+  try {
+    replaceRestorableUserDataSync(rollback.sourceRoot, userDataPath);
+  } finally {
+    removeDirIfExistsSync(rollback.tempRoot);
+  }
 };
 
 export const performPendingDataMigrationRestoreSync = (
@@ -450,8 +469,9 @@ export const performPendingDataMigrationRestoreSync = (
 
   const now = input.now ?? new Date();
   let rollbackPath: string | undefined;
+  let rollbackReady = false;
   let extractedTempRoot: string | null = null;
-  let oldUserDataPath: string | null = null;
+  let targetWasTouched = false;
 
   try {
     try {
@@ -469,19 +489,14 @@ export const performPendingDataMigrationRestoreSync = (
         now,
         archiveKind: 'rollback',
       });
+      rollbackReady = true;
     }
 
     const extracted = extractMigrationArchiveToTempSync(request.archivePath);
     extractedTempRoot = extracted.tempRoot;
-    oldUserDataPath = path.join(
-      path.dirname(input.userDataPath),
-      `.${path.basename(input.userDataPath)}.restore-old-${formatDataMigrationTimestamp(now)}-${crypto.randomUUID()}`,
-    );
 
-    if (fs.existsSync(input.userDataPath)) {
-      fs.renameSync(input.userDataPath, oldUserDataPath);
-    }
-    copyDirectorySync(extracted.sourceRoot, input.userDataPath);
+    targetWasTouched = true;
+    replaceRestorableUserDataSync(extracted.sourceRoot, input.userDataPath);
 
     const result: DataMigrationLastRestoreResult = {
       status: DataMigrationRestoreStatus.Success,
@@ -490,15 +505,14 @@ export const performPendingDataMigrationRestoreSync = (
       restoredAt: now.toISOString(),
     };
     writeRestoreResultSync(input.userDataPath, result);
-    if (oldUserDataPath) {
-      removeDirIfExistsSync(oldUserDataPath);
-    }
     return result;
   } catch (error) {
-    try {
-      restoreOldUserDataIfNeeded(input.userDataPath, oldUserDataPath);
-    } catch {
-      // Leave the original error as the reported failure.
+    if (targetWasTouched && rollbackReady && rollbackPath) {
+      try {
+        restoreRollbackArchiveSync(rollbackPath, input.userDataPath);
+      } catch {
+        // Leave the original error as the reported failure.
+      }
     }
     const result = buildFailedRestoreResult(request.archivePath, rollbackPath, error, now);
     try {
