@@ -8,14 +8,14 @@ import { pipeline } from 'stream/promises';
 
 export const ComputerUseRuntime = {
   Id: 'computer-use',
-  Version: '26.527.31326',
-  UpstreamRuntimeVersion: '0.4.5-26568471749-e86e78c35d86',
+  Version: '26.608.1',
+  UpstreamRuntimeVersion: 'lobsterai-sky-0.1.0',
   Platform: 'win32',
   Arch: 'x64',
-  ArchiveName: 'lobsterai-computer-use-runtime-win-x64-26.527.31326.zip',
-  DownloadUrl: 'https://ydhardwarebusiness.nosdn.127.net/00dbd5fcee182939139f6630d07e2c8a.zip',
-  Sha256: 'ae31eec1f350f6fa22690c115cf0ed42759c697c16c21013bdde0602ea6d391b',
-  SizeBytes: 804417,
+  ArchiveName: 'lobsterai-computer-use-runtime-win-x64-26.608.1.zip',
+  DownloadUrl: 'https://ydhardwarebusiness.nosdn.127.net/f8e82ec6e82dd7c1afdb648b0f9db14b.zip',
+  Sha256: 'b266b4ebb9153021749f9ed369ec5c23921e76c2c3c3262e251e00d957757c32',
+  SizeBytes: 550821,
 } as const;
 export type ComputerUseRuntime =
   typeof ComputerUseRuntime[keyof typeof ComputerUseRuntime];
@@ -307,4 +307,16 @@ export async function installComputerUseRuntime(
     console.error('[ComputerUseRuntime] runtime installation failed:', error);
     return { success: false, error: message };
   }
+}
+
+export async function uninstallComputerUseRuntime(): Promise<void> {
+  const targetRoot = getComputerUseRuntimeRoot();
+  const archivePath = path.join(
+    getComputerUseRuntimeBaseDir(),
+    'downloads',
+    ComputerUseRuntime.ArchiveName,
+  );
+
+  await fs.promises.rm(targetRoot, { recursive: true, force: true });
+  await fs.promises.rm(archivePath, { force: true }).catch(() => {});
 }

@@ -3,7 +3,9 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
 import { McpIpcChannel } from '../../shared/mcp/constants';
+import { isComputerUseKitInstalled } from '../computerUse/computerUseKit';
 import { resolveComputerUseMcpServer } from '../computerUse/computerUseMcpServer';
+import { installComputerUseRuntime } from '../computerUse/computerUseRuntime';
 import { getElectronNodeRuntimePath } from '../libs/coworkUtil';
 import {
   type AskUserRequest,
@@ -275,11 +277,24 @@ export class McpRuntime {
       }
     }
 
-    const computerUseServer = resolveComputerUseMcpServer({
-      askUserCallbackUrl: this.getAskUserCallbackUrl(),
-      bridgeSecret: this.bridgeSecret,
-      electronNodePath: electronPath,
-    });
+    const askUserCallbackUrl = this.getAskUserCallbackUrl();
+    const shouldEnableComputerUse = process.platform === 'win32'
+      && askUserCallbackUrl !== null
+      && isComputerUseKitInstalled(this.deps.getStore());
+    if (shouldEnableComputerUse) {
+      const installResult = await installComputerUseRuntime();
+      if (!installResult.success) {
+        console.warn(`[MCP] failed to install Computer Use runtime: ${installResult.error || 'unknown error'}`);
+      }
+    }
+
+    const computerUseServer = shouldEnableComputerUse
+      ? resolveComputerUseMcpServer({
+        askUserCallbackUrl,
+        bridgeSecret: this.bridgeSecret,
+        electronNodePath: electronPath,
+      })
+      : null;
     if (computerUseServer) {
       resolved.push(computerUseServer);
       builtInCount++;

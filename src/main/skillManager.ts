@@ -6,6 +6,8 @@ import fs from 'fs';
 import yaml from 'js-yaml';
 import path from 'path';
 
+import { ComputerUseSkillId } from '../shared/computerUse/constants';
+import { isComputerUseKitInstalled } from './computerUse/computerUseKit';
 import { cpRecursiveSync } from './fsCompat';
 import { t } from './i18n';
 import { getElectronNodeRuntimePath } from './libs/coworkUtil';
@@ -1594,7 +1596,11 @@ export class SkillManager {
       if (!fs.existsSync(root)) return;
       const skillDirs = listSkillDirs(root);
       skillDirs.forEach(dir => {
-        const skill = this.parseSkillDir(dir, state, defaults, builtInSkillIds.has(path.basename(dir)) || this.pluginSkillIds.has(path.basename(dir)));
+        const skillId = path.basename(dir);
+        if (skillId === ComputerUseSkillId.BuiltIn && !isComputerUseKitInstalled(this.getStore())) {
+          return;
+        }
+        const skill = this.parseSkillDir(dir, state, defaults, builtInSkillIds.has(skillId) || this.pluginSkillIds.has(skillId));
         if (!skill) return;
         skillMap.set(skill.id, skill);
       });

@@ -4667,6 +4667,7 @@ if (!gotTheLock) {
     getStore,
     getKitStoreUrl,
     getSkillManager,
+    syncOpenClawConfig,
   });
 
   ipcMain.handle(OpenClawEngineIpc.GetStatus, async () => {

@@ -55,5 +55,10 @@ export interface InstalledKitRecord {
   connectors: unknown[];
 }
 
+export const KitStoreKey = {
+  Installed: 'kits_installed',
+} as const;
+export type KitStoreKey = typeof KitStoreKey[keyof typeof KitStoreKey];
+
 export const buildKitReferenceUri = (id: string): string =>
   `${KitReferenceScheme.Kit}://${encodeURIComponent(id)}@${KitReferenceSource.LobsterAiKits}`;
