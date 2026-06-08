@@ -12,6 +12,7 @@ import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
+import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
   type HtmlShareConfigurableStatus,
@@ -238,6 +239,11 @@ contextBridge.exposeInMainWorld('electron', {
       listProfiles: () => ipcRenderer.invoke(BrowserIpc.ListProfiles),
       test: (options?: { profile?: BrowserRuntimeProfile }) => ipcRenderer.invoke(BrowserIpc.Test, options),
       resetProfile: (options?: { profile?: BrowserRuntimeProfile }) => ipcRenderer.invoke(BrowserIpc.ResetProfile, options),
+    },
+    dataMigration: {
+      backup: () => ipcRenderer.invoke(DataMigrationIpc.Backup),
+      restore: () => ipcRenderer.invoke(DataMigrationIpc.Restore),
+      getLastRestoreResult: () => ipcRenderer.invoke(DataMigrationIpc.GetLastRestoreResult),
     },
   },
   agents: {

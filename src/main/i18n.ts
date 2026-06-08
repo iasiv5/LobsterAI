@@ -89,6 +89,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authPlanFree: '免费',
     authPlanStandard: '标准',
 
+    // Data migration dialogs
+    dataMigrationBackupDialogTitle: '备份 LobsterAI 数据',
+    dataMigrationRestoreDialogTitle: '导入 LobsterAI 数据备份',
+    dataMigrationBackupArchiveFilter: 'LobsterAI 备份包',
+    dataMigrationAllFilesFilter: '所有文件',
+
     // ── IM connectivity test messages ───────────────────────────────────
     // Common
     imMissingCredentials: '缺少必要配置项: {fields}',
@@ -356,6 +362,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Auth quota
     authPlanFree: 'Free',
     authPlanStandard: 'Standard',
+
+    // Data migration dialogs
+    dataMigrationBackupDialogTitle: 'Back Up LobsterAI Data',
+    dataMigrationRestoreDialogTitle: 'Import LobsterAI Data Backup',
+    dataMigrationBackupArchiveFilter: 'LobsterAI Backup',
+    dataMigrationAllFilesFilter: 'All Files',
 
     // ── IM connectivity test messages ───────────────────────────────────
     // Common

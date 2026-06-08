@@ -13,6 +13,11 @@ import type {
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
 import type {
+  DataMigrationBackupResult,
+  DataMigrationLastRestoreResponse,
+  DataMigrationRestoreScheduleResult,
+} from '../../shared/dataMigration/constants';
+import type {
   HtmlShareAccessMode,
   HtmlShareConfigurableStatus,
   HtmlShareStatus,
@@ -570,6 +575,11 @@ interface IElectronAPI {
       listProfiles: () => Promise<{ success: boolean; profiles?: unknown[]; error?: string }>;
       test: (options?: { profile?: BrowserRuntimeProfile }) => Promise<BrowserDiagnosticResult>;
       resetProfile: (options?: { profile?: BrowserRuntimeProfile }) => Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }>;
+    };
+    dataMigration: {
+      backup: () => Promise<DataMigrationBackupResult>;
+      restore: () => Promise<DataMigrationRestoreScheduleResult>;
+      getLastRestoreResult: () => Promise<DataMigrationLastRestoreResponse>;
     };
   };
   ipcRenderer: {
