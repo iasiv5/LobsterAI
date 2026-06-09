@@ -279,6 +279,164 @@ test('fork compaction lookup selects the latest checkpoint before the fork point
   });
 });
 
+test('fork compaction lookup prefers an available summary over a newer empty checkpoint', async () => {
+  const session = {
+    id: 'fork-checkpoint-summary',
+    agentId: 'main',
+  };
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+  } as never, {} as never);
+  adapter.gatewayClient = {
+    request: async () => ({
+      checkpoints: [
+        {
+          checkpointId: 'checkpoint-empty',
+          createdAt: 3000,
+        },
+        {
+          checkpointId: 'checkpoint-summary',
+          createdAt: 1000,
+          summary: 'Usable summary before the empty checkpoint.',
+        },
+      ],
+    }),
+  } as never;
+
+  const summary = await adapter.getForkCompactionSummary(session.id, 4000);
+
+  expect(summary).toMatchObject({
+    checkpointId: 'checkpoint-summary',
+    createdAt: 1000,
+    summary: 'Usable summary before the empty checkpoint.',
+  });
+});
+
+test('context compaction diagnostic logs safe checkpoint metadata without summary text', async () => {
+  const sessionKey = 'agent:main:lobsterai:diag-safe';
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  adapter.gatewayClient = {
+    request: async () => ({
+      checkpoints: [{
+        checkpointId: 'checkpoint-safe',
+        createdAt: 10,
+        reason: 'manual',
+        tokensBefore: 12_000,
+        tokensAfter: 120,
+        summary: 'secret summary text that must not be logged',
+      }],
+    }),
+  } as never;
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  let message = '';
+
+  try {
+    await (adapter as unknown as {
+      logContextCompactionDiagnostic: (input: {
+        sessionId: string;
+        sessionKey: string;
+        mode: 'manual';
+        compacted: boolean;
+      }) => Promise<void>;
+    }).logContextCompactionDiagnostic({
+      sessionId: 'diag-safe',
+      sessionKey,
+      mode: 'manual',
+      compacted: true,
+    });
+    message = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+  } finally {
+    logSpy.mockRestore();
+  }
+
+  expect(message).toContain('summary length 43 characters');
+  expect(message).toContain('tokens 12000 to 120');
+  expect(message).not.toContain('secret summary text');
+});
+
+test('context compaction diagnostic fetches checkpoint details when list omits summary', async () => {
+  const sessionKey = 'agent:main:lobsterai:diag-get';
+  const requests: Array<{ method: string; params: unknown }> = [];
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  adapter.gatewayClient = {
+    request: async (method: string, params?: unknown) => {
+      requests.push({ method, params });
+      if (method === 'sessions.compaction.get') {
+        return {
+          checkpointId: 'checkpoint-get',
+          createdAt: 20,
+          tokensBefore: 9_000,
+          tokensAfter: 90,
+          summary: 'loaded details',
+        };
+      }
+      return {
+        checkpoints: [{
+          checkpointId: 'checkpoint-get',
+          createdAt: 20,
+        }],
+      };
+    },
+  } as never;
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+  try {
+    await (adapter as unknown as {
+      logContextCompactionDiagnostic: (input: {
+        sessionId: string;
+        sessionKey: string;
+        mode: 'auto';
+        compacted: boolean;
+      }) => Promise<void>;
+    }).logContextCompactionDiagnostic({
+      sessionId: 'diag-get',
+      sessionKey,
+      mode: 'auto',
+      compacted: true,
+    });
+  } finally {
+    logSpy.mockRestore();
+  }
+
+  expect(requests.map((request) => request.method)).toEqual([
+    'sessions.compaction.list',
+    'sessions.compaction.get',
+  ]);
+});
+
+test('context compaction diagnostic lookup failure warns without throwing', async () => {
+  const sessionKey = 'agent:main:lobsterai:diag-failure';
+  const error = new Error('gateway unavailable');
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  adapter.gatewayClient = {
+    request: async () => {
+      throw error;
+    },
+  } as never;
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  let warnCalls: unknown[][] = [];
+
+  try {
+    await expect((adapter as unknown as {
+      logContextCompactionDiagnostic: (input: {
+        sessionId: string;
+        sessionKey: string;
+        mode: 'manual';
+      }) => Promise<void>;
+    }).logContextCompactionDiagnostic({
+      sessionId: 'diag-failure',
+      sessionKey,
+      mode: 'manual',
+    })).resolves.toBeUndefined();
+    warnCalls = warnSpy.mock.calls;
+  } finally {
+    warnSpy.mockRestore();
+  }
+
+  expect(warnCalls).toHaveLength(1);
+  expect(warnCalls[0]?.[1]).toBe(error);
+});
+
 test('context usage resolves historical sessions with targeted lookup', async () => {
   const session = {
     id: 'session-1',

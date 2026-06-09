@@ -269,6 +269,31 @@ type OpenClawCompactionCheckpoint = {
   summary?: string;
 };
 
+type ContextCompactionDiagnosticMode = 'manual' | 'auto';
+
+type ContextCompactionDiagnosticInput = {
+  sessionId: string;
+  sessionKey?: string;
+  mode: ContextCompactionDiagnosticMode;
+  reason?: string;
+  compacted?: boolean;
+};
+
+type ContextCompactionDiagnostic = {
+  sessionId: string;
+  sessionKey?: string;
+  mode: ContextCompactionDiagnosticMode;
+  reason?: string;
+  checkpointId?: string;
+  checkpointCreatedAt?: number;
+  tokensBefore?: number;
+  tokensAfter?: number;
+  summaryChars?: number;
+  hasSummary: boolean;
+  compacted?: boolean;
+  updatedAt: number;
+};
+
 type ChatEventState = 'delta' | 'final' | 'aborted' | 'error';
 
 type ChatEventPayload = {
@@ -2127,7 +2152,114 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const reason = typeof result?.reason === 'string' ? result.reason : undefined;
     const usage = await this.getContextUsage(sessionId);
     console.log(`[OpenClawRuntime] manual context compaction finished for session ${sessionId}, compacted=${compacted}, reason=${reason ?? 'none'}.`);
+    void this.logContextCompactionDiagnostic({
+      sessionId,
+      sessionKey,
+      mode: 'manual',
+      ...(reason ? { reason } : {}),
+      compacted,
+    });
     return { compacted, ...(reason ? { reason } : {}), usage };
+  }
+
+  private async lookupLatestCompactionCheckpoint(
+    client: GatewayClientLike,
+    sessionKey: string,
+    options: {
+      beforeCreatedAt?: number;
+      preferSummary?: boolean;
+    } = {},
+  ): Promise<OpenClawCompactionCheckpoint | null> {
+    const listResult = await client.request<{ checkpoints?: OpenClawCompactionCheckpoint[] } | OpenClawCompactionCheckpoint[]>(
+      'sessions.compaction.list',
+      { key: sessionKey },
+      { timeoutMs: 3_000 },
+    );
+    const checkpoints = Array.isArray(listResult)
+      ? listResult
+      : Array.isArray(listResult?.checkpoints)
+        ? listResult.checkpoints
+        : [];
+    const eligibleCheckpoints = typeof options.beforeCreatedAt === 'number'
+      ? checkpoints.filter((checkpoint) => (
+        typeof checkpoint.createdAt === 'number' && checkpoint.createdAt <= options.beforeCreatedAt
+      ))
+      : checkpoints;
+    const viableCheckpoints = eligibleCheckpoints
+      .filter((checkpoint) => (
+        typeof checkpoint?.summary === 'string'
+        || typeof checkpoint?.checkpointId === 'string'
+        || typeof checkpoint?.createdAt === 'number'
+      ))
+      .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0));
+    const latest = options.preferSummary
+      ? viableCheckpoints.find((checkpoint) => checkpoint.summary?.trim()) ?? viableCheckpoints[0]
+      : viableCheckpoints[0];
+
+    if (!latest) {
+      return null;
+    }
+
+    if (!latest.summary?.trim() && latest.checkpointId) {
+      const checkpoint = await client.request<OpenClawCompactionCheckpoint>(
+        'sessions.compaction.get',
+        { key: sessionKey, checkpointId: latest.checkpointId },
+        { timeoutMs: 3_000 },
+      );
+      return {
+        ...latest,
+        ...checkpoint,
+        checkpointId: checkpoint.checkpointId ?? latest.checkpointId,
+        createdAt: checkpoint.createdAt ?? latest.createdAt,
+      };
+    }
+
+    return latest;
+  }
+
+  private async logContextCompactionDiagnostic(input: ContextCompactionDiagnosticInput): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) {
+      console.debug(`[OpenClawRuntime] skipped context compaction diagnostic for session ${input.sessionId} because the gateway client is unavailable.`);
+      return;
+    }
+
+    const sessionKey = input.sessionKey ?? this.getSessionKeysForSession(input.sessionId)[0];
+    if (!sessionKey) {
+      console.warn(`[OpenClawRuntime] skipped context compaction diagnostic for session ${input.sessionId} because no OpenClaw session key was available.`);
+      return;
+    }
+
+    try {
+      const checkpoint = await this.lookupLatestCompactionCheckpoint(client, sessionKey);
+      const summary = typeof checkpoint?.summary === 'string' ? checkpoint.summary.trim() : '';
+      const diagnostic: ContextCompactionDiagnostic = {
+        sessionId: input.sessionId,
+        sessionKey,
+        mode: input.mode,
+        reason: input.reason ?? checkpoint?.reason,
+        checkpointId: checkpoint?.checkpointId,
+        checkpointCreatedAt: checkpoint?.createdAt,
+        tokensBefore: checkpoint?.tokensBefore,
+        tokensAfter: checkpoint?.tokensAfter,
+        summaryChars: summary.length,
+        hasSummary: summary.length > 0,
+        compacted: input.compacted,
+        updatedAt: Date.now(),
+      };
+
+      console.log(
+        `[OpenClawRuntime] recorded safe context compaction diagnostic for session ${diagnostic.sessionId}: `
+        + `mode ${diagnostic.mode}, compacted ${diagnostic.compacted ?? 'unknown'}, `
+        + `reason ${diagnostic.reason ?? 'none'}, checkpoint ${diagnostic.checkpointId ?? 'none'}, `
+        + `created at ${diagnostic.checkpointCreatedAt ?? 'unknown'}, `
+        + `summary length ${diagnostic.summaryChars ?? 0} characters, `
+        + `has summary ${diagnostic.hasSummary}, `
+        + `tokens ${diagnostic.tokensBefore ?? 'unknown'} to ${diagnostic.tokensAfter ?? 'unknown'}.`,
+      );
+    } catch (error) {
+      console.warn(`[OpenClawRuntime] context compaction diagnostic lookup failed for session ${input.sessionId}; continuing without checkpoint metadata.`, error);
+    }
   }
 
   async getForkCompactionSummary(sessionId: string, beforeCreatedAt?: number): Promise<CoworkForkCompactionSummary | null> {
@@ -2139,39 +2271,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     for (const sessionKey of this.getSessionKeysForSession(sessionId)) {
       try {
-        const listResult = await client.request<{ checkpoints?: OpenClawCompactionCheckpoint[] } | OpenClawCompactionCheckpoint[]>(
-          'sessions.compaction.list',
-          { key: sessionKey },
-          { timeoutMs: 3_000 },
-        );
-        const checkpoints = Array.isArray(listResult)
-          ? listResult
-          : Array.isArray(listResult?.checkpoints)
-            ? listResult.checkpoints
-            : [];
-        const eligibleCheckpoints = typeof beforeCreatedAt === 'number'
-          ? checkpoints.filter((checkpoint) => (
-            typeof checkpoint.createdAt === 'number' && checkpoint.createdAt <= beforeCreatedAt
-          ))
-          : checkpoints;
-        const latest = eligibleCheckpoints
-          .filter((checkpoint) => typeof checkpoint?.summary === 'string' && checkpoint.summary.trim())
-          .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0]
-          ?? eligibleCheckpoints
-            .filter((checkpoint) => typeof checkpoint?.checkpointId === 'string' && checkpoint.checkpointId.trim())
-            .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0];
-
-        if (!latest) {
+        const checkpoint = await this.lookupLatestCompactionCheckpoint(client, sessionKey, {
+          beforeCreatedAt,
+          preferSummary: true,
+        });
+        if (!checkpoint) {
           continue;
-        }
-
-        let checkpoint = latest;
-        if (!checkpoint.summary?.trim() && checkpoint.checkpointId) {
-          checkpoint = await client.request<OpenClawCompactionCheckpoint>(
-            'sessions.compaction.get',
-            { key: sessionKey, checkpointId: checkpoint.checkpointId },
-            { timeoutMs: 3_000 },
-          );
         }
 
         const summary = checkpoint.summary?.trim();
@@ -4940,6 +5045,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     console.log(`[OpenClawRuntime] context compaction ended for session ${sessionId}, completed=${completed}, willRetry=${willRetry}.`);
     if (completed) {
+      void this.logContextCompactionDiagnostic({
+        sessionId,
+        mode: 'auto',
+        compacted: true,
+      });
       this.refreshAndEmitContextUsage(sessionId);
       setTimeout(() => {
         this.refreshAndEmitContextUsage(sessionId);

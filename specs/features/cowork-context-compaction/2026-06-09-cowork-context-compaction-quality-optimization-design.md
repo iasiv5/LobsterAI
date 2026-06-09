@@ -135,6 +135,8 @@
 
 #### FR-2: 压缩诊断 metadata
 
+第二点本质是“安全结构化日志”，不是 UI 功能、不是新的持久化状态，也不改变 OpenClaw 的压缩行为。第一版只在压缩结束后补充可排查的元信息，让后续反馈能判断“有没有产生 checkpoint、summary 是否为空/过短、token 是否真的下降、是手动压缩还是自动 overflow/retry 压缩”。
+
 在手动压缩和自动压缩完成后，尝试读取 OpenClaw checkpoint metadata：
 
 - `sessions.compaction.list`
@@ -168,7 +170,7 @@ type ContextCompactionDiagnostic = {
 
 状态保存：
 
-- 第一版可以只保存在 runtime memory 和 debug log。
+- 第一版只输出安全结构化日志，不写数据库，不增加 renderer 状态。
 - 如果后续要 UI 展示最近压缩诊断，再考虑 SQLite schema。
 
 ### 4.2 第二阶段：Continuity Capsule
