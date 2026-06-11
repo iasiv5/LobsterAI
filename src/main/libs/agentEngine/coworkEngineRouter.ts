@@ -191,6 +191,11 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       this.emit('contextUsageUpdate', sessionId, usage);
     });
 
+    runtime.on('contextMaintenance', (sessionId, active) => {
+      this.sessionEngine.set(sessionId, engine);
+      this.emit('contextMaintenance', sessionId, active);
+    });
+
     runtime.on('permissionRequest', (sessionId, request) => {
       this.sessionEngine.set(sessionId, engine);
       this.requestEngine.set(request.requestId, engine);

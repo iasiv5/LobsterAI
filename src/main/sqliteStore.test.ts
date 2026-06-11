@@ -114,6 +114,20 @@ test('backfills agent working directories from legacy cowork config only once', 
   reopenedStore.close();
 });
 
+test('creates continuity capsule table during startup migration', async () => {
+  const userDataPath = createTempUserDataPath();
+  createLegacyDatabase(userDataPath);
+
+  const store = await SqliteStore.create(userDataPath);
+  const table = store.getDatabase()
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_capsules'")
+    .get() as { name: string } | undefined;
+
+  expect(table?.name).toBe('cowork_session_capsules');
+
+  store.close();
+});
+
 test('upgrades legacy default agent name during migration', async () => {
   const userDataPath = createTempUserDataPath();
   createLegacyDatabase(userDataPath);

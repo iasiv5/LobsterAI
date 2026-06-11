@@ -23,6 +23,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { AgentAvatarSvg, DefaultAgentAvatarIcon, encodeAgentAvatarIcon } from '../shared/agent/avatar';
 import { CoworkForkMode } from '../shared/cowork/constants';
+import { ContinuityCapsuleSource } from './libs/agentEngine/coworkContinuityCapsule';
 import { CoworkStore } from './coworkStore';
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,117 @@ test('getSession returns all messages when one has corrupt metadata', () => {
   // Null metadata → undefined
   const nullMsg = session!.messages.find((m) => m.id === 'msg-null')!;
   expect(nullMsg.metadata).toBeUndefined();
+});
+
+test('continuity capsule upsert stores one rolling capsule per session', () => {
+  const sid = 'capsule-session';
+  insertSession(sid);
+
+  store.upsertContinuityCapsule(sid, {
+    version: 1,
+    sessionId: sid,
+    revision: 1,
+    updatedAt: 100,
+    lastSource: ContinuityCapsuleSource.UserMessage,
+    currentObjective: 'Improve compaction continuity.',
+    userConstraints: ['Do not change user model.'],
+    decisions: [],
+    recentActions: [],
+    touchedFiles: [],
+    keySymbols: [],
+    verification: [],
+    nextSteps: ['Add bridge injection.'],
+    recentFailures: [],
+    activeCapabilities: [],
+    openQuestions: [],
+  });
+  store.upsertContinuityCapsule(sid, {
+    version: 1,
+    sessionId: sid,
+    revision: 2,
+    updatedAt: 200,
+    lastSource: ContinuityCapsuleSource.PreCompaction,
+    lastCompactedAt: 200,
+    currentObjective: 'Improve compaction continuity.',
+    userConstraints: ['Do not change user model.'],
+    decisions: ['Use a session capsule row.'],
+    recentActions: [],
+    touchedFiles: [{ path: 'src/main/coworkStore.ts' }],
+    keySymbols: [],
+    verification: [],
+    nextSteps: ['Inject bridge.'],
+    recentFailures: [],
+    activeCapabilities: [],
+    openQuestions: [],
+  });
+
+  const rows = db.prepare('SELECT COUNT(*) AS count FROM cowork_session_capsules WHERE session_id = ?').get(sid) as { count: number };
+  const capsule = store.getContinuityCapsule(sid);
+
+  expect(rows.count).toBe(1);
+  expect(capsule?.revision).toBe(2);
+  expect(capsule?.lastCompactedAt).toBe(200);
+  expect(capsule?.touchedFiles[0]?.path).toBe('src/main/coworkStore.ts');
+});
+
+test('deleteSession removes the continuity capsule row', () => {
+  const sid = 'capsule-delete';
+  insertSession(sid);
+  store.upsertContinuityCapsule(sid, {
+    version: 1,
+    sessionId: sid,
+    revision: 1,
+    updatedAt: 100,
+    lastSource: ContinuityCapsuleSource.UserMessage,
+    userConstraints: [],
+    decisions: [],
+    recentActions: [],
+    touchedFiles: [],
+    keySymbols: [],
+    verification: [],
+    nextSteps: [],
+    recentFailures: [],
+    activeCapabilities: [],
+    openQuestions: [],
+  });
+
+  store.deleteSession(sid);
+
+  const rows = db.prepare('SELECT COUNT(*) AS count FROM cowork_session_capsules WHERE session_id = ?').get(sid) as { count: number };
+  expect(rows.count).toBe(0);
+});
+
+test('forkSession copies the source continuity capsule to the forked session', () => {
+  const source = store.createSession('Source', '/tmp');
+  store.upsertContinuityCapsule(source.id, {
+    version: 1,
+    sessionId: source.id,
+    revision: 3,
+    updatedAt: 100,
+    lastSource: ContinuityCapsuleSource.PostRun,
+    currentObjective: 'Keep context after compaction.',
+    userConstraints: [],
+    decisions: ['Use a dedicated capsule table.'],
+    recentActions: [],
+    touchedFiles: [{ path: 'src/main/libs/agentEngine/openclawRuntimeAdapter.ts' }],
+    keySymbols: [],
+    verification: [],
+    nextSteps: ['Inject capsule bridge.'],
+    recentFailures: [],
+    activeCapabilities: [],
+    openQuestions: [],
+  });
+
+  const forked = store.forkSession({
+    sourceSessionId: source.id,
+    forkMode: CoworkForkMode.Conversation,
+  });
+  const capsule = store.getContinuityCapsule(forked.id);
+
+  expect(capsule?.sessionId).toBe(forked.id);
+  expect(capsule?.revision).toBe(1);
+  expect(capsule?.lastSource).toBe(ContinuityCapsuleSource.Fork);
+  expect(capsule?.currentObjective).toBe('Keep context after compaction.');
 });
 
 test('main agent lists legacy sessions with null agent id', () => {

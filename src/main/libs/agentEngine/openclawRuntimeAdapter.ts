@@ -57,6 +57,15 @@ import {
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { AgentLifecyclePhase, type AgentLifecyclePhase as AgentLifecyclePhaseValue } from './constants';
+import {
+  buildCoworkContinuityCapsule,
+  ContinuityCapsuleSource,
+  formatCoworkContinuityCapsuleBridge,
+  formatCoworkMiniContinuityCapsuleBridge,
+  type ContinuityCapsuleSource as ContinuityCapsuleSourceValue,
+} from './coworkContinuityCapsule';
+import { buildCoworkTopKEvidenceBridgeResult } from './coworkTopKEvidence';
+import { buildCoworkWorkspaceRehydrationBridge } from './coworkWorkspaceRehydration';
 import { SubagentTracker } from './subagentTracker';
 import type {
   CoworkContextUsage,
@@ -267,6 +276,31 @@ type OpenClawCompactionCheckpoint = {
   tokensBefore?: number;
   tokensAfter?: number;
   summary?: string;
+};
+
+type ContextCompactionDiagnosticMode = 'manual' | 'auto';
+
+type ContextCompactionDiagnosticInput = {
+  sessionId: string;
+  sessionKey?: string;
+  mode: ContextCompactionDiagnosticMode;
+  reason?: string;
+  compacted?: boolean;
+};
+
+type ContextCompactionDiagnostic = {
+  sessionId: string;
+  sessionKey?: string;
+  mode: ContextCompactionDiagnosticMode;
+  reason?: string;
+  checkpointId?: string;
+  checkpointCreatedAt?: number;
+  tokensBefore?: number;
+  tokensAfter?: number;
+  summaryChars?: number;
+  hasSummary: boolean;
+  compacted?: boolean;
+  updatedAt: number;
 };
 
 type ChatEventState = 'delta' | 'final' | 'aborted' | 'error';
@@ -1453,6 +1487,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly pendingTurns = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
   private readonly confirmationModeBySession = new Map<string, 'modal' | 'text'>();
   private readonly bridgedSessions = new Set<string>();
+  private readonly continuityFullBridgeCompactedAtBySession = new Map<string, number>();
+  private readonly workspaceRehydrationBridgeCompactedAtBySession = new Map<string, number>();
   private readonly lastSystemPromptBySession = new Map<string, string>();
   private readonly sessionModelPatchStateBySession = new Map<string, SessionModelPatchState>();
   private readonly sessionModelPatchQueue = new Map<string, Promise<void>>();
@@ -1578,6 +1614,151 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private emitContextMaintenance(sessionId: string, active: boolean): void {
     console.log(`[OpenClawRuntime] context maintenance ${active ? 'started' : 'ended'} for session ${sessionId}.`);
     this.emit('contextMaintenance', sessionId, active);
+  }
+
+  private refreshContinuityCapsule(
+    sessionId: string,
+    source: ContinuityCapsuleSourceValue,
+    options: {
+      sourceMessageId?: string;
+      compactedAt?: number;
+    } = {},
+  ): void {
+    try {
+      if (
+        typeof this.store.getSession !== 'function'
+        || typeof this.store.getContinuityCapsule !== 'function'
+        || typeof this.store.upsertContinuityCapsule !== 'function'
+      ) {
+        return;
+      }
+      const session = this.store.getSession(sessionId);
+      if (!session) {
+        console.debug(`[CoworkContinuityCapsule] skipped refresh because session ${sessionId} was not found.`);
+        return;
+      }
+      const previous = this.store.getContinuityCapsule(sessionId);
+      const capsule = buildCoworkContinuityCapsule({
+        sessionId,
+        messages: session.messages,
+        previous,
+        source,
+        ...(options.sourceMessageId ? { sourceMessageId: options.sourceMessageId } : {}),
+        ...(options.compactedAt ? { compactedAt: options.compactedAt } : {}),
+      });
+      this.store.upsertContinuityCapsule(sessionId, capsule);
+      const logMessage = [
+        `[CoworkContinuityCapsule] refreshed capsule for session ${sessionId}.`,
+        `Source ${source}.`,
+        `Revision ${capsule.revision}.`,
+        `Touched files ${capsule.touchedFiles.length}.`,
+        `Next steps ${capsule.nextSteps.length}.`,
+      ] as const;
+      if (source === ContinuityCapsuleSource.PreCompaction || source === ContinuityCapsuleSource.PostCompaction) {
+        console.log(...logMessage);
+      } else {
+        console.debug(...logMessage);
+      }
+    } catch (error) {
+      console.warn(`[CoworkContinuityCapsule] failed to refresh capsule for session ${sessionId}:`, error);
+    }
+  }
+
+  private buildContinuityCapsuleBridge(sessionId: string): string {
+    try {
+      if (typeof this.store.getContinuityCapsule !== 'function') {
+        return '';
+      }
+      const capsule = this.store.getContinuityCapsule(sessionId);
+      if (!capsule?.lastCompactedAt) {
+        return '';
+      }
+      const shouldInjectFullBridge = this.continuityFullBridgeCompactedAtBySession.get(sessionId) !== capsule.lastCompactedAt;
+      const bridge = shouldInjectFullBridge
+        ? formatCoworkContinuityCapsuleBridge(capsule)
+        : formatCoworkMiniContinuityCapsuleBridge(capsule);
+      if (!bridge.trim()) {
+        return '';
+      }
+      if (shouldInjectFullBridge) {
+        this.continuityFullBridgeCompactedAtBySession.set(sessionId, capsule.lastCompactedAt);
+      }
+      console.debug(
+        `[CoworkContinuityCapsule] injected capsule bridge for session ${sessionId}.`,
+        `Mode ${shouldInjectFullBridge ? 'full' : 'mini'}.`,
+        `Revision ${capsule.revision}.`,
+        `Bridge length ${bridge.length}.`,
+      );
+      return bridge;
+    } catch (error) {
+      console.warn(`[CoworkContinuityCapsule] failed to build capsule bridge for session ${sessionId}; continuing without it.`, error);
+      return '';
+    }
+  }
+
+  private async buildWorkspaceRehydrationBridge(sessionId: string): Promise<string> {
+    try {
+      if (typeof this.store.getSession !== 'function' || typeof this.store.getContinuityCapsule !== 'function') {
+        return '';
+      }
+      const session = this.store.getSession(sessionId);
+      const capsule = this.store.getContinuityCapsule(sessionId);
+      const compactedAt = capsule?.lastCompactedAt;
+      if (!compactedAt || this.workspaceRehydrationBridgeCompactedAtBySession.get(sessionId) === compactedAt) {
+        return '';
+      }
+      const bridge = await buildCoworkWorkspaceRehydrationBridge({
+        sessionId,
+        cwd: session?.cwd,
+        capsule,
+      });
+      this.workspaceRehydrationBridgeCompactedAtBySession.set(sessionId, compactedAt);
+      if (!bridge.trim()) {
+        return '';
+      }
+      console.debug(
+        `[CoworkWorkspaceRehydration] injected workspace bridge for session ${sessionId}.`,
+        `Bridge length ${bridge.length}.`,
+      );
+      return bridge;
+    } catch (error) {
+      console.warn(`[CoworkWorkspaceRehydration] failed to build workspace bridge for session ${sessionId}; continuing without it.`, error);
+      return '';
+    }
+  }
+
+  private buildTopKEvidenceBridge(sessionId: string, prompt: string): string {
+    try {
+      if (typeof this.store.getSession !== 'function' || typeof this.store.getContinuityCapsule !== 'function') {
+        return '';
+      }
+      const session = this.store.getSession(sessionId, 300);
+      const capsule = this.store.getContinuityCapsule(sessionId);
+      if (!session || !capsule?.lastCompactedAt) {
+        return '';
+      }
+      const result = buildCoworkTopKEvidenceBridgeResult({
+        sessionId,
+        messages: session.messages,
+        prompt,
+        capsule,
+      });
+      const bridge = result.bridge;
+      if (!bridge.trim()) {
+        return '';
+      }
+      console.debug(
+        `[CoworkTopKEvidence] injected retrieved evidence bridge for session ${sessionId}.`,
+        `Candidates ${result.diagnostics.candidateCount}.`,
+        `Matched ${result.diagnostics.matchedCount}.`,
+        `Injected ${result.diagnostics.injectedCount}.`,
+        `Bridge length ${result.diagnostics.bridgeLength}.`,
+      );
+      return bridge;
+    } catch (error) {
+      console.warn(`[CoworkTopKEvidence] failed to build evidence bridge for session ${sessionId}; continuing without it.`, error);
+      return '';
+    }
   }
 
   private isWaitingForRecoverableFollowup(turn: ActiveTurn): boolean {
@@ -2121,6 +2302,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     console.log(`[OpenClawRuntime] starting manual context compaction for session ${sessionId}.`);
+    this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PreCompaction);
     const result = await client.request<Record<string, unknown>>('sessions.compact', {
       key: sessionKey,
     }, { timeoutMs: 120_000 });
@@ -2128,7 +2310,135 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const reason = typeof result?.reason === 'string' ? result.reason : undefined;
     const usage = await this.getContextUsage(sessionId);
     console.log(`[OpenClawRuntime] manual context compaction finished for session ${sessionId}, compacted=${compacted}, reason=${reason ?? 'none'}.`);
+    if (compacted) {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostCompaction, {
+        compactedAt: Date.now(),
+      });
+    }
+    void this.logContextCompactionDiagnostic({
+      sessionId,
+      sessionKey,
+      mode: 'manual',
+      ...(reason ? { reason } : {}),
+      compacted,
+    });
     return { compacted, ...(reason ? { reason } : {}), usage };
+  }
+
+  private async lookupLatestCompactionCheckpoint(
+    client: GatewayClientLike,
+    sessionKey: string,
+    options: {
+      beforeCreatedAt?: number;
+      preferSummary?: boolean;
+    } = {},
+  ): Promise<OpenClawCompactionCheckpoint | null> {
+    const listResult = await client.request<{ checkpoints?: OpenClawCompactionCheckpoint[] } | OpenClawCompactionCheckpoint[]>(
+      'sessions.compaction.list',
+      { key: sessionKey },
+      { timeoutMs: 3_000 },
+    );
+    const checkpoints = Array.isArray(listResult)
+      ? listResult
+      : Array.isArray(listResult?.checkpoints)
+        ? listResult.checkpoints
+        : [];
+    const eligibleCheckpoints = typeof options.beforeCreatedAt === 'number'
+      ? checkpoints.filter((checkpoint) => (
+        typeof checkpoint.createdAt === 'number' && checkpoint.createdAt <= options.beforeCreatedAt
+      ))
+      : checkpoints;
+    const viableCheckpoints = eligibleCheckpoints
+      .filter((checkpoint) => (
+        typeof checkpoint?.summary === 'string'
+        || typeof checkpoint?.checkpointId === 'string'
+        || typeof checkpoint?.createdAt === 'number'
+      ))
+      .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0));
+    const latest = options.preferSummary
+      ? viableCheckpoints.find((checkpoint) => checkpoint.summary?.trim()) ?? viableCheckpoints[0]
+      : viableCheckpoints[0];
+
+    if (!latest) {
+      return null;
+    }
+
+    if (!latest.summary?.trim() && latest.checkpointId) {
+      const checkpoint = await client.request<OpenClawCompactionCheckpoint>(
+        'sessions.compaction.get',
+        { key: sessionKey, checkpointId: latest.checkpointId },
+        { timeoutMs: 3_000 },
+      );
+      return {
+        ...latest,
+        ...checkpoint,
+        checkpointId: checkpoint.checkpointId ?? latest.checkpointId,
+        createdAt: checkpoint.createdAt ?? latest.createdAt,
+      };
+    }
+
+    return latest;
+  }
+
+  private recordContextCompactionDiagnostic(diagnostic: ContextCompactionDiagnostic): void {
+    console.log(
+      `[OpenClawRuntime] recorded safe context compaction diagnostic for session ${diagnostic.sessionId}: `
+      + `mode ${diagnostic.mode}, compacted ${diagnostic.compacted ?? 'unknown'}, `
+      + `reason ${diagnostic.reason ?? 'none'}, checkpoint ${diagnostic.checkpointId ?? 'none'}, `
+      + `created at ${diagnostic.checkpointCreatedAt ?? 'unknown'}, `
+      + `summary length ${diagnostic.summaryChars ?? 0} characters, `
+      + `has summary ${diagnostic.hasSummary}, `
+      + `tokens ${diagnostic.tokensBefore ?? 'unknown'} to ${diagnostic.tokensAfter ?? 'unknown'}.`,
+    );
+  }
+
+  private async logContextCompactionDiagnostic(input: ContextCompactionDiagnosticInput): Promise<void> {
+    const sessionKey = input.sessionKey ?? this.getSessionKeysForSession(input.sessionId)[0];
+    if (!sessionKey) {
+      console.warn(`[OpenClawRuntime] skipped context compaction diagnostic for session ${input.sessionId} because no OpenClaw session key was available.`);
+      return;
+    }
+
+    if (input.compacted === false) {
+      this.recordContextCompactionDiagnostic({
+        sessionId: input.sessionId,
+        sessionKey,
+        mode: input.mode,
+        ...(input.reason ? { reason: input.reason } : {}),
+        summaryChars: 0,
+        hasSummary: false,
+        compacted: false,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+
+    const client = this.gatewayClient;
+    if (!client) {
+      console.debug(`[OpenClawRuntime] skipped context compaction diagnostic for session ${input.sessionId} because the gateway client is unavailable.`);
+      return;
+    }
+
+    try {
+      const checkpoint = await this.lookupLatestCompactionCheckpoint(client, sessionKey);
+      const summary = typeof checkpoint?.summary === 'string' ? checkpoint.summary.trim() : '';
+      this.recordContextCompactionDiagnostic({
+        sessionId: input.sessionId,
+        sessionKey,
+        mode: input.mode,
+        reason: input.reason ?? checkpoint?.reason,
+        checkpointId: checkpoint?.checkpointId,
+        checkpointCreatedAt: checkpoint?.createdAt,
+        tokensBefore: checkpoint?.tokensBefore,
+        tokensAfter: checkpoint?.tokensAfter,
+        summaryChars: summary.length,
+        hasSummary: summary.length > 0,
+        compacted: input.compacted,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.warn(`[OpenClawRuntime] context compaction diagnostic lookup failed for session ${input.sessionId}; continuing without checkpoint metadata.`, error);
+    }
   }
 
   async getForkCompactionSummary(sessionId: string, beforeCreatedAt?: number): Promise<CoworkForkCompactionSummary | null> {
@@ -2140,39 +2450,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     for (const sessionKey of this.getSessionKeysForSession(sessionId)) {
       try {
-        const listResult = await client.request<{ checkpoints?: OpenClawCompactionCheckpoint[] } | OpenClawCompactionCheckpoint[]>(
-          'sessions.compaction.list',
-          { key: sessionKey },
-          { timeoutMs: 3_000 },
-        );
-        const checkpoints = Array.isArray(listResult)
-          ? listResult
-          : Array.isArray(listResult?.checkpoints)
-            ? listResult.checkpoints
-            : [];
-        const eligibleCheckpoints = typeof beforeCreatedAt === 'number'
-          ? checkpoints.filter((checkpoint) => (
-            typeof checkpoint.createdAt === 'number' && checkpoint.createdAt <= beforeCreatedAt
-          ))
-          : checkpoints;
-        const latest = eligibleCheckpoints
-          .filter((checkpoint) => typeof checkpoint?.summary === 'string' && checkpoint.summary.trim())
-          .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0]
-          ?? eligibleCheckpoints
-            .filter((checkpoint) => typeof checkpoint?.checkpointId === 'string' && checkpoint.checkpointId.trim())
-            .sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0))[0];
-
-        if (!latest) {
+        const checkpoint = await this.lookupLatestCompactionCheckpoint(client, sessionKey, {
+          beforeCreatedAt,
+          preferSummary: true,
+        });
+        if (!checkpoint) {
           continue;
-        }
-
-        let checkpoint = latest;
-        if (!checkpoint.summary?.trim() && checkpoint.checkpointId) {
-          checkpoint = await client.request<OpenClawCompactionCheckpoint>(
-            'sessions.compaction.get',
-            { key: sessionKey, checkpointId: checkpoint.checkpointId },
-            { timeoutMs: 3_000 },
-          );
         }
 
         const summary = checkpoint.summary?.trim();
@@ -3072,6 +3355,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         content: prompt,
         metadata,
       });
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.UserMessage, {
+        sourceMessageId: userMessage.id,
+      });
       this.emit('message', sessionId, userMessage);
     }
 
@@ -3315,8 +3601,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         + `to the outbound message for session ${sessionId}`,
       );
     }
+    const continuityCapsuleBridge = this.buildContinuityCapsuleBridge(sessionId);
+    const workspaceRehydrationBridge = await this.buildWorkspaceRehydrationBridge(sessionId);
+    const topKEvidenceBridge = this.buildTopKEvidenceBridge(sessionId, prompt);
 
     if (this.bridgedSessions.has(sessionId)) {
+      if (continuityCapsuleBridge) {
+        sections.push(continuityCapsuleBridge);
+      }
+      if (workspaceRehydrationBridge) {
+        sections.push(workspaceRehydrationBridge);
+      }
+      if (topKEvidenceBridge) {
+        sections.push(topKEvidenceBridge);
+      }
       if (selectedTextSection) {
         sections.push(selectedTextSection);
       }
@@ -3366,6 +3664,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    if (continuityCapsuleBridge) {
+      sections.push(continuityCapsuleBridge);
+    }
+    if (workspaceRehydrationBridge) {
+      sections.push(workspaceRehydrationBridge);
+    }
+    if (topKEvidenceBridge) {
+      sections.push(topKEvidenceBridge);
+    }
     if (selectedTextSection) {
       sections.push(selectedTextSection);
     }
@@ -4922,6 +5229,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.store.updateSession(sessionId, { status: 'running' });
       this.emitSessionStatus(sessionId, 'running');
       this.emitContextMaintenance(sessionId, true);
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PreCompaction);
       console.log(`[OpenClawRuntime] context compaction started for session ${sessionId}.`);
       return;
     }
@@ -4956,6 +5264,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     console.log(`[OpenClawRuntime] context compaction ended for session ${sessionId}, completed=${completed}, willRetry=${willRetry}.`);
     if (completed) {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostCompaction, {
+        compactedAt: Date.now(),
+      });
+      void this.logContextCompactionDiagnostic({
+        sessionId,
+        mode: 'auto',
+        compacted: true,
+      });
       this.refreshAndEmitContextUsage(sessionId);
       setTimeout(() => {
         this.refreshAndEmitContextUsage(sessionId);
@@ -7443,6 +7759,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.lastAgentSeqByRunId.delete(knownRunId);
       });
     }
+    if (typeof this.store.getSession === 'function' && this.store.getSession(sessionId)?.status === 'completed') {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostRun);
+    }
     this.activeTurns.delete(sessionId);
     setCoworkProxySessionId(null);
     // NOTE: Do NOT clear lastSystemPromptBySession here — it must persist
@@ -7542,6 +7861,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Clean up pending approvals, bridged state, confirmation mode
     this.clearPendingApprovalsBySession(sessionId);
     this.bridgedSessions.delete(sessionId);
+    this.continuityFullBridgeCompactedAtBySession.delete(sessionId);
+    this.workspaceRehydrationBridgeCompactedAtBySession.delete(sessionId);
     this.confirmationModeBySession.delete(sessionId);
     this.manuallyStoppedSessions.delete(sessionId);
     this.sessionModelPatchStateBySession.delete(sessionId);

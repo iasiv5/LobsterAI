@@ -115,6 +115,19 @@ export class SqliteStore {
     `);
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_session_capsules (
+        session_id TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        revision INTEGER NOT NULL,
+        capsule_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_source TEXT NOT NULL,
+        last_compacted_at INTEGER,
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+    `);
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,

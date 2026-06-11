@@ -22,6 +22,10 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
+import {
+  ContinuityCapsuleSource,
+  type CoworkContinuityCapsule,
+} from './libs/agentEngine/coworkContinuityCapsule';
 
 
 // Default working directory for new users
@@ -599,6 +603,16 @@ interface CoworkMessageRow {
   sequence: number | null;
 }
 
+interface CoworkContinuityCapsuleRow {
+  session_id: string;
+  version: number;
+  revision: number;
+  capsule_json: string;
+  updated_at: number;
+  last_source: string;
+  last_compacted_at: number | null;
+}
+
 interface CoworkForkSessionOptions {
   sourceSessionId: string;
   forkMode?: CoworkForkModeType;
@@ -638,6 +652,22 @@ export class CoworkStore {
 
   constructor(db: Database.Database) {
     this.db = db;
+    this.ensureContinuityCapsuleTable();
+  }
+
+  private ensureContinuityCapsuleTable(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_session_capsules (
+        session_id TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        revision INTEGER NOT NULL,
+        capsule_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_source TEXT NOT NULL,
+        last_compacted_at INTEGER,
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+    `);
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -786,6 +816,82 @@ export class CoworkStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  getContinuityCapsule(sessionId: string): CoworkContinuityCapsule | null {
+    const row = this.getOne<CoworkContinuityCapsuleRow>(
+      `
+      SELECT session_id, version, revision, capsule_json, updated_at, last_source, last_compacted_at
+      FROM cowork_session_capsules
+      WHERE session_id = ?
+    `,
+      [sessionId],
+    );
+    if (!row) return null;
+    try {
+      const capsule = JSON.parse(row.capsule_json) as CoworkContinuityCapsule;
+      return {
+        ...capsule,
+        sessionId: row.session_id,
+        version: 1,
+        revision: row.revision,
+        updatedAt: row.updated_at,
+        lastSource: row.last_source as CoworkContinuityCapsule['lastSource'],
+        completedFacts: Array.isArray(capsule.completedFacts) ? capsule.completedFacts : [],
+        ...(row.last_compacted_at != null ? { lastCompactedAt: row.last_compacted_at } : {}),
+      };
+    } catch (error) {
+      console.warn(`[CoworkStore] corrupt continuity capsule detected for session ${sessionId}, ignoring capsule.`, error);
+      return null;
+    }
+  }
+
+  upsertContinuityCapsule(sessionId: string, capsule: CoworkContinuityCapsule): void {
+    this.db
+      .prepare(
+        `
+      INSERT INTO cowork_session_capsules (
+        session_id, version, revision, capsule_json, updated_at, last_source, last_compacted_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        version = excluded.version,
+        revision = excluded.revision,
+        capsule_json = excluded.capsule_json,
+        updated_at = excluded.updated_at,
+        last_source = excluded.last_source,
+        last_compacted_at = excluded.last_compacted_at
+    `,
+      )
+      .run(
+        sessionId,
+        capsule.version,
+        capsule.revision,
+        JSON.stringify(capsule),
+        capsule.updatedAt,
+        capsule.lastSource,
+        capsule.lastCompactedAt ?? null,
+      );
+  }
+
+  deleteContinuityCapsules(sessionIds: string[]): void {
+    const uniqueIds = Array.from(new Set(sessionIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return;
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM cowork_session_capsules WHERE session_id IN (${placeholders})`).run(...uniqueIds);
+  }
+
+  private copyContinuityCapsuleToFork(sourceSessionId: string, forkedSessionId: string, timestamp: number): void {
+    const source = this.getContinuityCapsule(sourceSessionId);
+    if (!source) return;
+    const copied: CoworkContinuityCapsule = {
+      ...source,
+      sessionId: forkedSessionId,
+      revision: 1,
+      updatedAt: timestamp,
+      lastSource: ContinuityCapsuleSource.Fork,
+    };
+    this.upsertContinuityCapsule(forkedSessionId, copied);
   }
 
   private getSessionForkMetadata(id: string): Pick<
@@ -942,6 +1048,8 @@ export class CoworkStore {
           row.sequence,
         );
       }
+
+      this.copyContinuityCapsuleToFork(options.sourceSessionId, id, now);
     })();
 
     const forked = this.getSession(id);
@@ -1146,6 +1254,7 @@ export class CoworkStore {
   private deleteSessionRows(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM cowork_session_capsules WHERE session_id IN (${placeholders})`).run(...ids);
     this.db.prepare(`DELETE FROM cowork_messages WHERE session_id IN (${placeholders})`).run(...ids);
     this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
   }
