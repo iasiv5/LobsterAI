@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const TEST_USER_DATA = `${process.cwd()}\\.test-computer-use-runtime`;
+const TEST_USER_DATA = path.join(process.cwd(), '.test-computer-use-runtime');
+const originalPlatform = process.platform;
+const originalArch = process.arch;
 
 vi.mock('electron', () => ({
   app: {
@@ -31,7 +33,14 @@ import {
   inspectComputerUseRuntime,
 } from './computerUseRuntime';
 
+beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: ComputerUseRuntime.Platform });
+  Object.defineProperty(process, 'arch', { value: ComputerUseRuntime.Arch });
+});
+
 afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: originalPlatform });
+  Object.defineProperty(process, 'arch', { value: originalArch });
   fs.rmSync(TEST_USER_DATA, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
