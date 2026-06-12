@@ -40,6 +40,7 @@ describe('mediaAssetPersistence', () => {
   test('sanitizes generated image filenames', () => {
     expect(sanitizeGeneratedImageFileName('bad:name?.png', 'generated-image', '.png')).toBe('bad-name-.png');
     expect(sanitizeGeneratedImageFileName('no-extension', 'generated-image', '.webp')).toBe('no-extension.webp');
+    expect(sanitizeGeneratedImageFileName('cat.jpeg', 'generated-image', '.png')).toBe('cat.png');
     expect(sanitizeGeneratedImageFileName('...', 'generated-image', '.png')).toBe('generated-image.png');
   });
 
@@ -74,6 +75,31 @@ describe('mediaAssetPersistence', () => {
     expect(await fs.promises.readFile(result.saved[0].filePath)).toEqual(pngBuffer);
   });
 
+  test('persists downloaded images using byte-detected extension over declared filename', async () => {
+    const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-media-assets-'));
+
+    const result = await persistGeneratedImageAssets({
+      cwd,
+      now: new Date(2026, 5, 12, 17, 31, 0),
+      assets: [
+        {
+          type: 'image',
+          url: 'https://example.com/british-shorthair-golden-shaded.webp',
+          mimeType: 'image/webp',
+          filename: 'british-shorthair-golden-shaded.webp',
+        },
+      ],
+      fetchAsset: async () => makeResponse(pngBuffer, 'image/webp'),
+    });
+
+    expect(result.failed).toHaveLength(0);
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0].filename).toBe('british-shorthair-golden-shaded.png');
+    expect(result.saved[0].mimeType).toBe('image/png');
+    expect(result.saved[0].filePath).toBe(path.join(cwd, 'british-shorthair-golden-shaded.png'));
+    expect(await fs.promises.readFile(result.saved[0].filePath)).toEqual(pngBuffer);
+  });
+
   test('persists image data urls without fetching and prefers byte-detected extension', async () => {
     const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-media-assets-'));
     const dataUrl = `data:image/jpeg;base64,${pngBuffer.toString('base64')}`;
@@ -97,6 +123,34 @@ describe('mediaAssetPersistence', () => {
     expect(result.saved).toHaveLength(1);
     expect(result.saved[0].filename).toBe('generated-image-20260514-115032-1.png');
     expect(result.saved[0].mimeType).toBe('image/png');
+    expect(await fs.promises.readFile(result.saved[0].filePath)).toEqual(pngBuffer);
+  });
+
+  test('persists image data urls using byte-detected extension over declared filename', async () => {
+    const cwd = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-media-assets-'));
+    const dataUrl = `data:image/jpeg;base64,${pngBuffer.toString('base64')}`;
+
+    const result = await persistGeneratedImageAssets({
+      cwd,
+      now: new Date(2026, 5, 12, 17, 31, 0),
+      assets: [
+        {
+          type: 'image',
+          url: dataUrl,
+          mimeType: 'image/jpeg',
+          filename: 'british-shorthair-golden-shaded.jpeg',
+        },
+      ],
+      fetchAsset: async () => {
+        throw new Error('data URL should not be fetched');
+      },
+    });
+
+    expect(result.failed).toHaveLength(0);
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0].filename).toBe('british-shorthair-golden-shaded.png');
+    expect(result.saved[0].mimeType).toBe('image/png');
+    expect(result.saved[0].filePath).toBe(path.join(cwd, 'british-shorthair-golden-shaded.png'));
     expect(await fs.promises.readFile(result.saved[0].filePath)).toEqual(pngBuffer);
   });
 
