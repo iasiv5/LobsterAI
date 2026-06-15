@@ -462,9 +462,10 @@ function sanitizeArtifactFileShareSourceType(value: unknown): ArtifactFileShareS
   const sourceType = sanitizeHtmlShareString(value, 'sourceType', 32);
   if (
     sourceType !== HtmlShareSourceType.ImageFile &&
-    sourceType !== HtmlShareSourceType.SvgFile
+    sourceType !== HtmlShareSourceType.SvgFile &&
+    sourceType !== HtmlShareSourceType.DocumentFile
   ) {
-    throw new Error('sourceType must be image_file or svg_file.');
+    throw new Error('sourceType must be image_file, svg_file, or document_file.');
   }
   return sourceType;
 }
@@ -9298,10 +9299,10 @@ if (!gotTheLock) {
           ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
           : "script-src 'self'",
         "style-src 'self' 'unsafe-inline' https:",
-        `img-src 'self' data: https: http: ${ArtifactPreviewProtocol.LocalFile}:`,
+        `img-src 'self' data: blob: https: http: ${ArtifactPreviewProtocol.LocalFile}:`,
         // 允许连接到所有域名，不做限制
         'connect-src *',
-        "font-src 'self' data: https:",
+        "font-src 'self' data: blob: https:",
         `media-src 'self' data: blob: file: https: http: ${ArtifactPreviewProtocol.LocalFile}:`,
         "worker-src 'self' blob:",
         "frame-src 'self' file: http://127.0.0.1:*",

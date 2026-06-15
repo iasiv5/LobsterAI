@@ -252,6 +252,7 @@ function getHtmlShareSourceTypeForArtifact(artifact: Artifact): HtmlShareSourceT
   if (artifact.type === ArtifactTypeValue.Html) return HtmlShareSourceType.HtmlFile;
   if (artifact.type === ArtifactTypeValue.Image) return HtmlShareSourceType.ImageFile;
   if (artifact.type === ArtifactTypeValue.Svg) return HtmlShareSourceType.SvgFile;
+  if (artifact.type === ArtifactTypeValue.Document) return HtmlShareSourceType.DocumentFile;
   return null;
 }
 
@@ -261,6 +262,9 @@ function hasShareableArtifactSource(
 ): boolean {
   if (!sourceType) return false;
   if (sourceType === HtmlShareSourceType.HtmlFile) return Boolean(artifact.filePath);
+  if (sourceType === HtmlShareSourceType.DocumentFile) {
+    return Boolean(artifact.filePath || artifact.content?.trim());
+  }
   return Boolean(artifact.filePath || artifact.content?.trim() || artifact.remoteUrl?.trim());
 }
 
@@ -305,7 +309,8 @@ function buildHtmlSharePendingRequest(
     fileName: artifact.fileName || artifact.title,
     filePath: artifact.filePath,
     content: artifact.content,
-    remoteUrl: artifact.remoteUrl,
+    remoteUrl:
+      sourceType === HtmlShareSourceType.DocumentFile ? undefined : artifact.remoteUrl,
   };
 }
 

@@ -3,8 +3,6 @@ import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/a
 import type {
   AsrRealtimeSessionRequest,
   AsrRealtimeSessionResult,
-  AsrRecognizeRequest,
-  AsrRecognizeResult,
 } from '../../shared/asr/constants';
 import type {
   BrowserDiagnosticResult,
@@ -951,7 +949,6 @@ interface IElectronAPI {
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
   };
   asr: {
-    recognize: (options: AsrRecognizeRequest) => Promise<AsrRecognizeResult>;
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
   };
   artifact: {

@@ -1,4 +1,15 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  app: {
+    getAppPath: () => process.cwd(),
+    getPath: () => process.cwd(),
+    isPackaged: false,
+  },
+  utilityProcess: {
+    fork: vi.fn(),
+  },
+}));
 
 import { buildOpenClawGatewayExecArgv } from './openclawEngineManager';
 

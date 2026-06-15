@@ -56,22 +56,6 @@ export type ShortcutConfig = Record<ShortcutAction, string> & {
   [key: string]: string | undefined;
 };
 
-export const VoiceInputRecognitionMode = {
-  Realtime: 'realtime',
-  Short: 'short',
-} as const;
-
-export type VoiceInputRecognitionMode =
-  typeof VoiceInputRecognitionMode[keyof typeof VoiceInputRecognitionMode];
-
-export interface VoiceInputConfig {
-  recognitionMode: VoiceInputRecognitionMode;
-}
-
-export const defaultVoiceInputConfig: VoiceInputConfig = {
-  recognitionMode: VoiceInputRecognitionMode.Realtime,
-};
-
 // 配置类型定义
 export interface AppConfig {
   // API 配置
@@ -103,7 +87,6 @@ export interface AppConfig {
   notificationSettings?: NotificationSettings;
   // 浏览器与网页访问配置
   browserWebAccess: BrowserWebAccessConfig;
-  voiceInput: VoiceInputConfig;
   // 语言初始化标记 (用于判断是否是首次启动)
   language_initialized?: boolean;
   // 应用配置
@@ -154,7 +137,6 @@ export const defaultConfig: AppConfig = {
   sqliteAutoBackupEnabled: false,
   notificationSettings: defaultNotificationSettings,
   browserWebAccess: defaultBrowserWebAccessConfig,
-  voiceInput: defaultVoiceInputConfig,
   app: {
     port: 3000,
     isDevelopment: process.env.NODE_ENV === 'development',

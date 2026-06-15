@@ -17,6 +17,7 @@ export const HtmlShareSourceType = {
   HtmlFile: 'html_file',
   ImageFile: 'image_file',
   SvgFile: 'svg_file',
+  DocumentFile: 'document_file',
 } as const;
 
 export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];

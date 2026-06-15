@@ -11,9 +11,19 @@ import { HtmlShareSourceType } from '../../../shared/htmlShare/constants';
 
 const MAX_CLIENT_ARCHIVE_BYTES = 22 * 1024 * 1024;
 const MAX_CLIENT_SINGLE_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_CLIENT_DOCUMENT_ARCHIVE_BYTES = 105 * 1024 * 1024;
+const MAX_CLIENT_DOCUMENT_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_REMOTE_REDIRECTS = 3;
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const DOCUMENT_CONTENT_TYPES: Record<string, string> = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pdf: 'application/pdf',
+  csv: 'text/csv;charset=UTF-8',
+  tsv: 'text/tab-separated-values;charset=UTF-8',
+};
 const IMAGE_CONTENT_TYPES: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
@@ -23,7 +33,8 @@ const IMAGE_CONTENT_TYPES: Record<string, string> = {
 
 export type ArtifactFileShareSourceType =
   | typeof HtmlShareSourceType.ImageFile
-  | typeof HtmlShareSourceType.SvgFile;
+  | typeof HtmlShareSourceType.SvgFile
+  | typeof HtmlShareSourceType.DocumentFile;
 
 export interface ArtifactFileSharePackageInput {
   sourceType: ArtifactFileShareSourceType;
@@ -227,7 +238,11 @@ async function loadArtifactFile(input: ArtifactFileSharePackageInput): Promise<L
     if (!stat.isFile()) {
       throw new Error('Shared artifact file does not exist.');
     }
-    if (stat.size > MAX_CLIENT_SINGLE_FILE_BYTES) {
+    const maxBytes =
+      input.sourceType === HtmlShareSourceType.DocumentFile
+        ? MAX_CLIENT_DOCUMENT_FILE_BYTES
+        : MAX_CLIENT_SINGLE_FILE_BYTES;
+    if (stat.size > maxBytes) {
       throw new Error('Artifact exceeds the share size limit.');
     }
     return {
@@ -251,6 +266,22 @@ async function loadArtifactFile(input: ArtifactFileSharePackageInput): Promise<L
       return downloadRemoteImage(remoteUrl);
     }
     throw new Error('Current image preview content cannot be shared.');
+  }
+
+  if (input.sourceType === HtmlShareSourceType.DocumentFile) {
+    if (input.remoteUrl) {
+      throw new Error('Remote document URLs cannot be shared.');
+    }
+    const content = input.content?.trim();
+    const dataUrl = content?.startsWith('data:') ? parseDataUrl(content) : null;
+    if (!dataUrl) {
+      throw new Error('Current document preview content cannot be shared.');
+    }
+    return {
+      bytes: dataUrl.bytes,
+      contentType: dataUrl.contentType,
+      fileName: input.fileName || 'document',
+    };
   }
 
   if (input.remoteUrl) {
@@ -359,6 +390,42 @@ function normalizeSvgFile(loaded: LoadedArtifactFile): LoadedArtifactFile {
   };
 }
 
+function normalizeDocumentFile(loaded: LoadedArtifactFile): LoadedArtifactFile {
+  const extension = extensionFromName(loaded.fileName);
+  if (!extension || !DOCUMENT_CONTENT_TYPES[extension]) {
+    throw new Error('Current document type is not supported for sharing.');
+  }
+  if (loaded.bytes.length > MAX_CLIENT_DOCUMENT_FILE_BYTES) {
+    throw new Error('Artifact exceeds the share size limit.');
+  }
+  if (!matchesDocumentMagic(extension, loaded.bytes)) {
+    throw new Error('Document extension does not match the file content.');
+  }
+  const fileName = cleanFileName(loaded.fileName || `document.${extension}`, `document.${extension}`);
+  return {
+    bytes: loaded.bytes,
+    fileName: extensionFromName(fileName) ? fileName : `${fileName}.${extension}`,
+    contentType: DOCUMENT_CONTENT_TYPES[extension],
+  };
+}
+
+function matchesDocumentMagic(extension: string, bytes: Buffer): boolean {
+  if (extension === 'pdf') {
+    return bytes.length >= 5 && bytes.subarray(0, 5).toString('ascii') === '%PDF-';
+  }
+  if (extension === 'csv' || extension === 'tsv') {
+    return !bytes.includes(0);
+  }
+  if (extension === 'docx' || extension === 'pptx' || extension === 'xlsx') {
+    return bytes.length >= 4 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x4b &&
+      bytes[2] === 0x03 &&
+      bytes[3] === 0x04;
+  }
+  return false;
+}
+
 async function writeSingleFileZip(file: LoadedArtifactFile): Promise<{ archivePath: string; sourceSha256: string }> {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-artifact-share-'));
   const archivePath = path.join(tempDir, 'share.zip');
@@ -376,7 +443,11 @@ async function writeSingleFileZip(file: LoadedArtifactFile): Promise<{ archivePa
   await pipelinePromise;
 
   const stat = await fs.promises.stat(archivePath);
-  if (stat.size > MAX_CLIENT_ARCHIVE_BYTES) {
+  const maxArchiveBytes =
+    DOCUMENT_CONTENT_TYPES[extensionFromName(file.fileName)]
+      ? MAX_CLIENT_DOCUMENT_ARCHIVE_BYTES
+      : MAX_CLIENT_ARCHIVE_BYTES;
+  if (stat.size > maxArchiveBytes) {
     throw new Error('Share archive exceeds the size limit.');
   }
   const archiveBytes = await fs.promises.readFile(archivePath);
@@ -390,17 +461,25 @@ export async function packageArtifactFile(
   input: ArtifactFileSharePackageInput,
 ): Promise<ArtifactFileSharePackageResult> {
   const loaded = await loadArtifactFile(input);
-  if (loaded.bytes.length > MAX_CLIENT_SINGLE_FILE_BYTES) {
+  const maxBytes =
+    input.sourceType === HtmlShareSourceType.DocumentFile
+      ? MAX_CLIENT_DOCUMENT_FILE_BYTES
+      : MAX_CLIENT_SINGLE_FILE_BYTES;
+  if (loaded.bytes.length > maxBytes) {
     throw new Error('Artifact exceeds the share size limit.');
   }
   const normalized =
     input.sourceType === HtmlShareSourceType.ImageFile
       ? normalizeImageFile(loaded)
-      : normalizeSvgFile(loaded);
-  const { archivePath, sourceSha256 } = await writeSingleFileZip(normalized);
+      : input.sourceType === HtmlShareSourceType.DocumentFile
+        ? normalizeDocumentFile(loaded)
+        : normalizeSvgFile(loaded);
+  const { archivePath, sourceSha256: archiveSha256 } = await writeSingleFileZip(normalized);
   return {
     archivePath,
-    sourceSha256,
+    sourceSha256: input.sourceType === HtmlShareSourceType.DocumentFile
+      ? crypto.createHash('sha256').update(normalized.bytes).digest('hex')
+      : archiveSha256,
     entryFile: normalized.fileName,
     totalFiles: 1,
     totalBytes: normalized.bytes.length,

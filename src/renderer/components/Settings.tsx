@@ -12,7 +12,7 @@ import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants
 import { normalizeNotificationSettings } from '../../shared/notifications/constants';
 import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import { type AppConfig, defaultConfig, defaultVoiceInputConfig, getProviderDisplayName, getVisibleProviders, ShortcutAction, type ShortcutConfig, VoiceInputRecognitionMode, type VoiceInputRecognitionMode as VoiceInputRecognitionModeType } from '../config';
+import { type AppConfig, defaultConfig, getProviderDisplayName, getVisibleProviders, ShortcutAction, type ShortcutConfig } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { apiService } from '../services/api';
 import { configService } from '../services/config';
@@ -724,9 +724,6 @@ const Settings: React.FC<SettingsProps> = ({
   const [useSystemProxy, setUseSystemProxy] = useState(false);
   const [sqliteAutoBackupEnabled, setSqliteAutoBackupEnabled] = useState(false);
   const [taskCompletionNotificationsEnabled, setTaskCompletionNotificationsEnabled] = useState(true);
-  const [voiceInputRecognitionMode, setVoiceInputRecognitionMode] = useState<VoiceInputRecognitionModeType>(
-    defaultVoiceInputConfig.recognitionMode,
-  );
   const [browserWebAccess, setBrowserWebAccess] = useState<BrowserWebAccessConfig>(() => ({
     ...defaultBrowserWebAccessConfig,
     webFetch: { ...defaultBrowserWebAccessConfig.webFetch },
@@ -1135,9 +1132,6 @@ const Settings: React.FC<SettingsProps> = ({
       setTaskCompletionNotificationsEnabled(
         normalizeNotificationSettings(config.notificationSettings).taskCompletionNotificationsEnabled,
       );
-      setVoiceInputRecognitionMode(config.voiceInput?.recognitionMode === VoiceInputRecognitionMode.Short
-        ? VoiceInputRecognitionMode.Short
-        : VoiceInputRecognitionMode.Realtime);
       setBrowserWebAccess(normalizeBrowserWebAccessConfig(config.browserWebAccess));
       const savedTestMode = config.app?.testMode ?? false;
       setTestMode(savedTestMode);
@@ -2328,9 +2322,6 @@ const Settings: React.FC<SettingsProps> = ({
         notificationSettings: {
           taskCompletionNotificationsEnabled,
         },
-        voiceInput: {
-          recognitionMode: voiceInputRecognitionMode,
-        },
         browserWebAccess: normalizedBrowserWebAccess,
         shortcuts,
         app: {
@@ -3472,40 +3463,6 @@ const Settings: React.FC<SettingsProps> = ({
               }}
             />
 
-            <div>
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <h4 className="text-sm font-medium text-foreground">
-                    {i18nService.t('voiceInputRecognitionMode')}
-                  </h4>
-                  <p className="mt-3 text-sm text-secondary">
-                    {i18nService.t('voiceInputRecognitionModeDescription')}
-                  </p>
-                </div>
-                <div className="w-[180px] shrink-0">
-                  <ThemedSelect
-                    id="voiceInputRecognitionMode"
-                    value={voiceInputRecognitionMode}
-                    onChange={(value) => {
-                      setVoiceInputRecognitionMode(value === VoiceInputRecognitionMode.Short
-                        ? VoiceInputRecognitionMode.Short
-                        : VoiceInputRecognitionMode.Realtime);
-                    }}
-                    options={[
-                      {
-                        value: VoiceInputRecognitionMode.Realtime,
-                        label: i18nService.t('voiceInputRecognitionModeRealtime'),
-                      },
-                      {
-                        value: VoiceInputRecognitionMode.Short,
-                        label: i18nService.t('voiceInputRecognitionModeShort'),
-                      },
-                    ]}
-                  />
-                </div>
-              </div>
-            </div>
-
             <SettingsToggleRow
               title={i18nService.t('skipMissedJobs')}
               description={i18nService.t('skipMissedJobsDescription')}
@@ -4138,19 +4095,6 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserManual();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_MANUAL_URL}
-                </button>
-              </div>
-              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
                 <button
                   type="button"
@@ -4161,6 +4105,19 @@ const Settings: React.FC<SettingsProps> = ({
                   className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
                 >
                   {ABOUT_USER_COMMUNITY_URL}
+                </button>
+              </div>
+              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
+                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenUserManual();
+                  }}
+                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
+                >
+                  {ABOUT_USER_MANUAL_URL}
                 </button>
               </div>
               {testModeUnlocked && (
