@@ -6,11 +6,9 @@ import {
   AppConfig,
   CONFIG_KEYS,
   defaultConfig,
-  defaultVoiceInputConfig,
   isCustomProvider,
   ShortcutAction,
   type ShortcutConfig,
-  VoiceInputRecognitionMode,
 } from '../config';
 import { localStore } from './store';
 
@@ -149,17 +147,6 @@ const normalizeShortcutsConfig = (storedShortcuts?: AppConfig['shortcuts']): Sho
   });
 
   return shortcuts;
-};
-
-const normalizeVoiceInputConfig = (storedVoiceInput?: AppConfig['voiceInput']): AppConfig['voiceInput'] => {
-  const recognitionMode = storedVoiceInput?.recognitionMode === VoiceInputRecognitionMode.Short
-    ? VoiceInputRecognitionMode.Short
-    : VoiceInputRecognitionMode.Realtime;
-  return {
-    ...defaultVoiceInputConfig,
-    ...(storedVoiceInput ?? {}),
-    recognitionMode,
-  };
 };
 
 const LEGACY_PROVIDER_API_FORMAT_DEFAULTS: Record<string, {
@@ -417,7 +404,15 @@ const alignProviderModelOrder = (
   });
 };
 
+const omitLegacyVoiceInputConfig = (config: AppConfig): AppConfig => {
+  const { voiceInput: _legacyVoiceInput, ...nextConfig } = config as AppConfig & {
+    voiceInput?: unknown;
+  };
+  return nextConfig;
+};
+
 const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
+  const storedWithoutLegacyVoiceInput = omitLegacyVoiceInputConfig(storedConfig);
   const providerModelMigrationVersions = {
     ...(storedConfig.providerModelMigrationVersions ?? {}),
   };
@@ -499,7 +494,7 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
 
   return migrateCustomProviders({
     ...defaultConfig,
-    ...storedConfig,
+    ...storedWithoutLegacyVoiceInput,
     api: {
       ...defaultConfig.api,
       ...storedConfig.api,
@@ -514,7 +509,6 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
     providerModelMigrationVersions,
     browserWebAccess: normalizeBrowserWebAccessConfig(storedConfig.browserWebAccess),
     notificationSettings: normalizeNotificationSettings(storedConfig.notificationSettings),
-    voiceInput: normalizeVoiceInputConfig(storedConfig.voiceInput),
   });
 };
 
@@ -563,7 +557,7 @@ class ConfigService {
     const stored = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
     const base = stored ? hydrateStoredConfig(stored) : this.config;
 
-    this.config = {
+    this.config = omitLegacyVoiceInputConfig({
       ...base,
       ...newConfig,
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
@@ -576,8 +570,7 @@ class ConfigService {
       notificationSettings: normalizeNotificationSettings(
         newConfig.notificationSettings ?? base.notificationSettings,
       ),
-      voiceInput: normalizeVoiceInputConfig(newConfig.voiceInput ?? base.voiceInput),
-    };
+    } as AppConfig);
     await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);
     window.dispatchEvent(new CustomEvent('config-updated'));
   }

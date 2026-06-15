@@ -1,16 +1,11 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 
-import { VoiceInputRecognitionMode } from '../../../config';
-import { configService } from '../../../services/config';
 import {
   getAsrErrorMessage,
   type RealtimeVoiceInputSession,
-  recognizeVoiceInput,
   startRealtimeVoiceInput,
-  startVoiceRecording,
   VOICE_INPUT_MAX_RECORDING_MS,
-  type VoiceRecordingSession,
 } from '../../../services/voiceInput';
 import { setDraftPrompt } from '../../../store/slices/coworkSlice';
 
@@ -23,10 +18,6 @@ const VoiceInputState = {
 type VoiceInputState = typeof VoiceInputState[keyof typeof VoiceInputState];
 
 const VOICE_INPUT_TIMER_INTERVAL_MS = 250;
-
-type ActiveVoiceRecording =
-  | { mode: typeof VoiceInputRecognitionMode.Short; session: VoiceRecordingSession }
-  | { mode: typeof VoiceInputRecognitionMode.Realtime; session: RealtimeVoiceInputSession };
 
 interface UseCoworkVoiceInputOptions {
   draftKey: string;
@@ -58,7 +49,7 @@ export const useCoworkVoiceInput = ({
   const dispatch = useDispatch();
   const [voiceInputState, setVoiceInputState] = useState<VoiceInputState>(VoiceInputState.Idle);
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
-  const voiceRecordingRef = useRef<ActiveVoiceRecording | null>(null);
+  const voiceRecordingRef = useRef<RealtimeVoiceInputSession | null>(null);
   const voiceAutoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceRecordingStartedAtRef = useRef<number | null>(null);
   const voiceRecordingMaxMsRef = useRef(VOICE_INPUT_MAX_RECORDING_MS);
@@ -80,14 +71,6 @@ export const useCoworkVoiceInput = ({
       textarea.selectionEnd = nextValue.length;
     });
   }, [dispatch, draftKey, maxHeight, minHeight, setValue, textareaRef]);
-
-  const appendRecognizedVoiceText = useCallback((recognizedText: string) => {
-    const text = recognizedText.trim();
-    if (!text) return;
-    const currentValue = valueRef.current;
-    const separator = currentValue.trim() ? (currentValue.endsWith('\n') ? '' : '\n') : '';
-    setPromptValue(`${currentValue}${separator}${text}`);
-  }, [setPromptValue]);
 
   const replaceRealtimeRecognizedVoiceText = useCallback((recognizedText: string) => {
     const text = recognizedText.trim();
@@ -115,15 +98,9 @@ export const useCoworkVoiceInput = ({
     setVoiceInputState(VoiceInputState.Recognizing);
     setRecordingElapsedSeconds(0);
     try {
-      if (activeRecording.mode === VoiceInputRecognitionMode.Realtime) {
-        const text = await activeRecording.session.stop();
-        replaceRealtimeRecognizedVoiceText(text);
-        realtimeVoiceBaseValueRef.current = null;
-      } else {
-        const wavBlob = await activeRecording.session.stop();
-        const result = await recognizeVoiceInput(wavBlob);
-        appendRecognizedVoiceText(result.text);
-      }
+      const text = await activeRecording.stop();
+      replaceRealtimeRecognizedVoiceText(text);
+      realtimeVoiceBaseValueRef.current = null;
     } catch (error) {
       console.warn('[VoiceInput] voice input recognition failed:', error);
       showToast(getAsrErrorMessage(error));
@@ -132,7 +109,6 @@ export const useCoworkVoiceInput = ({
       setVoiceInputState(VoiceInputState.Idle);
     }
   }, [
-    appendRecognizedVoiceText,
     clearVoiceAutoStopTimer,
     replaceRealtimeRecognizedVoiceText,
   ]);
@@ -150,40 +126,25 @@ export const useCoworkVoiceInput = ({
       voiceInputStartingRef.current = true;
       setVoiceInputState(VoiceInputState.Recognizing);
       textareaRef.current?.focus();
-      const recognitionMode = configService.getConfig().voiceInput?.recognitionMode === VoiceInputRecognitionMode.Short
-        ? VoiceInputRecognitionMode.Short
-        : VoiceInputRecognitionMode.Realtime;
-      if (recognitionMode === VoiceInputRecognitionMode.Realtime) {
-        realtimeVoiceBaseValueRef.current = valueRef.current;
-        const realtimeSession = await startRealtimeVoiceInput({
-          onText: replaceRealtimeRecognizedVoiceText,
-          onError: (error) => {
-            if (voiceRecordingRef.current?.mode !== VoiceInputRecognitionMode.Realtime) return;
-            console.warn('[VoiceInput] realtime voice input session reported an error:', error);
-            voiceInputStartingRef.current = false;
-            clearVoiceAutoStopTimer();
-            voiceRecordingRef.current = null;
-            voiceRecordingStartedAtRef.current = null;
-            voiceRecordingMaxMsRef.current = VOICE_INPUT_MAX_RECORDING_MS;
-            realtimeVoiceBaseValueRef.current = null;
-            setVoiceInputState(VoiceInputState.Idle);
-            setRecordingElapsedSeconds(0);
-            showToast(getAsrErrorMessage(error));
-          },
-        });
-        voiceRecordingRef.current = {
-          mode: VoiceInputRecognitionMode.Realtime,
-          session: realtimeSession,
-        };
-        voiceRecordingMaxMsRef.current = Math.max(1, realtimeSession.maxSessionSeconds) * 1000;
-      } else {
-        const recording = await startVoiceRecording();
-        voiceRecordingRef.current = {
-          mode: VoiceInputRecognitionMode.Short,
-          session: recording,
-        };
-        voiceRecordingMaxMsRef.current = VOICE_INPUT_MAX_RECORDING_MS;
-      }
+      realtimeVoiceBaseValueRef.current = valueRef.current;
+      const realtimeSession = await startRealtimeVoiceInput({
+        onText: replaceRealtimeRecognizedVoiceText,
+        onError: (error) => {
+          if (!voiceRecordingRef.current) return;
+          console.warn('[VoiceInput] realtime voice input session reported an error:', error);
+          voiceInputStartingRef.current = false;
+          clearVoiceAutoStopTimer();
+          voiceRecordingRef.current = null;
+          voiceRecordingStartedAtRef.current = null;
+          voiceRecordingMaxMsRef.current = VOICE_INPUT_MAX_RECORDING_MS;
+          realtimeVoiceBaseValueRef.current = null;
+          setVoiceInputState(VoiceInputState.Idle);
+          setRecordingElapsedSeconds(0);
+          showToast(getAsrErrorMessage(error));
+        },
+      });
+      voiceRecordingRef.current = realtimeSession;
+      voiceRecordingMaxMsRef.current = Math.max(1, realtimeSession.maxSessionSeconds) * 1000;
       voiceRecordingStartedAtRef.current = Date.now();
       voiceInputStartingRef.current = false;
       setRecordingElapsedSeconds(0);
@@ -194,7 +155,7 @@ export const useCoworkVoiceInput = ({
     } catch (error) {
       console.warn('[VoiceInput] failed to start voice input:', error);
       voiceInputStartingRef.current = false;
-      voiceRecordingRef.current?.session.cancel();
+      voiceRecordingRef.current?.cancel();
       voiceRecordingRef.current = null;
       voiceRecordingStartedAtRef.current = null;
       voiceRecordingMaxMsRef.current = VOICE_INPUT_MAX_RECORDING_MS;
@@ -219,7 +180,7 @@ export const useCoworkVoiceInput = ({
     return () => {
       clearVoiceAutoStopTimer();
       voiceInputStartingRef.current = false;
-      voiceRecordingRef.current?.session.cancel();
+      voiceRecordingRef.current?.cancel();
       voiceRecordingRef.current = null;
       voiceRecordingStartedAtRef.current = null;
       voiceRecordingMaxMsRef.current = VOICE_INPUT_MAX_RECORDING_MS;
