@@ -5,6 +5,7 @@ import {
   buildScheduledReminderSystemMessage,
   extractGatewayHistoryEntries,
   extractGatewayHistoryEntry,
+  extractGatewayMessageThinking,
   extractGatewayMessageText,
   isHeartbeatAckText,
   isHeartbeatPromptText,
@@ -44,6 +45,16 @@ describe('openclawHistory', () => {
         },
       })
     ).toBe('first line\nsecond line');
+  });
+
+  test('extracts top-level OpenAI-compatible reasoning fields as thinking', () => {
+    expect(
+      extractGatewayMessageThinking({
+        role: 'assistant',
+        reasoning_content: 'inspect the request payload',
+        content: [{ type: 'text', text: 'done' }],
+      })
+    ).toBe('inspect the request payload');
   });
 
   test('builds history entry from assistant message with non-anthropic text shape', () => {

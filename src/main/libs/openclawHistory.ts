@@ -140,6 +140,14 @@ const collectThinkingChunks = (value: unknown): string[] => {
       chunks.push(thinking);
     }
   }
+  for (const key of ['reasoning_content', 'reasoning', 'reasoning_text'] as const) {
+    if (typeof value[key] === 'string') {
+      const thinking = value[key].trim();
+      if (thinking) {
+        chunks.push(thinking);
+      }
+    }
+  }
   if (value.content !== undefined) {
     chunks.push(...collectThinkingChunks(value.content));
   }
@@ -151,16 +159,7 @@ const collectThinkingChunks = (value: unknown): string[] => {
 
 export const extractGatewayMessageThinking = (message: unknown): string => {
   if (!isRecord(message)) return '';
-  const content = message.content;
-  if (Array.isArray(content)) {
-    const chunks = collectThinkingChunks(content);
-    return chunks.join('\n\n').trim();
-  }
-  if (isRecord(content)) {
-    const chunks = collectThinkingChunks(content);
-    return chunks.join('\n\n').trim();
-  }
-  return '';
+  return collectThinkingChunks(message).join('\n\n').trim();
 };
 
 export const buildScheduledReminderSystemMessage = (text: string): string | null => {

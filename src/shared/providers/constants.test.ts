@@ -44,8 +44,8 @@ describe('ProviderRegistry', () => {
   test('xiaomi default models are limited to MiMo V2.5 models with 1M context', () => {
     const xiaomi = ProviderRegistry.get(ProviderName.Xiaomi);
     expect(xiaomi?.defaultModels).toEqual([
-      { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', supportsImage: false, contextWindow: 1_000_000 },
-      { id: 'mimo-v2.5', name: 'MiMo V2.5', supportsImage: true, contextWindow: 1_000_000 },
+      { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
+      { id: 'mimo-v2.5', name: 'MiMo V2.5', supportsImage: true, supportsThinking: true, contextWindow: 1_000_000 },
     ]);
   });
 
@@ -61,8 +61,8 @@ describe('ProviderRegistry', () => {
   test('deepseek v4 default models use 1M context', () => {
     const deepseek = ProviderRegistry.get(ProviderName.DeepSeek);
     expect(deepseek?.defaultModels.slice(0, 2)).toEqual([
-      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false, contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false, contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
     ]);
   });
 
@@ -80,6 +80,48 @@ describe('ProviderRegistry', () => {
     expect(ProviderRegistry.resolveModelSupportsImage('custom_0', 'qwen3.6-plus', false)).toBe(true);
     expect(ProviderRegistry.resolveModelSupportsImage('custom_0', 'unknown-model', false)).toBe(false);
     expect(ProviderRegistry.resolveModelSupportsImage('custom_0', 'unknown-model', true)).toBe(true);
+  });
+
+  test('resolveModelSupportsThinking preserves known reasoning model metadata', () => {
+    const knownReasoningModels: Array<[string, string]> = [
+      [ProviderName.DeepSeek, 'deepseek-v4-pro'],
+      [ProviderName.DeepSeek, 'deepseek-v4-flash'],
+      [ProviderName.DeepSeek, 'deepseek-reasoner'],
+      [ProviderName.Moonshot, 'kimi-k2.6'],
+      [ProviderName.Moonshot, 'kimi-k2.5'],
+      [ProviderName.Moonshot, 'kimi-for-coding'],
+      [ProviderName.Zhipu, 'glm-5.1'],
+      [ProviderName.Zhipu, 'glm-5'],
+      [ProviderName.Zhipu, 'glm-4.7'],
+      [ProviderName.Minimax, 'MiniMax-M3'],
+      [ProviderName.Volcengine, 'doubao-seed-2-0-pro-260215'],
+      [ProviderName.Volcengine, 'ark-code-latest'],
+      [ProviderName.Volcengine, 'doubao-seed-2-0-lite-260215'],
+      [ProviderName.Volcengine, 'doubao-seed-2-0-mini-260215'],
+      [ProviderName.Youdaozhiyun, 'deepseek-reasoner'],
+      [ProviderName.Qianfan, 'glm-5.1'],
+      [ProviderName.Qianfan, 'deepseek-v4-flash'],
+      [ProviderName.Xiaomi, 'mimo-v2.5-pro'],
+      [ProviderName.Xiaomi, 'mimo-v2.5'],
+      [ProviderName.OpenAI, 'gpt-5.4'],
+      [ProviderName.OpenAI, 'gpt-5.5'],
+      [ProviderName.Gemini, 'gemini-3.1-pro-preview'],
+      [ProviderName.Anthropic, 'claude-opus-4-7'],
+      [ProviderName.OpenRouter, 'openai/gpt-5.5'],
+    ];
+    for (const [providerName, modelId] of knownReasoningModels) {
+      expect(ProviderRegistry.resolveModelSupportsThinking(providerName, modelId, false)).toBe(true);
+    }
+
+    expect(ProviderRegistry.resolveModelSupportsThinking(ProviderName.Qwen, 'qwen3.6-plus', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking(ProviderName.Qwen, 'qwen3.5-plus', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking(ProviderName.Minimax, 'MiniMax-M2.7', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking(ProviderName.Minimax, 'MiniMax-M2.5', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking('custom_0', 'glm-5.1', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking('lobsterai-server', 'glm-5.1-YoudaoInner', false)).toBe(false);
+    expect(ProviderRegistry.resolveModelSupportsThinking('lobsterai-server', 'glm-5.1-YoudaoInner', true)).toBe(true);
+    expect(ProviderRegistry.resolveModelSupportsThinking('custom_0', 'unknown-model', true)).toBe(true);
+    expect(ProviderRegistry.resolveModelSupportsThinking('custom_0', 'unknown-model', false)).toBe(false);
   });
 
   test('resolveModelContextWindow fills known defaults without overriding user values', () => {

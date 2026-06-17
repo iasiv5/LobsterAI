@@ -40,6 +40,28 @@ scripts/patches/v2026.6.1/
 | `package.json` | Node 要求调整为 `>=24.15.0 <25` | OpenClaw 6.1 依赖要求更高的 Node 24 小版本 |
 | `scripts/run-build-openclaw-runtime.cjs` | 设置 `CI=true` | 避免 pnpm 在非交互环境下因确认提示失败 |
 | `scripts/build-openclaw-runtime.sh` | 复用 runtime 前检查 `node_modules`、`gateway.asar`、`dist/control-ui/index.html` | 防止构建中断后仅凭 `runtime-build-info.json` 误判 runtime 已完整 |
+| `scripts/build-openclaw-runtime.sh` | 使用 `npm pack --ignore-scripts`，并在 LobsterAI 侧显式执行 OpenClaw prepack 中仍需要的 package metadata / smoke / changelog 步骤 | OpenClaw `v2026.4.15` 起移除了 `OPENCLAW_PREPACK_PREPARED` 跳过逻辑，`npm pack` 会重新触发 `prepack -> pnpm build`，导致 `tsdown` 二次构建 |
+
+### 2.1.1 runtime 打包阶段的二次 tsdown 构建
+
+本次升级调研发现，`npm run openclaw:runtime:host` 在 OpenClaw `v2026.6.1` 下可能出现同一次 runtime 构建中两次执行 `scripts/build-all.mjs` 的情况。第一轮来自 LobsterAI 的 `scripts/build-openclaw-runtime.sh` 主动执行 `pnpm build`；第二轮来自后续 `npm pack` 触发 OpenClaw `prepack`，而 `prepack` 在 `v2026.6.1` 中会再次执行 `pnpm build`。
+
+历史原因是 LobsterAI 侧曾通过：
+
+```bash
+OPENCLAW_PREPACK_PREPARED=1 npm pack --pack-destination "$PACK_DIR"
+```
+
+要求 OpenClaw `prepack` 复用已有产物、跳过重建。该机制在 OpenClaw `v2026.4.14` 仍然有效，但上游提交 `c727388f93 fix(plugins): localize bundled runtime deps to extensions (#67099)` 删除了 `OPENCLAW_PREPACK_PREPARED` / `shouldSkipPrepack` 逻辑，首次进入稳定版 `v2026.4.15`。因此升级到 `v2026.6.1` 后，该环境变量不再生效。
+
+当前选择不优先 patch OpenClaw，而是在 LobsterAI 侧调整打包流程：
+
+1. `pnpm build` 保留，作为唯一一次 OpenClaw 完整构建入口；不再额外执行 `pnpm ui:build`，因为 OpenClaw 6.1 的 `build-all` 已包含 `ui:build`。
+2. 在 `npm pack` 前显式执行 OpenClaw `prepack` 中仍有价值但不昂贵的非构建步骤：
+   - `writePackageDistInventory(process.cwd())`，生成 `dist/postinstall-inventory.json`。
+   - `node scripts/test-built-bundled-channel-entry-smoke.mjs`，验证 bundled channel entry 能从构建产物加载。
+   - `node scripts/package-changelog.mjs prepare`，生成 tarball 使用的当前版本 changelog，并在 pack 后或异常退出时 restore。
+3. 使用 `npm pack --ignore-scripts --pack-destination "$PACK_DIR"` 跳过 npm lifecycle，避免触发 OpenClaw `prepack` 中的第二次 `pnpm build`。
 
 ### 2.2 当前已迁移的 patch
 
@@ -95,7 +117,7 @@ openclaw-empty-sse-data.patch
 | `openclaw-deepseek-v4-thinking-mode.patch` | 待处理 | 尚未评估；需确认 DeepSeek V4 thinking mode 支持是否已由上游覆盖 |
 | `openclaw-disable-model-pricing-bootstrap.patch` | 待处理 | 尚未评估；需确认 6.1 是否仍有启动阶段 pricing bootstrap 延迟问题 |
 | `openclaw-empty-sse-data.patch` | 已迁移 | 已迁移到 `v2026.6.1`；补充 OpenAI-compatible completions fetch 包装，过滤空 SSE `data:` frame，并对连续空 frame 设置上限，避免 provider 异常流导致 parser 报错或空转 |
-| `openclaw-extra-body-passthrough.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `src/agents/embedded-agent-runner/extra-params.ts` 支持 `extra_body` / `extraBody`，并已有 `embedded-agent-runner-extraparams.test.ts` 覆盖 payload 合并与非法值跳过 |
+| `openclaw-extra-body-passthrough.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `src/agents/embedded-agent-runner/extra-params.ts` 支持 `extra_body` / `extraBody`，并已有 `embedded-agent-runner-extraparams.test.ts` 覆盖 payload 合并与非法值跳过；但 thinking 展示不只依赖参数透传，还要求模型元数据明确标记 `supportsThinking` / `reasoning: true` |
 | `openclaw-facade-runtime-static-import.patch` | 待处理 | 尚未评估；需确认 6.1 bundle/运行时是否仍需 static import 规避问题 |
 | `openclaw-gateway-startup-profiler.patch` | 待处理 | 尚未评估；偏诊断能力，需判断是否仍要保留 |
 | `openclaw-im-bound-agent-run-cwd.patch` | 已迁移 | 已迁移到 `v2026.6.1`；让 schema 和 reply runtime 支持 agent run cwd |
@@ -110,6 +132,18 @@ openclaw-empty-sse-data.patch
 | `openclaw-web-fetch-env-proxy.patch` | 不再需要迁移 | 旧补丁字段为 `tools.web.fetch.useEnvProxy`；OpenClaw 6.1 已提供 `tools.web.fetch.useTrustedEnvProxy`、cache key 隔离和 env proxy dispatcher 测试。LobsterAI 当前配置同步不再写出旧字段，也不自动写出新字段 |
 | `openclaw-widen-incomplete-turn-retry-guard.patch` | 待处理 | 尚未评估；需确认 incomplete turn retry guard 是否仍需放宽 |
 | `zz-openclaw-first-response-timing-logs.patch` | 待处理 | 尚未评估；偏诊断日志，需判断是否仍要保留 |
+
+### 3.1 `extra_body` 与 thinking 展示复核
+
+2026-06-17 复核 PR #2019 后确认，`openclaw-extra-body-passthrough.patch` 仍不需要迁移：OpenClaw 6.1 已内置 `extra_body` / `extraBody` payload 合并逻辑，LobsterAI 生成的 `openclaw.json` 也会把模型自定义参数写到 `agents.defaults.models["provider/model"].params.extra_body`。
+
+本次排查还发现，OpenClaw 6.1 只有在模型配置 `reasoning: true` 且 thinking level 非 `off` 时，才会把 OpenAI-compatible stream 中的 `reasoning_content` / `reasoning` / `reasoning_text` 转为 thinking 事件。因此，仅写出 `extra_body` 还不够，模型元数据也需要通过明确的 `supportsThinking` 来源同步为 `reasoning: true`。
+
+注意：qianfan `deepseek-v3.2` 当前仍在 LobsterAI 配置迁移黑名单 `REMOVED_PROVIDER_MODELS.qianfan` 中，`openclaw.json` 中缺少该模型是预期的配置过滤结果，不作为本轮升级验证样本。
+
+LobsterAI 侧处理边界：`customParams` 只作为厂商请求参数透传到 `extra_body`，不再反向推断模型是否支持 thinking。套餐模型依赖服务端模型 metadata 下发的 `supportsThinking`；内置 provider 模型依赖 LobsterAI 静态模型表中的精确 `supportsThinking`；自定义模型需要用户显式配置 `supportsThinking: true` 后才会同步为 OpenClaw `reasoning: true`。同时，LobsterAI 的 assistant stream/history thinking 提取增加了顶层 `reasoning_content` / `reasoning` / `reasoning_text` 兜底。
+
+已按 OpenClaw 6.1 manifest / provider catalog 中明确的 `reasoning: true`，以及业务侧确认的模型能力，补齐 LobsterAI 当前静态模型表中的精确模型，例如 DeepSeek V4 / Reasoner、Kimi K2.5 / K2.6、Zhipu GLM、MiniMax M3、Volcengine 当前内置模型、Youdao DeepSeek Reasoner、Qianfan GLM / DeepSeek V4、Xiaomi MiMo、OpenAI GPT-5.4 / GPT-5.5、Gemini 3.x、Anthropic Claude 4.x，以及 OpenRouter 中对应的 Claude / GPT / Gemini 模型。Qwen 3.5 / 3.6 待后续确认；其他未确认模型不做泛化标记。
 
 ## 4. 实施步骤
 
@@ -127,6 +161,8 @@ openclaw-empty-sse-data.patch
 10. 确认 `openclaw-browser-duplicate-launch.patch`、`openclaw-web-fetch-env-proxy.patch` 不再需要迁移，并补充 LobsterAI 侧决策测试。
 11. 迁移 `openclaw-empty-sse-data.patch`，补齐 OpenAI-compatible completions 空 SSE frame 过滤。
 12. 确认 `openclaw-extra-body-passthrough.patch`、`openclaw-codex-use-native-transport.patch` 不再需要迁移，并补充 LobsterAI 侧决策测试。
+13. 调整 `scripts/build-openclaw-runtime.sh`，避免 OpenClaw `v2026.6.1` 在 `npm pack` 阶段通过 `prepack` 触发第二次 `pnpm build` / `tsdown`；相关构建验证按本轮要求暂未执行，待手动测试。
+14. 修复 thinking 模型元数据同步：通过明确的 `supportsThinking` 来源写出 OpenClaw `reasoning: true`，`customParams` 仅保留为 `extra_body` 透传；同时补充 `reasoning_content` 顶层字段提取兜底。
 
 ### 4.2 待处理
 
@@ -199,6 +235,12 @@ npm run build
 | `npx vitest run src/main/libs/openclawPatches src/main/libs/openclawConfigSync.runtime.test.ts` | 通过 | 8 个测试文件、34 个用例通过 |
 | `npm run build` | 通过 | LobsterAI TypeScript / Vite / Electron 构建通过；仅有既有 Vite warning |
 | `node_modules/.bin/vitest.cmd run src/agents/openai-transport-stream.test.ts --reporter verbose --testNamePattern "empty SSE\|non-event-stream" --testTimeout=10000 --pool forks`（OpenClaw 侧） | 未完成 | 在当前 Windows 会话中 90 秒无输出超时；本次先以 `openclaw:patch`、LobsterAI 侧测试和构建作为有效验证，后续如需可在 OpenClaw 独立环境继续跑目标测试 |
+
+runtime 打包二次构建修复记录：
+
+| 命令 / 场景 | 结果 | 说明 |
+|------|------|------|
+| `npm run openclaw:runtime:host` | 未执行 | 本轮按要求只调整脚本与文档，不启动 OpenClaw runtime 构建；待手动测试确认日志中只出现一次 `[build-all] tsdown`，且 `[2/7] Packing npm tarball` 后不再出现 `openclaw@2026.6.1 prepack` / 第二轮 `scripts/build-all.mjs` |
 
 后续每迁移一个 patch，应至少完成：
 

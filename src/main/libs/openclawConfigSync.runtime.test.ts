@@ -16,7 +16,12 @@ vi.mock('electron', () => ({
 
 const mockRuntimeState = vi.hoisted(() => ({
   proxyPort: null as number | null,
-  serverModels: [] as Array<{ modelId: string; supportsImage?: boolean }>,
+  serverModels: [] as Array<{
+    modelId: string;
+    supportsImage?: boolean;
+    supportsThinking?: boolean;
+    contextWindow?: number;
+  }>,
   enabledProviders: [] as Array<{
     providerName: string;
     baseURL: string;
@@ -28,6 +33,7 @@ const mockRuntimeState = vi.hoisted(() => ({
       id: string;
       name: string;
       supportsImage?: boolean;
+      supportsThinking?: boolean;
       contextWindow?: number;
       customParams?: Record<string, unknown>;
     }>;
@@ -413,6 +419,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     mockRuntimeState.serverModels = [
       { modelId: 'qwen3.5-plus-YoudaoInner', supportsImage: true },
       { modelId: 'qwen3.6-plus-YoudaoInner', supportsImage: true },
+      { modelId: 'glm-5.1-YoudaoInner', supportsImage: false, supportsThinking: true },
       { modelId: 'deepseek-v3.2-YoudaoInner', supportsImage: false },
     ];
     mockRuntimeState.rawApiConfig = {
@@ -486,11 +493,16 @@ describe('OpenClawConfigSync runtime config output', () => {
         input: ['text', 'image'],
       }),
       expect.objectContaining({
+        id: 'glm-5.1-YoudaoInner',
+        input: ['text'],
+        reasoning: true,
+      }),
+      expect.objectContaining({
         id: 'deepseek-v3.2-YoudaoInner',
         input: ['text'],
       }),
     ]));
-    expect(provider.models).toHaveLength(3);
+    expect(provider.models).toHaveLength(4);
     expect(config.agents.defaults.models).toBeUndefined();
   });
 
@@ -537,6 +549,22 @@ describe('OpenClawConfigSync runtime config output', () => {
           },
         ],
       },
+      {
+        providerName: 'custom_0',
+        baseURL: 'https://example.com/v1',
+        apiKey: 'sk-custom',
+        apiType: 'openai',
+        codingPlanEnabled: false,
+        models: [
+          {
+            id: 'custom-thinking-model',
+            name: 'Custom Thinking Model',
+            supportsImage: false,
+            supportsThinking: true,
+            customParams: { reasoning_effort: 'high' },
+          },
+        ],
+      },
     ];
 
     const sync = await createSync();
@@ -555,10 +583,23 @@ describe('OpenClawConfigSync runtime config output', () => {
         contextWindow: 1_000_000,
       }),
     ]));
+    expect(config.models.providers.custom_0.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'custom-thinking-model',
+        reasoning: true,
+      }),
+    ]));
     const modelDefaults = config.agents.defaults.models;
 
     expect(modelDefaults).toEqual(expect.objectContaining({
       'deepseek/deepseek-v4-flash': {
+        params: {
+          extra_body: {
+            reasoning_effort: 'high',
+          },
+        },
+      },
+      'custom_0/custom-thinking-model': {
         params: {
           extra_body: {
             reasoning_effort: 'high',
@@ -572,6 +613,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(Object.keys(modelDefaults)).toEqual(expect.arrayContaining([
       'deepseek/deepseek-v4-flash',
       'deepseek/deepseek-v4-pro',
+      'custom_0/custom-thinking-model',
       'lobsterai-server/MiniMax-M2.7-YoudaoInner',
       'lobsterai-server/kimi-k2.6-inhouse-ZhiYun',
     ]));
@@ -700,7 +742,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(customSelection.providerConfig.models[0].input).toEqual(['text', 'image']);
   });
 
-  test('marks DeepSeek reasoning models and all Xiaomi models as reasoning-capable', async () => {
+  test('marks DeepSeek, Xiaomi, and known GLM models as reasoning-capable', async () => {
     const { OpenClawApi, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
 
@@ -728,6 +770,87 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(xiaomiSelection.providerConfig.baseUrl).toBe('https://api.xiaomimimo.com/v1');
     expect(xiaomiSelection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
     expect(xiaomiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const zhipuGlmSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      modelId: 'glm-5.1',
+      apiType: 'openai',
+      providerName: ProviderName.Zhipu,
+      supportsImage: false,
+      modelName: 'GLM 5.1',
+    });
+    expect(zhipuGlmSelection.providerId).toBe('zai');
+    expect(zhipuGlmSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const qianfanGlmSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://qianfan.baidubce.com/v2',
+      modelId: 'glm-5.1',
+      apiType: 'openai',
+      providerName: ProviderName.Qianfan,
+      supportsImage: false,
+      modelName: 'GLM 5.1',
+    });
+    expect(qianfanGlmSelection.providerId).toBe('qianfan');
+    expect(qianfanGlmSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const openAiSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.openai.com/v1',
+      modelId: 'gpt-5.5',
+      apiType: 'openai',
+      providerName: ProviderName.OpenAI,
+      supportsImage: true,
+      modelName: 'GPT-5.5',
+    });
+    expect(openAiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const anthropicSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.anthropic.com',
+      modelId: 'claude-opus-4-7',
+      apiType: 'anthropic',
+      providerName: ProviderName.Anthropic,
+      supportsImage: true,
+      modelName: 'Claude Opus 4.7',
+    });
+    expect(anthropicSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const geminiSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+      modelId: 'gemini-3.1-flash-lite',
+      apiType: undefined,
+      providerName: ProviderName.Gemini,
+      supportsImage: true,
+      modelName: 'Gemini 3.1 Flash Lite',
+    });
+    expect(geminiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const customSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://example.com/v1',
+      modelId: 'custom-thinking-model',
+      apiType: 'openai',
+      providerName: 'custom_0',
+      supportsImage: false,
+      supportsThinking: true,
+      modelName: 'Custom Thinking Model',
+    });
+    expect(customSelection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+    expect(customSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const customParamsOnlySelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://example.com/v1',
+      modelId: 'custom-thinking-model',
+      apiType: 'openai',
+      providerName: 'custom_0',
+      supportsImage: false,
+      modelName: 'Custom Params Only Model',
+    });
+    expect(customParamsOnlySelection.providerConfig.models[0].reasoning).toBeUndefined();
   });
 
   test('writes Telegram streaming in the nested schema expected by current OpenClaw', async () => {

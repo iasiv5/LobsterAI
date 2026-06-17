@@ -80,6 +80,14 @@ const makeConfigWithCustomContextWindows = (): AppConfig => ({
         { id: 'mimo-v2.5', name: 'MiMo V2.5', supportsImage: true, contextWindow: 768_000 },
       ],
     },
+    [ProviderName.Volcengine]: {
+      ...defaultConfig.providers![ProviderName.Volcengine],
+      enabled: true,
+      apiKey: 'sk-volcengine',
+      models: [
+        { id: 'ark-code-latest', name: 'Auto', supportsImage: true },
+      ],
+    },
   },
 });
 
@@ -254,8 +262,8 @@ describe('configService provider migrations', () => {
 
     const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
     expect(savedConfig.providers?.[ProviderName.DeepSeek].models).toEqual([
-      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false, contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false, contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
     ]);
   });
 
@@ -274,8 +282,8 @@ describe('configService provider migrations', () => {
 
     const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
     expect(savedConfig.providers?.[ProviderName.Xiaomi].models).toEqual([
-      { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', supportsImage: false, contextWindow: 1_000_000 },
-      { id: 'mimo-v2.5', name: 'MiMo V2.5', supportsImage: true, contextWindow: 1_000_000 },
+      { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },
+      { id: 'mimo-v2.5', name: 'MiMo V2.5', supportsImage: true, supportsThinking: true, contextWindow: 1_000_000 },
       { id: 'mimo-v2-pro', name: 'MiMo V2 Pro', supportsImage: false, contextWindow: 128_000 },
       { id: 'mimo-v2-flash', name: 'MiMo V2 Flash', supportsImage: false, contextWindow: 64_000 },
     ]);
@@ -292,10 +300,12 @@ describe('configService provider migrations', () => {
 
     const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
     expect(savedConfig.providers?.[ProviderName.Minimax].models?.find(model => model.id === 'MiniMax-M3')?.contextWindow).toBe(512_000);
+    expect(savedConfig.providers?.[ProviderName.Minimax].models?.find(model => model.id === 'MiniMax-M3')?.supportsThinking).toBe(true);
     expect(savedConfig.providers?.[ProviderName.DeepSeek].models?.find(model => model.id === 'deepseek-v4-flash')?.contextWindow).toBe(256_000);
     expect(savedConfig.providers?.[ProviderName.DeepSeek].models?.find(model => model.id === 'deepseek-v4-pro')?.contextWindow).toBe(384_000);
     expect(savedConfig.providers?.[ProviderName.Xiaomi].models?.find(model => model.id === 'mimo-v2.5-pro')?.contextWindow).toBe(640_000);
     expect(savedConfig.providers?.[ProviderName.Xiaomi].models?.find(model => model.id === 'mimo-v2.5')?.contextWindow).toBe(768_000);
+    expect(savedConfig.providers?.[ProviderName.Volcengine].models?.find(model => model.id === 'ark-code-latest')?.supportsThinking).toBe(true);
   });
 
   test.each(addedProviderMigrationCases)(

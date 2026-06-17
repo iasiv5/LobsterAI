@@ -790,6 +790,7 @@ export const buildProviderSelection = (options: {
   authType?: 'apikey' | 'oauth';
   codingPlanEnabled?: boolean;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   modelName?: string;
   contextWindow?: number;
 }): OpenClawProviderSelection => {
@@ -821,6 +822,11 @@ export const buildProviderSelection = (options: {
     options.modelId,
     options.supportsImage,
   );
+  const supportsThinking = ProviderRegistry.resolveModelSupportsThinking(
+    providerName,
+    options.modelId,
+    options.supportsThinking,
+  );
   const modelInput: string[] = supportsImage ? ['text', 'image'] : ['text'];
   const auth = (
     (options.providerName === ProviderName.Minimax || options.providerName === ProviderName.OpenAI)
@@ -830,9 +836,10 @@ export const buildProviderSelection = (options: {
     : AuthType.ApiKey;
 
   // reasoning：descriptor 动态计算 > modelDefaults 静态值
-  const reasoning = descriptor.resolveModelReasoning
+  const descriptorReasoning = descriptor.resolveModelReasoning
     ? descriptor.resolveModelReasoning(options.modelId, !!options.codingPlanEnabled)
     : descriptor.modelDefaults?.reasoning;
+  const reasoning = supportsThinking ? true : descriptorReasoning;
   const contextWindow = ProviderRegistry.resolveModelContextWindow(
     providerName,
     options.modelId,
@@ -1306,6 +1313,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         authType: apiResolution.providerMetadata?.authType,
         codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
         supportsImage: apiResolution.providerMetadata?.supportsImage,
+        supportsThinking: apiResolution.providerMetadata?.supportsThinking,
         modelName: apiResolution.providerMetadata?.modelName,
         contextWindow: apiResolution.providerMetadata?.contextWindow,
       });
@@ -1322,6 +1330,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             authType: p.authType,
             codingPlanEnabled: p.codingPlanEnabled,
             supportsImage: m.supportsImage,
+            supportsThinking: m.supportsThinking,
             modelName: m.name,
             contextWindow: m.contextWindow,
           });
@@ -1369,6 +1378,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             apiType: 'openai',
             providerName: ProviderName.LobsteraiServer,
             supportsImage: serverModels[0]?.supportsImage,
+            supportsThinking: serverModels[0]?.supportsThinking,
           });
           const lobsteraiProviderConfig =
             allProvidersMap[providerId] ?? {
@@ -1388,6 +1398,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 apiType: 'openai',
                 providerName: ProviderName.LobsteraiServer,
                 supportsImage: sm.supportsImage,
+                supportsThinking: sm.supportsThinking,
                 modelName: sm.modelId,
                 contextWindow: sm.contextWindow,
               });

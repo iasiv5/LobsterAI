@@ -34,6 +34,7 @@ type ProviderModelConfig = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   contextWindow?: number;
   customParams?: Record<string, unknown>;
 };
@@ -42,6 +43,7 @@ type ProviderModelInputConfig = {
   id: string;
   name?: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   contextWindow?: number;
   customParams?: Record<string, unknown>;
 };
@@ -54,6 +56,7 @@ export type ApiConfigResolution = {
     authType?: ProviderConfig['authType'];
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
+    supportsThinking?: boolean;
     modelName?: string;
     contextWindow?: number;
   };
@@ -128,6 +131,7 @@ function buildServerFallbackModels(effectiveModelId: string): NonNullable<LocalP
     id: model.modelId,
     name: model.modelId,
     supportsImage: model.supportsImage,
+    supportsThinking: model.supportsThinking,
   }));
 
   if (!models.some(model => model.id === effectiveModelId)) {
@@ -136,6 +140,7 @@ function buildServerFallbackModels(effectiveModelId: string): NonNullable<LocalP
       id: effectiveModelId,
       name: effectiveModelId,
       supportsImage: cachedMeta?.supportsImage,
+      supportsThinking: cachedMeta?.supportsThinking,
     });
   }
 
@@ -151,6 +156,11 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
         model.id,
         model.contextWindow,
       );
+      const supportsThinking = ProviderRegistry.resolveModelSupportsThinking(
+        providerName,
+        model.id,
+        model.supportsThinking,
+      );
       return {
         ...model,
         name: model.name || model.id,
@@ -159,6 +169,7 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
           model.id,
           model.supportsImage,
         ),
+        ...(supportsThinking ? { supportsThinking } : {}),
         ...(contextWindow !== undefined ? { contextWindow } : {}),
       };
     });
@@ -178,6 +189,7 @@ type MatchedProvider = {
   apiFormat: AnthropicApiFormat;
   baseURL: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   modelName?: string;
   contextWindow?: number;
 };
@@ -219,7 +231,12 @@ function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   if (!effectiveModelId) return null;
   const baseURL = `${serverBaseUrl}/api/proxy/v1`;
   const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
-  console.debug('[ClaudeSettings] lobsterai-server provider resolved:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
+  console.debug('[ClaudeSettings] lobsterai-server provider resolved:', {
+    baseURL,
+    modelId: effectiveModelId,
+    supportsImage: cachedMeta?.supportsImage,
+    supportsThinking: cachedMeta?.supportsThinking,
+  });
   return {
     providerName: ProviderName.LobsteraiServer,
     providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: 'openai', models: buildServerFallbackModels(effectiveModelId) },
@@ -227,6 +244,7 @@ function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
     apiFormat: 'openai',
     baseURL,
     supportsImage: cachedMeta?.supportsImage,
+    supportsThinking: cachedMeta?.supportsThinking,
   };
 }
 
@@ -362,6 +380,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       apiFormat,
       baseURL,
       supportsImage: matchedModel?.supportsImage,
+      supportsThinking: matchedModel?.supportsThinking,
       modelName: matchedModel?.name,
       contextWindow: matchedModel?.contextWindow,
     },
@@ -414,6 +433,7 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
         providerName: matched.providerName,
         codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
         supportsImage: matched.supportsImage,
+        supportsThinking: matched.supportsThinking,
       },
     };
   }
@@ -520,6 +540,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       authType: matched.providerConfig.authType,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
+      supportsThinking: matched.supportsThinking,
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
     },
