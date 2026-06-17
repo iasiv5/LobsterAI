@@ -1537,6 +1537,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             mode: sandboxMode,
           },
           workspace: path.resolve(mainWorkspacePath),
+          mediaMaxMb: 30,
           ...(taskWorkingDirectory ? { cwd: path.resolve(taskWorkingDirectory) } : {}),
           ...(coworkConfig.embeddingEnabled ? {
             memorySearch: {

@@ -110,11 +110,11 @@ openclaw-empty-sse-data.patch
 | `openclaw-browser-blocked-hostnames.patch` | 已迁移 | 已迁移到 `v2026.6.1`；6.1 原生 schema 仅支持 `allowedHostnames` / `hostnameAllowlist`，本补丁补回 `blockedHostnames` 类型、schema、浏览器配置归一化、SSRF policy 比较/合并与 DNS 前阻断测试 |
 | `openclaw-browser-duplicate-launch.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `server-context.availability.ts` 中通过 `profileState.ensureBrowserAvailable` 串行化同 profile 的并发 ensure，并已有 `server-context.ensure-browser-available.waits-for-cdp-ready.test.ts` 覆盖并发复用场景 |
 | `openclaw-chat-send-cwd-decoupling.patch` | 已迁移 | 已迁移到 `v2026.6.1`；6.1 将协议 schema 移至 `packages/gateway-protocol`，本次适配让 `ChatSendParamsSchema` 接受 `cwd`，并由 `chat.send` handler 传入 `replyOptions.cwd` |
-| `openclaw-chat-send-image-attachment-30mb.patch` | 待处理 | 尚未评估；需确认 6.1 对 chat.send 图片附件大小限制是否仍需放宽 |
+| `openclaw-chat-send-image-attachment-30mb.patch` | 不再需要迁移 | OpenClaw 6.1 已将 `chat.send` 附件接收上限改为读取 `agents.defaults.mediaMaxMb`，默认 20MiB；LobsterAI 当前在生成配置中显式写出 `agents.defaults.mediaMaxMb: 30`，以配置化方式保留旧补丁的 30MB 业务诉求。注意 OpenClaw 6.1 对图片另有单图 `MAX_IMAGE_BYTES = 6MiB` 的模型输入保护，图片超过 6MiB 时会在 gateway 阶段被显式拒绝，本轮接受该行为变化 |
 | `openclaw-codex-use-native-transport.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `src/agents/embedded-agent-runner/stream-resolution.ts` 中将 `provider=openai` 且 `api=openai-chatgpt-responses` 的模型路由到 `openclaw-native-codex-responses`，并已有 `stream-resolution.test.ts` 覆盖 OAuth key 透传与 system prompt 清理 |
 | `openclaw-cron-skip-missed-jobs.patch` | 已迁移 | 已迁移到 `v2026.6.1`；让 schema 和 cron runtime 支持 `cron.skipMissedJobs` |
-| `openclaw-deepseek-mimo-reasoning-replay.patch` | 待处理 | 尚未评估；需确认 6.1 reasoning replay 行为是否仍需修补 |
-| `openclaw-deepseek-v4-thinking-mode.patch` | 待处理 | 尚未评估；需确认 DeepSeek V4 thinking mode 支持是否已由上游覆盖 |
+| `openclaw-deepseek-mimo-reasoning-replay.patch` | 不再需要迁移 | OpenClaw 6.1 已在 DeepSeek / Xiaomi provider 中内置 replay family hooks，并在 provider stream shared / Xiaomi tests 中覆盖 `reasoning_content` 保留、空 reasoning 回填、禁用 thinking 时剥离等场景；注意旧补丁曾把 `mimo-v2-flash` 标为 reasoning，6.1 上游未这样标记，如业务侧仍需要该模型 thinking 需单独确认 |
+| `openclaw-deepseek-v4-thinking-mode.patch` | 不再需要迁移 | OpenClaw 6.1 已内置 DeepSeek V4 thinking profile、stream wrapper 和 unowned OpenAI-compatible proxy/custom fallback，覆盖 DeepSeek V4 replay 时 `reasoning_content` 回填与 thinking level 处理 |
 | `openclaw-disable-model-pricing-bootstrap.patch` | 不再需要迁移 | OpenClaw 6.1 已将 model pricing refresh 改为按 `models.pricing.enabled` gating、lazy import，并在 scheduled services 激活后启动；注意上游默认值是启用，只有显式 `models.pricing.enabled: false` 才会禁用。LobsterAI 当前改为在生成配置中显式写出该字段，并清理已失效的 `OPENCLAW_SKIP_MODEL_PRICING=1` env |
 | `openclaw-empty-sse-data.patch` | 已迁移 | 已迁移到 `v2026.6.1`；补充 OpenAI-compatible completions fetch 包装，过滤空 SSE `data:` frame，并对连续空 frame 设置上限，避免 provider 异常流导致 parser 报错或空转 |
 | `openclaw-extra-body-passthrough.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `src/agents/embedded-agent-runner/extra-params.ts` 支持 `extra_body` / `extraBody`，并已有 `embedded-agent-runner-extraparams.test.ts` 覆盖 payload 合并与非法值跳过；但 thinking 展示不只依赖参数透传，还要求模型元数据明确标记 `supportsThinking` / `reasoning: true` |
@@ -122,9 +122,9 @@ openclaw-empty-sse-data.patch
 | `openclaw-gateway-startup-profiler.patch` | 不再需要迁移 | OpenClaw 6.1 已提供 `OPENCLAW_GATEWAY_STARTUP_TRACE`、`startupTrace.measure()` 与 diagnostics timeline startup spans；旧补丁属于临时启动耗时诊断，不再作为 LobsterAI 必要 patch 保留 |
 | `openclaw-im-bound-agent-run-cwd.patch` | 已迁移 | 已迁移到 `v2026.6.1`；让 schema 和 reply runtime 支持 agent run cwd |
 | `openclaw-jiti-alias-prenormalize.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `sdk-alias.ts` 中内置 `normalizePluginLoaderAliasMapForJiti()`、`Symbol.for("pathe:normalizedAlias")` 标记、按 alias 内容缓存以及 `buildPluginLoaderJitiOptions()` 入口归一化；上游 `sdk-alias.test.ts` 已覆盖 pre-normalize marker 与相同内容复用 |
-| `openclaw-mcp-shared-runtime.patch` | 待处理 | 尚未评估；需确认 MCP runtime 复用需求是否仍存在 |
-| `openclaw-mcp-stdio-process-tree-kill.patch` | 待处理 | 尚未评估；需确认 stdio MCP 进程树清理是否仍需补丁 |
-| `openclaw-memory-atomic-reindex-ebusy-retry.patch` | 待处理 | 尚未评估；需确认 Windows EBUSY retry 是否已由上游覆盖 |
+| `openclaw-mcp-shared-runtime.patch` | 已迁移 | 已迁移到 `v2026.6.1`；OpenClaw 6.1 虽有 session MCP runtime idle eviction，但 runtime manager 仍按 sessionId 创建缓存，不能避免 LobsterAI 多会话短期产生 N×会话的 stdio MCP 进程；本补丁在保留 6.1 idle sweep / lease / peek 语义基础上，改为按 workspace + MCP config fingerprint 共享 runtime，并用 session 引用关系控制释放 |
+| `openclaw-mcp-stdio-process-tree-kill.patch` | 不再需要迁移 | OpenClaw 6.1 已新增 `OpenClawStdioClientTransport`，stdio MCP transport close 时调用 `killProcessTree()`，并追加 `SIGKILL` 兜底；旧补丁的 Windows 子进程树清理目标已由上游覆盖 |
+| `openclaw-memory-atomic-reindex-ebusy-retry.patch` | 不再需要迁移 | OpenClaw 6.1 的 `manager-atomic-reindex.ts` 已对 `EBUSY` / `EPERM` / `EACCES` transient file errors 做 rename / rm 重试，并有 `manager.atomic-reindex.test.ts` 覆盖成功重试、重试耗尽和 cleanup transient error 场景 |
 | `openclaw-qwen-coding-plan-qwen36-plus.patch` | 不再需要迁移 | OpenClaw 6.1 仍在内置 Qwen Coding Plan catalog 中隐藏 `qwen3.6-plus`，但 embedded runner 已支持显式 `models.providers.qwen.models[]` 配置优先于 conditional suppression；LobsterAI 当前会显式写出 provider model，因此本场景暂不迁移旧补丁，保留观察 |
 | `openclaw-qwen-vision-catalog-fallback.patch` | 不再需要迁移 | OpenClaw 6.1 已将 `models.providers[*].models[*]` 合并进 model catalog，LobsterAI 写出的 `input: ["text", "image"]` 可被识图能力判断读取；实测 Qwen plan mode `qwen3.7-plus` 可正常识图 |
 | `openclaw-skip-derive-prompt-segments-deadloop.patch` | 待处理 | 尚未评估；需确认 derivePromptSegments 死循环问题是否仍存在 |
@@ -173,6 +173,18 @@ LobsterAI 侧处理边界：`customParams` 只作为厂商请求参数透传到 
 
 2026-06-17 复核 `openclaw-jiti-alias-prenormalize.patch` 后确认，旧补丁目标是减少启动阶段大量 `createJiti()` 调用时 pathe `normalizeAliases()` 的重复排序与解析成本。OpenClaw 6.1 已在 `src/plugins/sdk-alias.ts` 中内置更完整的实现：`buildPluginLoaderJitiOptions()` 会先调用 `normalizePluginLoaderAliasMapForJiti()`，该函数设置同一个 `Symbol.for("pathe:normalizedAlias")` marker，按 alias 内容生成 cache key 并复用归一化结果，同时处理 chained alias、Windows drive target 与 cyclic alias 边界。上游 `sdk-alias.test.ts` 已覆盖“pre-normalizes and marks alias maps for source transforms”及相同内容复用，因此该启动性能补丁不再需要迁移。
 
+### 3.5 图片附件、reasoning replay 与运行时可靠性补丁复核
+
+2026-06-17 复核 `openclaw-chat-send-image-attachment-30mb.patch` 后确认，OpenClaw 6.1 不再硬编码旧版 5MB 限制，而是通过 `resolveChatAttachmentMaxBytes()` 读取 `agents.defaults.mediaMaxMb`，未配置时默认 20MiB。因此 LobsterAI 不再迁移该 OpenClaw patch，而是在配置同步阶段显式写出 `agents.defaults.mediaMaxMb: 30`，与 LobsterAI 侧 `chat.send` frame 30MB 级别限制保持一致。
+
+需要额外区分的是，OpenClaw 6.1 在附件接收上限之外，对图片类型新增了单图 `MAX_IMAGE_BYTES = 6 * 1024 * 1024` 的模型输入保护。该限制逐个图片判断，不是多张图片的总和；即使 `agents.defaults.mediaMaxMb` 配置为 30，单张图片只要超过 6MiB，仍会在 gateway 解析阶段报 `image exceeds size limit`。4.14 旧补丁的行为是先允许 30MiB 内图片进入 media offload，再由 agent 侧尝试加载/压缩到 6MiB 内；6.1 选择提前拒绝，以避免后续 runner 丢图但对用户表现为成功响应。本轮接受这一行为变化，不再恢复 4.14 的宽松 offload 语义。验证重点从“patch 是否应用”改为“生成的 `openclaw.json` 是否包含 `agents.defaults.mediaMaxMb: 30`，并确认小于 6MiB 的图片可正常发送、超过 6MiB 的图片当前预期被 OpenClaw 6.1 显式拒绝”。
+
+2026-06-17 复核 DeepSeek / MiMo reasoning 相关两个旧补丁后确认，OpenClaw 6.1 已上游化主要能力：DeepSeek provider 内置 V4 thinking profile、stream wrapper、replay family hooks；Xiaomi provider 内置 MiMo thinking wrapper、OpenAI-compatible replay policy，并在自定义 / proxy provider 路径中补了 DeepSeek V4 与 MiMo reasoning model 的 `reasoning_content` 回填 fallback。因此 `openclaw-deepseek-v4-thinking-mode.patch` 与 `openclaw-deepseek-mimo-reasoning-replay.patch` 均不再迁移。唯一需要保留的差异说明是：旧补丁曾把 Xiaomi `mimo-v2-flash` 也标记为 reasoning，而 OpenClaw 6.1 上游仅对明确 reasoning 的 MiMo 型号启用 thinking profile；如 LobsterAI 后续要支持 `mimo-v2-flash` thinking，需要单独基于实际厂商能力确认。
+
+2026-06-17 复核运行时可靠性类旧补丁后确认，`openclaw-memory-atomic-reindex-ebusy-retry.patch` 已由 OpenClaw 6.1 memory atomic reindex 的 transient file error retry 覆盖，且覆盖范围扩展到 rename 与 rm；`openclaw-mcp-stdio-process-tree-kill.patch` 已由 OpenClaw 6.1 自带 `OpenClawStdioClientTransport` 和 `killProcessTree()` 覆盖，并额外有 `SIGKILL` 兜底。
+
+继续复核 `openclaw-mcp-shared-runtime.patch` 后确认，该补丁仍有迁移必要。其旧引入背景是 LobsterAI desktop 每个对话使用独立 gateway session key，OpenClaw 旧 runtime manager 又按 sessionId 创建 MCP runtime，导致配置 N 个 stdio MCP server、打开 M 个对话时短期产生 N×M 个 Node.js 子进程。OpenClaw 6.1 已新增 session MCP runtime idle eviction，可以在 TTL 后清理不用的 session runtime，但它仍不能把多个活动会话合并为同一套 MCP stdio 子进程，也不能满足“连续新建多个对话时进程数始终约等于 MCP server 数”的桌面端诉求。因此本轮将该 patch 迁移到 6.1 当前的 `src/agents/agent-bundle-mcp-runtime.ts`：保留上游新增的 `sweepIdleRuntimes`、`activeLeases`、`peekSession`、`sessionIdleTtlMs`，同时把 runtime pool 从 sessionId key 改为 workspace + MCP config fingerprint key，并通过 `fingerprintBySessionId` / `refsByFingerprint` 维护 session 引用关系。配置变更时，当前 session 会迁移到新 fingerprint；旧 runtime 只有在最后一个引用释放或 idle sweep 命中后才 dispose。
+
 ## 4. 实施步骤
 
 ### 4.1 已完成
@@ -196,6 +208,8 @@ LobsterAI 侧处理边界：`customParams` 只作为厂商请求参数透传到 
 17. 补齐自定义模型 `supportsThinking` 配置入口：模型编辑弹窗新增“支持思考输出”开关，保存后写入模型元数据，并继续保持 `customParams` 只作为 `extra_body` 透传参数。
 18. 复核启动/诊断/构建规避/loader 性能类旧补丁：确认 `openclaw-gateway-startup-profiler.patch`、`zz-openclaw-first-response-timing-logs.patch`、`openclaw-disable-model-pricing-bootstrap.patch`、`openclaw-facade-runtime-static-import.patch`、`openclaw-jiti-alias-prenormalize.patch` 均不再需要迁移。
 19. 将远端 model pricing refresh 的禁用方式从失效的 `OPENCLAW_SKIP_MODEL_PRICING=1` env 迁移为 LobsterAI 生成配置中的 `models.pricing.enabled: false`。
+20. 复核图片附件、DeepSeek/MiMo reasoning replay、memory atomic reindex 与 MCP stdio process-tree kill 旧补丁：确认 `openclaw-chat-send-image-attachment-30mb.patch` 由 LobsterAI 配置 `agents.defaults.mediaMaxMb: 30` 替代，同时接受 OpenClaw 6.1 对图片新增的单图 6MiB gateway 拒绝行为；其余四项由 OpenClaw 6.1 上游能力覆盖，不再迁移。
+21. 迁移 `openclaw-mcp-shared-runtime.patch` 到 `v2026.6.1`：在保留 OpenClaw 6.1 MCP idle eviction 与 runtime lookup 能力的前提下，恢复 LobsterAI 需要的跨会话 MCP runtime 共享。
 
 ### 4.2 待处理
 

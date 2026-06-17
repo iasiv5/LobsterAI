@@ -1,4 +1,5 @@
 import { describe, test } from 'vitest';
+
 import { expectPatchContains } from './patchTestUtils';
 
 describe('openclaw-browser-blocked-hostnames.patch', () => {

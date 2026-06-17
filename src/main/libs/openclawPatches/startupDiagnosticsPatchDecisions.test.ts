@@ -1,4 +1,5 @@
 import { describe, test } from 'vitest';
+
 import { expectCurrentOpenClawPatchMissing } from './patchTestUtils';
 
 describe('startup and diagnostics OpenClaw patch decisions', () => {

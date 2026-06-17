@@ -218,6 +218,16 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.models.pricing).toEqual({ enabled: false });
   });
 
+  test('configures OpenClaw chat image attachment limit to 30MB', async () => {
+    const sync = await createSync();
+
+    const result = sync.sync('chat-image-attachment-limit');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.mediaMaxMb).toBe(30);
+  });
+
   test('writes model provider env-proxy transport when system proxy is enabled', async () => {
     const { setSystemProxyEnabled } = await import('./systemProxy');
     setSystemProxyEnabled(true);
