@@ -63,6 +63,24 @@ OPENCLAW_PREPACK_PREPARED=1 npm pack --pack-destination "$PACK_DIR"
    - `node scripts/package-changelog.mjs prepare`，生成 tarball 使用的当前版本 changelog，并在 pack 后或异常退出时 restore。
 3. 使用 `npm pack --ignore-scripts --pack-destination "$PACK_DIR"` 跳过 npm lifecycle，避免触发 OpenClaw `prepack` 中的第二次 `pnpm build`。
 
+### 2.1.2 本地扩展 TypeBox 依赖暴露
+
+升级到 OpenClaw `v2026.6.1` 后，网关启动日志中出现本地扩展加载失败：
+
+```text
+[plugins] ask-user-question failed to load ... Error: Cannot find module '@sinclair/typebox'
+[plugins] lobster-media-generation failed to load ... Error: Cannot find module '@sinclair/typebox'
+[plugins] mcp-bridge failed to load ... Error: Cannot find module '@sinclair/typebox'
+```
+
+复核后确认这不是偶发编译失败，也不是最后迁移的 OpenClaw patch 引入。`v2026.4.14` 的 OpenClaw 根 `package.json` 直接依赖 `@sinclair/typebox@0.34.49`，LobsterAI 本地扩展即使没有声明依赖，也能从 runtime 根 `node_modules` 向上解析到该包。`v2026.6.1` 根依赖中不再包含 `@sinclair/typebox`；6.1 虽在 `src/agents/sessions/extensions/loader.ts` 中为 session extension loader 内置 TypeBox alias，但 LobsterAI 的 `ask-user-question`、`lobster-media-generation`、`mcp-bridge` 是通过 gateway plugin loader 的 `plugins.load.paths` 从 `third-party-extensions` 加载，预编译后的 `.js` 还会优先走 native load，因此不会吃到 session extension loader 的 alias。
+
+LobsterAI 侧修复策略：
+
+1. 三个本地扩展的 `package.json` 显式声明 `@sinclair/typebox`。
+2. 根 `package.json` 增加构建期 devDependency，保证 `scripts/precompile-openclaw-extensions.cjs` 执行 esbuild 时可解析该包。
+3. 调整 `scripts/precompile-openclaw-extensions.cjs`：对没有自带 `node_modules` 的本地扩展，预编译时将普通 npm 依赖打进 `index.js`；对已经通过插件安装流程带有 `node_modules` 的第三方插件，继续保持 package external，避免重新打包大型第三方插件。
+
 ### 2.2 当前已迁移的 patch
 
 当前 `scripts/patches/v2026.6.1/` 中已有：
@@ -73,6 +91,10 @@ openclaw-chat-send-cwd-decoupling.patch
 openclaw-im-bound-agent-run-cwd.patch
 openclaw-browser-blocked-hostnames.patch
 openclaw-empty-sse-data.patch
+openclaw-mcp-shared-runtime.patch
+openclaw-aborted-tool-loop-breaker.patch
+openclaw-skip-derive-prompt-segments-deadloop.patch
+openclaw-subagent-cleanup-finalize-best-effort.patch
 ```
 
 这些 patch 解决了本轮升级中暴露的业务字段兼容问题：
@@ -84,6 +106,10 @@ openclaw-empty-sse-data.patch
 | `agents.defaults.cwd` / `agents.list[].cwd` | `openclaw-im-bound-agent-run-cwd.patch` | 让 agent run 使用 LobsterAI 配置的业务工作目录，而不是只使用 OpenClaw workspace |
 | `browser.ssrfPolicy.blockedHostnames` | `openclaw-browser-blocked-hostnames.patch` | 让浏览器访问控制支持 LobsterAI 配置的 hostname blocklist，并在 DNS 查询前阻断命中目标 |
 | OpenAI-compatible 空 SSE `data:` frame | `openclaw-empty-sse-data.patch` | 在 OpenAI-compatible completions fetch 层过滤空 SSE data frame，避免 OpenAI SDK stream parser 因 provider 空事件报错或空转 |
+| MCP runtime 共享 | `openclaw-mcp-shared-runtime.patch` | 让多个 LobsterAI 会话按 workspace + MCP config fingerprint 共享 stdio MCP runtime，避免短时间内产生 N×会话数量的 MCP 子进程 |
+| Aborted tool loop | `openclaw-aborted-tool-loop-breaker.patch` | 对连续 aborted 工具结果增加专项断路与旧历史清理，避免空闲时持续烧 token |
+| promptSegments fallback | `openclaw-skip-derive-prompt-segments-deadloop.patch` | 跳过仅用于 trace 的 `derivePromptSegments(rawUserText)` fallback，避免媒体 marker 触发诊断链路阻塞回复 |
+| subagent cleanup finalize | `openclaw-subagent-cleanup-finalize-best-effort.patch` | cleanup 阶段 ended hook 失败只记录 warning，不再阻断 cleanup bookkeeping；同时修复 gateway bundle 下 runtime import 的 `dist/` 映射 |
 
 ### 2.3 已补充的 LobsterAI 侧测试
 
@@ -106,7 +132,7 @@ openclaw-empty-sse-data.patch
 
 | v2026.4.14 patch | 当前状态 | 处理方式 / 说明 |
 |------------------|----------|-----------------|
-| `openclaw-aborted-tool-loop-breaker.patch` | 待处理 | 尚未评估；需确认 6.1 是否仍存在 aborted tool loop 问题 |
+| `openclaw-aborted-tool-loop-breaker.patch` | 已迁移 | 已迁移到 `v2026.6.1`；OpenClaw 6.1 的 generic no-progress breaker 只覆盖同签名无进展循环，未覆盖 aborted 专项累计、跨参数 aborted total threshold 与旧 session history 中大量 `assistant tool-only + toolResult Aborted` pair 清理 |
 | `openclaw-browser-blocked-hostnames.patch` | 已迁移 | 已迁移到 `v2026.6.1`；6.1 原生 schema 仅支持 `allowedHostnames` / `hostnameAllowlist`，本补丁补回 `blockedHostnames` 类型、schema、浏览器配置归一化、SSRF policy 比较/合并与 DNS 前阻断测试 |
 | `openclaw-browser-duplicate-launch.patch` | 不再需要迁移 | OpenClaw 6.1 已在 `server-context.availability.ts` 中通过 `profileState.ensureBrowserAvailable` 串行化同 profile 的并发 ensure，并已有 `server-context.ensure-browser-available.waits-for-cdp-ready.test.ts` 覆盖并发复用场景 |
 | `openclaw-chat-send-cwd-decoupling.patch` | 已迁移 | 已迁移到 `v2026.6.1`；6.1 将协议 schema 移至 `packages/gateway-protocol`，本次适配让 `ChatSendParamsSchema` 接受 `cwd`，并由 `chat.send` handler 传入 `replyOptions.cwd` |
@@ -127,10 +153,10 @@ openclaw-empty-sse-data.patch
 | `openclaw-memory-atomic-reindex-ebusy-retry.patch` | 不再需要迁移 | OpenClaw 6.1 的 `manager-atomic-reindex.ts` 已对 `EBUSY` / `EPERM` / `EACCES` transient file errors 做 rename / rm 重试，并有 `manager.atomic-reindex.test.ts` 覆盖成功重试、重试耗尽和 cleanup transient error 场景 |
 | `openclaw-qwen-coding-plan-qwen36-plus.patch` | 不再需要迁移 | OpenClaw 6.1 仍在内置 Qwen Coding Plan catalog 中隐藏 `qwen3.6-plus`，但 embedded runner 已支持显式 `models.providers.qwen.models[]` 配置优先于 conditional suppression；LobsterAI 当前会显式写出 provider model，因此本场景暂不迁移旧补丁，保留观察 |
 | `openclaw-qwen-vision-catalog-fallback.patch` | 不再需要迁移 | OpenClaw 6.1 已将 `models.providers[*].models[*]` 合并进 model catalog，LobsterAI 写出的 `input: ["text", "image"]` 可被识图能力判断读取；实测 Qwen plan mode `qwen3.7-plus` 可正常识图 |
-| `openclaw-skip-derive-prompt-segments-deadloop.patch` | 待处理 | 尚未评估；需确认 derivePromptSegments 死循环问题是否仍存在 |
-| `openclaw-subagent-cleanup-finalize-best-effort.patch` | 待处理 | 尚未评估；需确认 subagent cleanup/finalize 失败是否仍会影响主流程 |
+| `openclaw-skip-derive-prompt-segments-deadloop.patch` | 已迁移 | 已迁移到 `v2026.6.1`；OpenClaw 6.1 仍保留 `derivePromptSegments(rawUserText)` fallback，而该 fallback 只服务 trace/diagnostics，不应阻塞 auto-reply 正文交付 |
+| `openclaw-subagent-cleanup-finalize-best-effort.patch` | 已迁移 | 已迁移到 `v2026.6.1`；OpenClaw 6.1 已覆盖部分 announce helper failure 和 Windows path normalization，但 cleanup finalize 中 ended hook failure 仍可能冒泡，本补丁改为 best-effort，并补 gateway bundle root 到 `dist/` runtime import 映射 |
 | `openclaw-web-fetch-env-proxy.patch` | 不再需要迁移 | 旧补丁字段为 `tools.web.fetch.useEnvProxy`；OpenClaw 6.1 已提供 `tools.web.fetch.useTrustedEnvProxy`、cache key 隔离和 env proxy dispatcher 测试。LobsterAI 当前配置同步不再写出旧字段，也不自动写出新字段 |
-| `openclaw-widen-incomplete-turn-retry-guard.patch` | 待处理 | 尚未评估；需确认 incomplete turn retry guard 是否仍需放宽 |
+| `openclaw-widen-incomplete-turn-retry-guard.patch` | 不再需要迁移 | OpenClaw 6.1 已在 subagent announce delivery 中对 `incomplete terminal response` / `code=incomplete_result` 做更窄的 transient retry guard，并有 direct announce fallback 覆盖；旧补丁无条件放宽 incomplete retry guard，风险高于收益 |
 | `zz-openclaw-first-response-timing-logs.patch` | 不再需要迁移 | 旧补丁只增加首包耗时排查日志，不改变业务行为；当前升级主线不依赖这类 verbose diagnostics，避免继续扩大 OpenClaw patch 面。如后续重新专项排查首包延迟，再临时引入诊断手段 |
 
 ### 3.1 `extra_body` 与 thinking 展示复核
@@ -185,6 +211,19 @@ LobsterAI 侧处理边界：`customParams` 只作为厂商请求参数透传到 
 
 继续复核 `openclaw-mcp-shared-runtime.patch` 后确认，该补丁仍有迁移必要。其旧引入背景是 LobsterAI desktop 每个对话使用独立 gateway session key，OpenClaw 旧 runtime manager 又按 sessionId 创建 MCP runtime，导致配置 N 个 stdio MCP server、打开 M 个对话时短期产生 N×M 个 Node.js 子进程。OpenClaw 6.1 已新增 session MCP runtime idle eviction，可以在 TTL 后清理不用的 session runtime，但它仍不能把多个活动会话合并为同一套 MCP stdio 子进程，也不能满足“连续新建多个对话时进程数始终约等于 MCP server 数”的桌面端诉求。因此本轮将该 patch 迁移到 6.1 当前的 `src/agents/agent-bundle-mcp-runtime.ts`：保留上游新增的 `sweepIdleRuntimes`、`activeLeases`、`peekSession`、`sessionIdleTtlMs`，同时把 runtime pool 从 sessionId key 改为 workspace + MCP config fingerprint key，并通过 `fingerprintBySessionId` / `refsByFingerprint` 维护 session 引用关系。配置变更时，当前 session 会迁移到新 fingerprint；旧 runtime 只有在最后一个引用释放或 idle sweep 命中后才 dispose。
 
+### 3.6 最后四个 patch 处理结论
+
+2026-06-17 按 `specs/refactors/openclaw-upgrade/2026-06-17-openclaw-2026-6-1-final-patch-decisions.md` 对最后四个 patch 逐个复核后确认：
+
+| patch | 结论 | 依据 |
+|------|------|------|
+| `openclaw-aborted-tool-loop-breaker.patch` | 迁移 | 上游 generic breaker 只覆盖同签名 no-progress，不覆盖 aborted 专项累计和旧历史清理 |
+| `openclaw-skip-derive-prompt-segments-deadloop.patch` | 迁移 | OpenClaw 6.1 仍保留 trace promptSegments fallback，未见上游修复 |
+| `openclaw-subagent-cleanup-finalize-best-effort.patch` | 迁移 | OpenClaw 6.1 覆盖了部分 helper failure，但未覆盖 ended hook failure 阻断 cleanup 与 gateway bundle root 到 `dist/` 的 runtime import 映射 |
+| `openclaw-widen-incomplete-turn-retry-guard.patch` | 不迁移 | OpenClaw 6.1 已用更窄的 incomplete terminal response retry guard 覆盖主要路径，旧补丁无条件放宽 guard 风险更高 |
+
+对应新增 `v2026.6.1` patch 三个，并补充 LobsterAI 侧 patch 清单测试，显式断言 `openclaw-widen-incomplete-turn-retry-guard.patch` 不出现在当前版本 patch 目录。
+
 ## 4. 实施步骤
 
 ### 4.1 已完成
@@ -210,15 +249,12 @@ LobsterAI 侧处理边界：`customParams` 只作为厂商请求参数透传到 
 19. 将远端 model pricing refresh 的禁用方式从失效的 `OPENCLAW_SKIP_MODEL_PRICING=1` env 迁移为 LobsterAI 生成配置中的 `models.pricing.enabled: false`。
 20. 复核图片附件、DeepSeek/MiMo reasoning replay、memory atomic reindex 与 MCP stdio process-tree kill 旧补丁：确认 `openclaw-chat-send-image-attachment-30mb.patch` 由 LobsterAI 配置 `agents.defaults.mediaMaxMb: 30` 替代，同时接受 OpenClaw 6.1 对图片新增的单图 6MiB gateway 拒绝行为；其余四项由 OpenClaw 6.1 上游能力覆盖，不再迁移。
 21. 迁移 `openclaw-mcp-shared-runtime.patch` 到 `v2026.6.1`：在保留 OpenClaw 6.1 MCP idle eviction 与 runtime lookup 能力的前提下，恢复 LobsterAI 需要的跨会话 MCP runtime 共享。
+22. 迁移最后三个仍需保留的 patch：`openclaw-aborted-tool-loop-breaker.patch`、`openclaw-skip-derive-prompt-segments-deadloop.patch`、`openclaw-subagent-cleanup-finalize-best-effort.patch`；确认 `openclaw-widen-incomplete-turn-retry-guard.patch` 不迁移。
+23. 修复 OpenClaw 6.1 下本地扩展加载 `@sinclair/typebox` 失败：三个位于 `openclaw-extensions/` 的本地插件显式声明依赖，根 `package.json` 提供构建期依赖，预编译脚本对无 `node_modules` 的本地扩展内联普通 npm 依赖。
 
 ### 4.2 待处理
 
-1. 按表格顺序逐个评估其余 `v2026.4.14` patch。
-2. 对每个 patch 给出明确结论：
-   - 需要迁移：适配 6.1 源码，生成 `v2026.6.1` patch，补必要测试。
-   - 不再需要迁移：记录上游已覆盖或业务不再依赖的证据。
-   - 暂缓：记录原因和风险。
-3. 每迁移一批 patch 后执行：
+当前最后四个 patch 已完成处理，`v2026.4.14` 目录中本轮纳入评估的长期 patch 均已有迁移或不迁移结论。后续若新增运行时异常，按以下流程处理：
 
 ```bash
 npm run openclaw:patch
@@ -236,6 +272,10 @@ npm run build
 | `scripts/patches/v2026.6.1/` | 新版本 patch 目标目录 |
 | `scripts/run-build-openclaw-runtime.cjs` | OpenClaw runtime 构建入口适配 |
 | `scripts/build-openclaw-runtime.sh` | runtime 构建与完整性检查 |
+| `scripts/precompile-openclaw-extensions.cjs` | 本地 OpenClaw 扩展预编译；无 `node_modules` 的本地扩展内联普通 npm 依赖 |
+| `openclaw-extensions/ask-user-question/package.json` | 显式声明 `@sinclair/typebox` 依赖 |
+| `openclaw-extensions/lobster-media-generation/package.json` | 显式声明 `@sinclair/typebox` 依赖 |
+| `openclaw-extensions/mcp-bridge/package.json` | 显式声明 `@sinclair/typebox` 依赖 |
 | `src/main/libs/openclawConfigSync.ts` | LobsterAI 生成 OpenClaw 配置的核心逻辑 |
 | `src/main/libs/openclawConfigSync.runtime.test.ts` | 配置输出测试 |
 | `src/main/libs/openclawPatches/` | pinned OpenClaw 版本 patch 覆盖测试 |
@@ -288,6 +328,26 @@ runtime 打包二次构建修复记录：
 | 命令 / 场景 | 结果 | 说明 |
 |------|------|------|
 | `npm run openclaw:runtime:host` | 未执行 | 本轮按要求只调整脚本与文档，不启动 OpenClaw runtime 构建；待手动测试确认日志中只出现一次 `[build-all] tsdown`，且 `[2/7] Packing npm tarball` 后不再出现 `openclaw@2026.6.1 prepack` / 第二轮 `scripts/build-all.mjs` |
+
+最后四个 patch 处理与本地扩展 TypeBox 修复验证：
+
+```bash
+npm run openclaw:patch
+npx vitest run src/main/libs/openclawPatches
+node scripts/test-projects.mjs src/agents/tool-loop-detection.test.ts src/agents/embedded-agent-runner/sanitize-session-history.tool-result-details.test.ts src/shared/runtime-import.test.ts src/agents/subagent-registry-lifecycle.test.ts
+npm run openclaw:extensions:local
+npm run openclaw:precompile
+node -e "Promise.all(['ask-user-question','lobster-media-generation','mcp-bridge'].map(async id=>{ const p='file:///'+process.cwd().replace(/\\\\/g,'/')+'/vendor/openclaw-runtime/current/third-party-extensions/'+id+'/index.js'; const m=await import(p); console.log(id, Object.keys(m).join(',')); }))"
+```
+
+| 命令 | 结果 | 说明 |
+|------|------|------|
+| `npm run openclaw:patch` | 通过 | 从干净 OpenClaw 6.1 源码重置后，9 个 `v2026.6.1` patch 均成功应用 |
+| `npx vitest run src/main/libs/openclawPatches` | 通过 | 11 个测试文件、27 个用例通过；覆盖前三个 patch 存在与 `openclaw-widen-incomplete-turn-retry-guard.patch` 缺失 |
+| OpenClaw 目标测试 | 通过 | `tool-loop-detection`、`sanitize-session-history`、`runtime-import`、`subagent-registry-lifecycle` 相关目标测试通过 |
+| `npm run openclaw:extensions:local` | 通过 | 三个本地扩展同步到当前 runtime |
+| `npm run openclaw:precompile` | 通过 | 3 个本地扩展编译、8 个已有 `node_modules` 的第三方插件跳过、0 errors |
+| 直接 import 三个 runtime 插件 | 通过 | `ask-user-question`、`lobster-media-generation`、`mcp-bridge` 均可加载，未再触发 `Cannot find module '@sinclair/typebox'` |
 
 后续每迁移一个 patch，应至少完成：
 

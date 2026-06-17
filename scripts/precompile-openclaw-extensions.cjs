@@ -124,7 +124,10 @@ async function main() {
         format: 'esm',
         target: 'es2023',
         outfile: outFile,
-        packages: 'external',  // All node_modules deps stay external
+        // Locally copied extensions do not carry node_modules. Bundle their
+        // package dependencies into index.js, while installed third-party
+        // plugins with their own node_modules keep package imports external.
+        ...(fs.existsSync(path.join(pluginDir, 'node_modules')) ? { packages: 'external' } : {}),
         external: SDK_EXTERNALS,
         plugins: [openclawInternalsPlugin],
         // Silence warnings about __dirname/__filename in ESM
