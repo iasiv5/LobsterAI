@@ -48,6 +48,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Thinking-only hint
     taskThinkingOnly:
       '[模型未输出内容] 模型已完成思考但未生成可见回复。你可以继续对话，让模型重新输出结果。',
+    coworkPlanModeToolBlocked: '计划模式已停止可能修改系统状态的工具调用：{tool}。',
 
     // Feishu bot install
     feishuVerifyCredentialsFailed: '凭证验证失败，请检查 App ID 和 App Secret 是否正确',
@@ -328,6 +329,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Thinking-only hint
     taskThinkingOnly:
       '[No output] The model finished thinking but did not generate a visible reply. You can continue the conversation to ask it to output the result.',
+    coworkPlanModeToolBlocked: 'Plan Mode stopped a tool call that could modify system state: {tool}.',
 
     // Feishu bot install
     feishuVerifyCredentialsFailed:

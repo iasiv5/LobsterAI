@@ -20,13 +20,42 @@ import { CoworkSelectedTextSource } from '../../../shared/cowork/selectedText';
 import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
+  ensurePlanModeProposedPlanBlock,
   estimateOpenClawChatSendFrameBytes,
+  isPlanModeSafeExecCommand,
   normalizeOpenClawRuntimeErrorMessage,
   OPENCLAW_CHAT_SEND_PAYLOAD_SAFE_LIMIT_BYTES,
   OpenClawRuntimeAdapter,
   pickPersistedAssistantSegment,
   resolveToolEventIsError,
 } from './openclawRuntimeAdapter';
+
+test('plan mode allows read-only shell inspection on macOS and Windows', () => {
+  expect(isPlanModeSafeExecCommand('rg --files src')).toBe(true);
+  expect(isPlanModeSafeExecCommand('git status --short')).toBe(true);
+  expect(isPlanModeSafeExecCommand('Get-ChildItem src')).toBe(true);
+  expect(isPlanModeSafeExecCommand('findstr /s PlanMode src\\*.ts')).toBe(true);
+});
+
+test('plan mode blocks shell commands with mutation paths', () => {
+  expect(isPlanModeSafeExecCommand('git diff --output=changes.patch')).toBe(false);
+  expect(isPlanModeSafeExecCommand('find . -fprint output.txt')).toBe(false);
+  expect(isPlanModeSafeExecCommand('sed -n "1,10p" file.ts')).toBe(false);
+  expect(isPlanModeSafeExecCommand('ls > files.txt')).toBe(false);
+  expect(isPlanModeSafeExecCommand('git branch new-branch')).toBe(false);
+});
+
+test('plan mode normalizes missing proposed plan tags without nesting them', () => {
+  expect(ensurePlanModeProposedPlanBlock('Summary')).toBe(
+    '<proposed_plan>\nSummary\n</proposed_plan>',
+  );
+  expect(ensurePlanModeProposedPlanBlock('<proposed_plan>\nSummary')).toBe(
+    '<proposed_plan>\nSummary\n</proposed_plan>',
+  );
+  expect(ensurePlanModeProposedPlanBlock('<PROPOSED_PLAN>Summary</PROPOSED_PLAN>')).toBe(
+    '<PROPOSED_PLAN>Summary</PROPOSED_PLAN>',
+  );
+});
 
 test('pickPersistedAssistantSegment: stream authority keeps previous when same length or longer', () => {
   expect(pickPersistedAssistantSegment('aa', 'a', true)).toEqual({

@@ -393,6 +393,7 @@ type ActiveTurn = {
   mediaStatusPollCountByTaskId: Map<string, number>;
   mediaStatusPollBaseByToolCallId: Map<string, number>;
   contextMaintenanceToolCallIds: Set<string>;
+  planModeSuppressedToolCallIds: Set<string>;
   stopRequested: boolean;
   /** Thinking message state — separate from main assistant message. */
   thinkingMessageId: string | null;
@@ -454,8 +455,36 @@ const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
   'write',
   'edit',
   'apply_patch',
-  'exec',
   'bash',
+]);
+const PLAN_MODE_SAFE_EXEC_COMMANDS = new Set([
+  'cat',
+  'dir',
+  'find',
+  'findstr',
+  'gc',
+  'gci',
+  'get-childitem',
+  'get-content',
+  'get-location',
+  'grep',
+  'head',
+  'ls',
+  'pwd',
+  'rg',
+  'select-string',
+  'tail',
+  'type',
+  'where',
+  'wc',
+]);
+const PLAN_MODE_SAFE_GIT_COMMANDS = new Set([
+  'diff',
+  'log',
+  'ls-files',
+  'rev-parse',
+  'show',
+  'status',
 ]);
 
 function isPlanModeSystemPrompt(systemPrompt: string): boolean {
@@ -468,28 +497,76 @@ function getStringArg(args: unknown, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function getPlanModeExecCommand(args: unknown): string {
+  return getStringArg(args, 'command') || getStringArg(args, 'cmd');
+}
+
+function getShellCommandName(command: string): string {
+  const [firstToken = ''] = command.trim().split(/\s+/, 1);
+  return firstToken.replace(/^["']|["']$/g, '').toLowerCase();
+}
+
+function getGitSubcommand(command: string): string {
+  const [, subcommand = ''] = command.trim().split(/\s+/, 2);
+  return subcommand.toLowerCase();
+}
+
+export function isPlanModeSafeExecCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  if (/[;&|<>`\n\r]/.test(trimmed) || /\$\s*\(/.test(trimmed)) return false;
+  if (/(?:^|\s)-(?:delete|exec|execdir|ok|fprint|fprint0|fprintf|fls)(?:\s|$)/i.test(trimmed)) return false;
+
+  const commandName = getShellCommandName(trimmed);
+  if (commandName === 'git') {
+    if (/(?:^|\s)(?:--output(?:=|\s)|-o(?:\s|$))/i.test(trimmed)) return false;
+    return PLAN_MODE_SAFE_GIT_COMMANDS.has(getGitSubcommand(trimmed));
+  }
+
+  return PLAN_MODE_SAFE_EXEC_COMMANDS.has(commandName);
+}
+
 function getPlanModeBlockedToolReason(toolNameRaw: string, args: unknown): string | null {
   const toolName = toolNameRaw.trim().toLowerCase();
   if (PLAN_MODE_BLOCKED_TOOL_NAMES.has(toolName)) {
     return `blocked mutating tool ${toolNameRaw || 'Tool'}`;
   }
 
-  if (toolName === 'read') {
-    const requestedPath = getStringArg(args, 'path');
-    if (/(^|[/\\])SKILL\.md$/i.test(requestedPath)) {
-      return 'blocked skill loading in plan mode';
-    }
+  if (toolName === 'exec') {
+    const command = getPlanModeExecCommand(args);
+    if (isPlanModeSafeExecCommand(command)) return null;
+    return 'blocked shell command in plan mode';
   }
 
   return null;
+}
+
+function shouldSuppressPlanModeToolEvent(toolNameRaw: string, args: unknown): boolean {
+  const toolName = toolNameRaw.trim().toLowerCase();
+  if (toolName === 'read') return true;
+  if (toolName === 'exec') {
+    return isPlanModeSafeExecCommand(getPlanModeExecCommand(args));
+  }
+  return false;
+}
+
+export function ensurePlanModeProposedPlanBlock(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed || /<proposed_plan\b[^>]*>[\s\S]*<\/proposed_plan\s*>/i.test(trimmed)) return text;
+  if (/<proposed_plan\b[^>]*>/i.test(trimmed)) {
+    return `${trimmed}\n</proposed_plan>`;
+  }
+  return `<proposed_plan>\n${trimmed}\n</proposed_plan>`;
 }
 
 function buildPlanModeOutboundReminder(): string {
   return [
     '[Plan Mode reminder]',
     'Plan Mode is active for this turn.',
-    'Do not implement, create, modify, write, edit, run shell commands, or load SKILL.md files.',
-    'Return only one concise plan wrapped in <proposed_plan> and </proposed_plan> tags.',
+    'Only use read-only exploration when needed; do not implement, create, modify, write, edit, or run shell commands that can change files or system state.',
+    'Write the plan in the same language as the user request.',
+    'Return one complete proposed plan wrapped in <proposed_plan> and </proposed_plan> tags.',
+    'Do not stop after a preface; include Summary, Implementation Approach, Key Changes, Validation, and Assumptions or Questions.',
   ].join('\n');
 }
 
@@ -3565,6 +3642,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       mediaStatusPollCountByTaskId: new Map(),
       mediaStatusPollBaseByToolCallId: new Map(),
       contextMaintenanceToolCallIds: new Set(),
+      planModeSuppressedToolCallIds: new Set(),
       startedAtMs: Date.now(),
       firstResponseTiming,
       stopRequested: false,
@@ -5572,6 +5650,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (toolCallId && turn.contextMaintenanceToolCallIds.has(toolCallId)) {
       return;
     }
+    if (toolCallId && turn.planModeSuppressedToolCallIds?.has(toolCallId)) {
+      return;
+    }
 
     if (!toolCallId) return;
     if (phase !== 'start' && phase !== 'update' && phase !== 'result') return;
@@ -5583,21 +5664,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const blockedReason = getPlanModeBlockedToolReason(toolNameRaw, data.args);
       if (blockedReason) {
         console.warn(
-          '[OpenClawRuntime] blocked a tool call because plan mode is active.',
-          `Session ${sessionId}.`,
-          `Tool ${toolName}.`,
-          `Reason ${blockedReason}.`,
+          `[OpenClawRuntime] blocked ${toolName} in plan mode for session ${sessionId}: ${blockedReason}.`,
         );
         const blockedMessage = this.store.addMessage(sessionId, {
           type: 'system',
-          content: `Plan Mode blocked tool call: ${toolName}.`,
-          metadata: {
-            isError: true,
-            error: blockedReason,
-          },
+          content: t('coworkPlanModeToolBlocked', { tool: toolName }),
         });
         this.emit('message', sessionId, blockedMessage);
         this.stopSession(sessionId);
+        return;
+      }
+      if (shouldSuppressPlanModeToolEvent(toolNameRaw, data.args)) {
+        (turn.planModeSuppressedToolCallIds ??= new Set()).add(toolCallId);
+        console.debug(
+          `[OpenClawRuntime] suppressed a read-only ${toolName} event from the plan mode transcript for session ${sessionId}.`,
+        );
         return;
       }
     }
@@ -6314,7 +6395,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const previousSegmentText = turn.currentAssistantSegmentText;
     const wasWaitingForRecoverableFinal = this.isWaitingForRecoverableFollowup(turn);
     const rawFinalText = this.resolveFinalTurnText(turn, payload.message);
-    const finalText = stripTrailingSilentReplyToken(rawFinalText);
+    const finalText = turn.planMode
+      ? ensurePlanModeProposedPlanBlock(stripTrailingSilentReplyToken(rawFinalText))
+      : stripTrailingSilentReplyToken(rawFinalText);
     console.debug(
       '[OpenClawRuntime] handleChatFinal:',
       `sessionId=${sessionId}`,
@@ -7472,15 +7555,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       }
 
+      if (turn.planMode) {
+        canonicalText = ensurePlanModeProposedPlanBlock(canonicalText);
+      }
+
       console.debug('[OpenClawRuntime] syncFinalAssistant — canonicalText.length:', canonicalText.length);
 
       // For managed sessions: extract the last assistant segment directly from history
       // instead of using committedAssistantText for prefix slicing.
       // committedAssistantText is built from streaming data which may have been corrupted
       // by the gateway's appendUniqueSuffix overlap detection.
-      const canonicalSegmentText = isManagedSessionKey(turn.sessionKey)
+      let canonicalSegmentText = isManagedSessionKey(turn.sessionKey)
         ? extractLastAssistantSegmentInTurn(historyMessages!)
         : this.resolveAssistantSegmentText(turn, canonicalText);
+      if (turn.planMode) {
+        canonicalSegmentText = ensurePlanModeProposedPlanBlock(canonicalSegmentText);
+      }
       console.debug('[Debug:syncFinal] canonicalSegmentText length:', canonicalSegmentText.length,
         'committed.length:', turn.committedAssistantText.length,
         'segment:', canonicalSegmentText.slice(0, 80));
@@ -8170,6 +8260,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       mediaStatusPollCountByTaskId: new Map(),
       mediaStatusPollBaseByToolCallId: new Map(),
       contextMaintenanceToolCallIds: new Set(),
+      planModeSuppressedToolCallIds: new Set(),
       startedAtMs: Date.now(),
       firstResponseTiming: { turnStartedAtMs: Date.now() },
       stopRequested: false,

@@ -15,7 +15,11 @@ export const buildPlanModeSystemPrompt = (): string => [
   '- If the user asks you to implement while Plan Mode is active, treat that as a request to plan the implementation.',
   '- Do not call mutating tools such as write, edit, apply_patch, or shell redirection. If a tool could modify workspace files, do not call it.',
   '- When the plan is ready, output exactly one final response wrapped in <proposed_plan> and </proposed_plan> tags.',
-  '- The plan inside <proposed_plan> must be concise, decision-complete, and include summary, key changes, tests, and assumptions.',
+  '- The plan inside <proposed_plan> must be complete but not verbose. Do not output only a preface such as "Here is the plan".',
+  '- Use the same language as the user request.',
+  '- Include these sections: Summary, Implementation Approach, Key Changes, Validation, and Assumptions or Questions.',
+  '- For UI work, include layout, visual direction, responsive behavior, expected assets/placeholders, and interaction states.',
+  '- The plan should normally be 8-16 bullets or short paragraphs, enough for the user to approve or correct before coding.',
 ].join('\n');
 
 export const buildCoworkSystemPrompt = (
