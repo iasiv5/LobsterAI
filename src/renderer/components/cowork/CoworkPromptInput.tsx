@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardDocumentCheckIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
 import { AuthSubscriptionStatus } from '@shared/auth/constants';
 import { ProviderName } from '@shared/providers';
@@ -10,6 +10,7 @@ import {
   formatCoworkImageAttachmentLimit,
   validateCoworkImageAttachmentSize,
 } from '../../../shared/cowork/imageAttachments';
+import { isPlanImplementationApproval } from '../../../shared/cowork/planMode';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
@@ -33,6 +34,7 @@ import {
   type DraftAttachment,
   removeDraftSelectedTextSnippet,
   setDraftAttachments,
+  setDraftCollaborationMode,
   setDraftKitIds,
   setDraftPrompt,
   setDraftSelectedTextSnippets,
@@ -42,7 +44,7 @@ import {
 import { setActiveKitIds, toggleActiveKit } from '../../store/slices/kitSlice';
 import type { Model } from '../../store/slices/modelSlice';
 import { setActiveSkillIds, setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
-import { CoworkImageAttachment } from '../../types/cowork';
+import { CoworkCollaborationMode, CoworkImageAttachment } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
 import { getAgentDisplayName, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
@@ -83,6 +85,7 @@ import MediaModelPicker from './MediaModelPicker';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
 import { buildSelectedSkillRoutingPrompt } from './selectedSkillRoutingPrompt';
 import SelectedTextSnippetBadge from './SelectedTextSnippetBadge';
+import { buildPlanModeSystemPrompt } from './skillSystemPrompt';
 import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
 import { useCoworkVoiceInput } from './voiceInput/useCoworkVoiceInput';
 import VoiceInputButton from './voiceInput/VoiceInputButton';
@@ -248,7 +251,14 @@ export interface CoworkPromptInputRef {
 }
 
 interface CoworkPromptInputProps {
-  onSubmit: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[], selectedTextSnippets?: CoworkSelectedTextSnippet[]) => boolean | void | Promise<boolean | void>;
+  onSubmit: (
+    prompt: string,
+    skillPrompt?: string,
+    imageAttachments?: CoworkImageAttachment[],
+    mediaReferences?: MediaAttachmentRef[],
+    selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    collaborationMode?: CoworkCollaborationMode,
+  ) => boolean | void | Promise<boolean | void>;
   onStop?: () => void;
   isStreaming?: boolean;
   placeholder?: string;
@@ -339,6 +349,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
+    const skillSubmenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
@@ -426,6 +437,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const hasActiveKits = activeKitIds.length > 0;
   const draftKitIdsForKey = useSelector((state: RootState) => state.cowork.draftKitIds[draftKey]);
   const draftSkillIdsForKey = useSelector((state: RootState) => state.cowork.draftSkillIds[draftKey]);
+  const draftCollaborationMode = useSelector(
+    (state: RootState) => state.cowork.draftCollaborationModes[draftKey] || CoworkCollaborationMode.Default
+  );
+  const isPlanMode = draftCollaborationMode === CoworkCollaborationMode.Plan;
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
   const {
@@ -587,6 +602,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         dispatch(clearDraftSelectedTextSnippets(draftKey));
         dispatch(setDraftKitIds({ draftKey, kitIds: [] }));
         dispatch(setActiveKitIds([]));
+        dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
         setImageVisionHint(false);
       }
       requestAnimationFrame(() => {
@@ -597,6 +613,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     return () => {
       window.removeEventListener(CoworkUiEvent.FocusInput, handleFocusInput);
       if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+      if (skillSubmenuCloseTimerRef.current) clearTimeout(skillSubmenuCloseTimerRef.current);
     };
   }, [dispatch, draftKey]);
 
@@ -680,6 +697,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   useEffect(() => {
     if (!showAddMenu) {
       setShowSkillsPopover(false);
+      if (skillSubmenuCloseTimerRef.current) {
+        clearTimeout(skillSubmenuCloseTimerRef.current);
+        skillSubmenuCloseTimerRef.current = null;
+      }
     }
   }, [showAddMenu]);
 
@@ -808,6 +829,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     if ((!trimmedValue && attachments.length === 0) || disabled || isPatchingModel) return;
     setShowFolderRequiredWarning(false);
 
+    const exitsPlanModeForImplementation = isPlanMode
+      && isPlanImplementationApproval(trimmedValue);
+    const effectivePlanMode = isPlanMode && !exitsPlanModeForImplementation;
+    const effectiveCollaborationMode = effectivePlanMode
+      ? CoworkCollaborationMode.Plan
+      : CoworkCollaborationMode.Default;
+
     const accessPrompt = resolveSubmitModelAccessPrompt();
     if (accessPrompt) {
       setModelAccessPrompt(accessPrompt);
@@ -822,10 +850,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       .map(id => skills.find(s => s.id === id))
       .filter((s): s is Skill => s !== undefined);
     const kitPrompt = buildSelectedKitContextPrompt(activeKitIds, marketplaceKits, installedKits);
-    const skillPrompt = [
-      kitPrompt,
-      buildSelectedSkillRoutingPrompt(activeSkills),
-    ].filter(Boolean).join('\n\n') || undefined;
+    const skillPrompt = effectivePlanMode
+      ? buildPlanModeSystemPrompt()
+      : [
+        kitPrompt,
+        buildSelectedSkillRoutingPrompt(activeSkills),
+      ].filter(Boolean).join('\n\n') || undefined;
+    if (effectivePlanMode) {
+      logPromptModelSelection(
+        'debug',
+        `submitting prompt in plan mode for draft ${draftKey}; selected skill routing suppressed`
+      );
+    }
 
     // Extract image attachments (with base64 data) for vision-capable models
     console.log('[CoworkPromptInput] handleSubmit: attachment diagnosis', {
@@ -950,14 +986,28 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // Resolve @media tokens into MediaAttachmentRef array
     const mediaReferences = extractMediaReferencesFromPrompt(finalPrompt, mediaLabels);
 
-    const result = await onSubmit(finalPrompt, skillPrompt, imageAtts.length > 0 ? imageAtts : undefined, mediaReferences.length > 0 ? mediaReferences : undefined, selectedTextSnippets.length > 0 ? selectedTextSnippets : undefined);
+    const result = await onSubmit(
+      finalPrompt,
+      skillPrompt,
+      imageAtts.length > 0 ? imageAtts : undefined,
+      mediaReferences.length > 0 ? mediaReferences : undefined,
+      selectedTextSnippets.length > 0 ? selectedTextSnippets : undefined,
+      effectiveCollaborationMode,
+    );
     if (result === false) return;
+    if (exitsPlanModeForImplementation) {
+      logPromptModelSelection(
+        'debug',
+        `exited plan mode after submitting approved implementation in draft ${draftKey}`,
+      );
+    }
     setValue('');
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
     dispatch(clearDraftSelectedTextSnippets(draftKey));
+    dispatch(setDraftCollaborationMode({ draftKey, mode: CoworkCollaborationMode.Default }));
     setImageVisionHint(false);
-  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt]);
+  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
@@ -1352,9 +1402,47 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, []);
 
   const handleOpenSkillsPopover = useCallback(() => {
+    if (skillSubmenuCloseTimerRef.current) {
+      clearTimeout(skillSubmenuCloseTimerRef.current);
+      skillSubmenuCloseTimerRef.current = null;
+    }
     setShowAddMenu(true);
     setShowSkillsPopover(true);
   }, []);
+
+  const cancelCloseSkillsPopover = useCallback(() => {
+    if (skillSubmenuCloseTimerRef.current) {
+      clearTimeout(skillSubmenuCloseTimerRef.current);
+      skillSubmenuCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const handleCloseSkillsPopover = useCallback(() => {
+    if (skillSubmenuCloseTimerRef.current) {
+      clearTimeout(skillSubmenuCloseTimerRef.current);
+      skillSubmenuCloseTimerRef.current = null;
+    }
+    setShowSkillsPopover(false);
+  }, []);
+
+  const scheduleCloseSkillsPopover = useCallback(() => {
+    if (skillSubmenuCloseTimerRef.current) {
+      clearTimeout(skillSubmenuCloseTimerRef.current);
+    }
+    skillSubmenuCloseTimerRef.current = setTimeout(() => {
+      setShowSkillsPopover(false);
+      skillSubmenuCloseTimerRef.current = null;
+    }, 120);
+  }, []);
+
+  const handleTogglePlanMode = useCallback(() => {
+    const nextMode = isPlanMode ? CoworkCollaborationMode.Default : CoworkCollaborationMode.Plan;
+    logPromptModelSelection('debug', `plan mode ${nextMode === CoworkCollaborationMode.Plan ? 'enabled' : 'disabled'} for draft ${draftKey}`);
+    dispatch(setDraftCollaborationMode({
+      draftKey,
+      mode: nextMode,
+    }));
+  }, [dispatch, draftKey, isPlanMode]);
 
   const handleRemoveAttachment = useCallback((path: string) => {
     dispatch(setDraftAttachments({
@@ -1568,10 +1656,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           ref={addMenuRef}
           className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
+          onMouseEnter={cancelCloseSkillsPopover}
+          onMouseLeave={scheduleCloseSkillsPopover}
         >
           <button
             type="button"
             onClick={handleAddFile}
+            onMouseEnter={handleCloseSkillsPopover}
+            onFocus={handleCloseSkillsPopover}
             disabled={disabled || isStreaming || isAddingFile || voiceInputLocksEditing}
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
             role="menuitem"
@@ -1596,6 +1688,31 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <span className="min-w-0 flex-1 truncate">{i18nService.t('useSkill')}</span>
             <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
           </button>
+          <button
+            type="button"
+            onClick={handleTogglePlanMode}
+            onMouseEnter={handleCloseSkillsPopover}
+            onFocus={handleCloseSkillsPopover}
+            disabled={disabled || isStreaming || voiceInputLocksEditing}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+            role="menuitemcheckbox"
+            aria-checked={isPlanMode}
+          >
+            <ClipboardDocumentCheckIcon className="h-5 w-5 shrink-0 text-secondary" />
+            <span className="min-w-0 flex-1 truncate">{i18nService.t('coworkPlanMode')}</span>
+            <span
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                isPlanMode ? 'bg-primary' : 'bg-neutral-200 dark:bg-neutral-700'
+              }`}
+              aria-hidden="true"
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                  isPlanMode ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </span>
+          </button>
 
           <SkillsPopover
             isOpen={showSkillsPopover}
@@ -1605,6 +1722,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             anchorRef={skillMenuItemRef as React.RefObject<HTMLElement>}
             asSubmenu
             autoFocusSearch={false}
+            onMouseEnter={cancelCloseSkillsPopover}
+            onMouseLeave={scheduleCloseSkillsPopover}
           />
         </div>
       )}
@@ -1733,6 +1852,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     >
       <ActiveSkillBadge />
       <ActiveKitBadge />
+      {isPlanMode && (
+        <span className="inline-flex h-6 items-center gap-1 rounded-md bg-primary/10 px-2 text-xs font-medium text-primary">
+          <ClipboardDocumentCheckIcon className="h-3.5 w-3.5" />
+          {i18nService.t('coworkPlanMode')}
+        </span>
+      )}
+    </div>
+  ) : isLarge && isPlanMode ? (
+    <div
+      className={`flex cursor-text flex-wrap items-center gap-x-2 gap-y-1 px-4 ${isCompact ? 'pt-2' : 'pt-4'}`}
+      onClick={() => {
+        if (!disabled && !voiceInputLocksEditing) textareaRef.current?.focus();
+      }}
+    >
+      <span className="inline-flex h-6 items-center gap-1 rounded-md bg-primary/10 px-2 text-xs font-medium text-primary">
+        <ClipboardDocumentCheckIcon className="h-3.5 w-3.5" />
+        {i18nService.t('coworkPlanMode')}
+      </span>
     </div>
   ) : null;
   const textareaPlaceholder = placeholder;

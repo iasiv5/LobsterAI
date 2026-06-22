@@ -38,6 +38,14 @@ export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 export type CoworkAgentEngine = 'openclaw';
 
+export const CoworkCollaborationMode = {
+  Default: 'default',
+  Plan: 'plan',
+} as const;
+
+export type CoworkCollaborationMode =
+  typeof CoworkCollaborationMode[keyof typeof CoworkCollaborationMode];
+
 export const OpenClawSessionKeepAlive = {
   OneDay: '1d',
   SevenDays: '7d',

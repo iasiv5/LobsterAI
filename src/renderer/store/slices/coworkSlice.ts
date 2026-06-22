@@ -2,6 +2,8 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import {
+  CoworkCollaborationMode,
+  type CoworkCollaborationMode as CoworkCollaborationModeType,
   type CoworkConfig,
   type CoworkContextUsage,
   type CoworkMessage,
@@ -36,6 +38,8 @@ interface CoworkState {
   draftKitIds: Record<string, string[]>;
   /** Keyed by draftKey, stores active skill IDs per draft so they survive view switches */
   draftSkillIds: Record<string, string[]>;
+  /** Keyed by draftKey, stores the selected collaboration mode for the next turn. */
+  draftCollaborationModes: Record<string, CoworkCollaborationModeType>;
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
@@ -63,6 +67,7 @@ const initialState: CoworkState = {
   draftSelectedTextSnippets: {},
   draftKitIds: {},
   draftSkillIds: {},
+  draftCollaborationModes: {},
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
@@ -656,6 +661,15 @@ const coworkSlice = createSlice({
       }
     },
 
+    setDraftCollaborationMode(state, action: PayloadAction<{ draftKey: string; mode: CoworkCollaborationModeType }>) {
+      const { draftKey, mode } = action.payload;
+      if (mode === CoworkCollaborationMode.Default) {
+        delete state.draftCollaborationModes[draftKey];
+      } else {
+        state.draftCollaborationModes[draftKey] = mode;
+      }
+    },
+
     setMediaModels(state, action: PayloadAction<{ image: MediaModel[]; video: MediaModel[] }>) {
       state.mediaModels = action.payload;
     },
@@ -711,6 +725,7 @@ export const {
   clearCurrentSession,
   setDraftKitIds,
   setDraftSkillIds,
+  setDraftCollaborationMode,
   setMediaModels,
   setMediaSelection,
 } = coworkSlice.actions;

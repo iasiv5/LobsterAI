@@ -1308,6 +1308,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     try {
       setHtmlSharePhase(HtmlSharePhase.Packing);
       setHtmlSharePhase(HtmlSharePhase.Uploading);
+      window.electron?.log?.fromRenderer?.(
+        'debug',
+        'ArtifactPanel',
+        `Creating ${request.sourceType} share for artifact ${request.artifactId}.`,
+      );
       const result =
         request.source === HtmlSharePendingSource.HtmlFile
           ? await window.electron?.htmlShare?.createFromHtmlFile({
@@ -1330,7 +1335,17 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             });
       await handleHtmlShareResult(result);
       rememberHtmlShare(request.lookupKey, result);
+      window.electron?.log?.fromRenderer?.(
+        'debug',
+        'ArtifactPanel',
+        `Created ${request.sourceType} share for artifact ${request.artifactId}.`,
+      );
     } catch (error) {
+      window.electron?.log?.fromRenderer?.(
+        'warn',
+        'ArtifactPanel',
+        `Failed to create ${request.sourceType} share for artifact ${request.artifactId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
       setHtmlSharePhase(HtmlSharePhase.Failed);
       setHtmlShareDialog({
         kind: HtmlShareDialogKind.Result,
@@ -1396,6 +1411,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     try {
       setHtmlSharePhase(HtmlSharePhase.Packing);
       setHtmlSharePhase(HtmlSharePhase.Uploading);
+      window.electron?.log?.fromRenderer?.(
+        'debug',
+        'ArtifactPanel',
+        `Updating ${request.sourceType} share for artifact ${request.artifactId}.`,
+      );
       const result =
         request.source === HtmlSharePendingSource.HtmlFile
           ? await window.electron?.htmlShare?.updateFromHtmlFile({
@@ -1425,6 +1445,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       }
       const resultStatus = getConfigurableHtmlShareStatus(result.status) ?? HtmlShareStatus.Live;
       rememberHtmlShare(request.lookupKey, result);
+      window.electron?.log?.fromRenderer?.(
+        'debug',
+        'ArtifactPanel',
+        `Updated ${request.sourceType} share for artifact ${request.artifactId}.`,
+      );
       setHtmlSharePhase(HtmlSharePhase.Live);
       setHtmlShareDialog(previous => {
         if (
@@ -1458,6 +1483,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     } catch (error) {
       setHtmlSharePhase(HtmlSharePhase.Failed);
       const message = error instanceof Error ? error.message : t('htmlShareFailed');
+      window.electron?.log?.fromRenderer?.(
+        'warn',
+        'ArtifactPanel',
+        `Failed to update ${request.sourceType} share for artifact ${request.artifactId}: ${message}`,
+      );
       setHtmlShareDialog(previous => {
         if (
           !previous ||

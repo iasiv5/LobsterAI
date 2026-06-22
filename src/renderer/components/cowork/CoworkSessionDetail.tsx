@@ -46,7 +46,7 @@ import { setActiveKitIds } from '../../store/slices/kitSlice';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { Artifact } from '../../types/artifact';
 import { ArtifactTypeValue, PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
-import type { CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import type { CoworkCollaborationMode, CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import { CoworkSessionStatusValue } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
@@ -81,7 +81,14 @@ import UserMessageItem from './UserMessageItem';
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
   onManageKits?: () => void;
-  onContinue: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[], selectedTextSnippets?: CoworkSelectedTextSnippet[]) => boolean | void | Promise<boolean | void>;
+  onContinue: (
+    prompt: string,
+    skillPrompt?: string,
+    imageAttachments?: CoworkImageAttachment[],
+    mediaReferences?: MediaAttachmentRef[],
+    selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    collaborationMode?: CoworkCollaborationMode,
+  ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -2460,9 +2467,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const prefersReducedMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    console.debug(
-      `[CoworkSessionDetail] scroll to bottom requested for session ${currentSession?.id ?? 'unknown'}; distance was ${Math.max(0, Math.round(distanceToBottom))}px.`,
-    );
+    const scrollLogMessage = `Scroll to bottom requested for session ${currentSession?.id ?? 'unknown'}; distance was ${Math.max(0, Math.round(distanceToBottom))}px.`;
+    console.debug(`[CoworkSessionDetail] ${scrollLogMessage}`);
+    window.electron?.log?.fromRenderer?.('debug', 'CoworkSessionDetail', scrollLogMessage);
     clearScrollToBottomSettleTimers();
     scrollToBottomIntentRef.current = true;
     if (prefersReducedMotion) {
@@ -2489,7 +2496,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         }
         latestContainer.scrollTo({
           top: latestContainer.scrollHeight,
-          behavior: index === SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS.length - 1 ? 'auto' : 'smooth',
+          behavior: prefersReducedMotion || index === SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS.length - 1
+            ? 'auto'
+            : 'smooth',
         });
       }, delayMs);
       scrollToBottomSettleTimersRef.current.push(timer);

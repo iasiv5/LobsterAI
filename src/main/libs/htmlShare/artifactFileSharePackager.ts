@@ -688,12 +688,25 @@ async function collectMarkdownLocalAssets(markdown: string, filePath?: string): 
 }
 
 function rewriteMarkdownAssetUrls(markdown: string, assets: MarkdownAsset[]): string {
-  let rewritten = markdown;
-  for (const asset of assets) {
-    const escaped = asset.sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    rewritten = rewritten.replace(new RegExp(escaped, 'g'), asset.relativePath);
-  }
-  return rewritten;
+  const replacements = new Map(assets.map(asset => [asset.sourceUrl, asset.relativePath]));
+  const rewrittenInlineImages = markdown.replace(
+    /(!\[[^\]]*]\()([^)\n]+)(\))/g,
+    (match, prefix: string, destination: string, suffix: string) => {
+      for (const [sourceUrl, relativePath] of replacements) {
+        const sourceIndex = destination.indexOf(sourceUrl);
+        if (sourceIndex < 0) continue;
+        return `${prefix}${destination.slice(0, sourceIndex)}${relativePath}${destination.slice(sourceIndex + sourceUrl.length)}${suffix}`;
+      }
+      return match;
+    },
+  );
+  return rewrittenInlineImages.replace(
+    /^([ \t]{0,3}\[[^\]]+]:[ \t]*)(\S+)(.*)$/gm,
+    (match, prefix: string, destination: string, suffix: string) => {
+      const relativePath = replacements.get(destination);
+      return relativePath ? `${prefix}${relativePath}${suffix}` : match;
+    },
+  );
 }
 
 function markdownSourceSha256(entryBytes: Buffer, assets: MarkdownAsset[]): string {
@@ -728,33 +741,40 @@ function matchesDocumentMagic(extension: string, bytes: Buffer): boolean {
 
 async function writeSingleFileZip(file: LoadedArtifactFile): Promise<{ archivePath: string; sourceSha256: string }> {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-artifact-share-'));
-  const archivePath = path.join(tempDir, 'share.zip');
-  const sourcePath = path.join(tempDir, file.fileName);
-  await fs.promises.writeFile(sourcePath, file.bytes);
+  try {
+    const archivePath = path.join(tempDir, 'share.zip');
+    const sourcePath = path.join(tempDir, file.fileName);
+    await fs.promises.writeFile(sourcePath, file.bytes);
 
-  const zipFile = new yazl.ZipFile();
-  zipFile.on('error', (err) => {
-    (zipFile.outputStream as unknown as { destroy(err: Error): void }).destroy(err as Error);
-  });
-  zipFile.addFile(sourcePath, file.fileName);
-  const outputStream = fs.createWriteStream(archivePath);
-  const pipelinePromise = pipeline(zipFile.outputStream, outputStream);
-  zipFile.end();
-  await pipelinePromise;
+    const zipFile = new yazl.ZipFile();
+    zipFile.on('error', (err) => {
+      (zipFile.outputStream as unknown as { destroy(err: Error): void }).destroy(err as Error);
+    });
+    zipFile.addFile(sourcePath, file.fileName);
+    const outputStream = fs.createWriteStream(archivePath);
+    const pipelinePromise = pipeline(zipFile.outputStream, outputStream);
+    zipFile.end();
+    await pipelinePromise;
 
-  const stat = await fs.promises.stat(archivePath);
-  const maxArchiveBytes =
-    DOCUMENT_CONTENT_TYPES[extensionFromName(file.fileName)]
-      ? MAX_CLIENT_DOCUMENT_ARCHIVE_BYTES
-      : MAX_CLIENT_ARCHIVE_BYTES;
-  if (stat.size > maxArchiveBytes) {
-    throw new Error('Share archive exceeds the size limit.');
+    const stat = await fs.promises.stat(archivePath);
+    const maxArchiveBytes =
+      DOCUMENT_CONTENT_TYPES[extensionFromName(file.fileName)]
+        ? MAX_CLIENT_DOCUMENT_ARCHIVE_BYTES
+        : MAX_CLIENT_ARCHIVE_BYTES;
+    if (stat.size > maxArchiveBytes) {
+      throw new Error('Share archive exceeds the size limit.');
+    }
+    const archiveBytes = await fs.promises.readFile(archivePath);
+    return {
+      archivePath,
+      sourceSha256: crypto.createHash('sha256').update(archiveBytes).digest('hex'),
+    };
+  } catch (error) {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch((cleanupError) => {
+      console.warn('[HtmlShare] failed to clean a temporary artifact archive after packaging failed:', cleanupError);
+    });
+    throw error;
   }
-  const archiveBytes = await fs.promises.readFile(archivePath);
-  return {
-    archivePath,
-    sourceSha256: crypto.createHash('sha256').update(archiveBytes).digest('hex'),
-  };
 }
 
 async function writeMarkdownZip(file: LoadedArtifactFile): Promise<{
@@ -781,35 +801,42 @@ async function writeMarkdownZip(file: LoadedArtifactFile): Promise<{
   };
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lobster-artifact-share-'));
-  const archivePath = path.join(tempDir, 'share.zip');
-  const zipFile = new yazl.ZipFile();
-  zipFile.on('error', (err) => {
-    (zipFile.outputStream as unknown as { destroy(err: Error): void }).destroy(err as Error);
-  });
-  zipFile.addBuffer(entryBytes, file.fileName);
-  for (const asset of uniqueAssets) {
-    zipFile.addBuffer(asset.bytes, asset.relativePath);
-  }
-  zipFile.addBuffer(
-    Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'),
-    MARKDOWN_MANIFEST_FILE,
-  );
-  const outputStream = fs.createWriteStream(archivePath);
-  const pipelinePromise = pipeline(zipFile.outputStream, outputStream);
-  zipFile.end();
-  await pipelinePromise;
+  try {
+    const archivePath = path.join(tempDir, 'share.zip');
+    const zipFile = new yazl.ZipFile();
+    zipFile.on('error', (err) => {
+      (zipFile.outputStream as unknown as { destroy(err: Error): void }).destroy(err as Error);
+    });
+    zipFile.addBuffer(entryBytes, file.fileName);
+    for (const asset of uniqueAssets) {
+      zipFile.addBuffer(asset.bytes, asset.relativePath);
+    }
+    zipFile.addBuffer(
+      Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'),
+      MARKDOWN_MANIFEST_FILE,
+    );
+    const outputStream = fs.createWriteStream(archivePath);
+    const pipelinePromise = pipeline(zipFile.outputStream, outputStream);
+    zipFile.end();
+    await pipelinePromise;
 
-  const stat = await fs.promises.stat(archivePath);
-  if (stat.size > MAX_CLIENT_TEXT_ARCHIVE_BYTES) {
-    throw new Error('Share archive exceeds the size limit.');
+    const stat = await fs.promises.stat(archivePath);
+    if (stat.size > MAX_CLIENT_TEXT_ARCHIVE_BYTES) {
+      throw new Error('Share archive exceeds the size limit.');
+    }
+    return {
+      archivePath,
+      sourceSha256: markdownSourceSha256(entryBytes, uniqueAssets),
+      totalFiles: 1 + uniqueAssets.length + 1,
+      totalBytes: entryBytes.length + uniqueAssets.reduce((sum, asset) => sum + asset.bytes.length, 0),
+      warnings: omittedAssets.map(asset => `Markdown asset skipped: ${asset.originalUrl} (${asset.reason})`),
+    };
+  } catch (error) {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch((cleanupError) => {
+      console.warn('[HtmlShare] failed to clean a temporary Markdown archive after packaging failed:', cleanupError);
+    });
+    throw error;
   }
-  return {
-    archivePath,
-    sourceSha256: markdownSourceSha256(entryBytes, uniqueAssets),
-    totalFiles: 1 + uniqueAssets.length + 1,
-    totalBytes: entryBytes.length + uniqueAssets.reduce((sum, asset) => sum + asset.bytes.length, 0),
-    warnings: omittedAssets.map(asset => `Markdown asset skipped: ${asset.originalUrl} (${asset.reason})`),
-  };
 }
 
 export async function packageArtifactFile(

@@ -615,6 +615,30 @@ test('forkSession copies stable history and records fork metadata', () => {
   ]);
 });
 
+test('forkSession keeps the selected plan message when its streaming flag is stale', () => {
+  const sid = 'sess-fork-stale-plan';
+  insertSession(sid);
+  insertMessage('msg-user-plan', sid, 'user', 'Create a plan', null, 1, 1000);
+  insertMessage(
+    'msg-plan',
+    sid,
+    'assistant',
+    '<proposed_plan>\n## Summary\n- Build the page.\n</proposed_plan>',
+    '{"isStreaming":true,"isFinal":false}',
+    2,
+    2000,
+  );
+
+  const fork = store.forkSession({
+    sourceSessionId: sid,
+    forkedFromMessageId: 'msg-plan',
+  });
+
+  expect(fork.messages).toHaveLength(2);
+  expect(fork.messages[1].content).toContain('<proposed_plan>');
+  expect(fork.messages[1].metadata).toEqual({ isFinal: true });
+});
+
 test('forkSession remaps selected text source message ids', () => {
   const sid = 'sess-fork-selected-text';
   insertSession(sid);

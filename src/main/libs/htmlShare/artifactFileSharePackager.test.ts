@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { HtmlShareSourceType } from '../../../shared/htmlShare/constants';
 import { packageArtifactFile } from './artifactFileSharePackager';
@@ -69,6 +69,7 @@ describe('artifactFileSharePackager', () => {
         '# Demo',
         '',
         '![arch](images/arch.png)',
+        'Plain text path: images/arch.png',
         '![remote](https://example.com/remote.png)',
       ].join('\n'),
     );
@@ -88,7 +89,8 @@ describe('artifactFileSharePackager', () => {
     expect(entries).toContain('_lobster_share_manifest.json');
     expect(entries.some(entry => entry.startsWith('_lobster_assets/') && entry.endsWith('arch.png'))).toBe(true);
     expect(markdown).toContain('_lobster_assets/');
-    expect(markdown).not.toContain('images/arch.png');
+    expect(markdown).toContain('Plain text path: images/arch.png');
+    expect(markdown).not.toContain('![arch](images/arch.png)');
     expect(manifest.assets).toHaveLength(1);
     expect(manifest.omittedAssets).toEqual([
       {
@@ -138,5 +140,35 @@ describe('artifactFileSharePackager', () => {
     expect(manifest.assets[0].originalUrl).toBe('generated-image-20260617-163944-1.png');
     expect(manifestText).not.toContain(root);
     expect(packaged.warnings).toEqual([]);
+  });
+
+  test('removes the temporary Markdown archive when packaging fails', async () => {
+    const originalMkdtemp = fs.promises.mkdtemp.bind(fs.promises);
+    const originalStat = fs.promises.stat.bind(fs.promises);
+    let packagingTempDir = '';
+    const mkdtempSpy = vi.spyOn(fs.promises, 'mkdtemp').mockImplementation(async (prefix, options) => {
+      const created = await originalMkdtemp(prefix, options as BufferEncoding);
+      if (prefix.includes('lobster-artifact-share-')) packagingTempDir = created;
+      return created;
+    });
+    const statSpy = vi.spyOn(fs.promises, 'stat').mockImplementation(async (target, options) => {
+      if (String(target).endsWith(`${path.sep}share.zip`)) {
+        throw new Error('simulated archive stat failure');
+      }
+      return originalStat(target, options as never);
+    });
+
+    try {
+      await expect(packageArtifactFile({
+        sourceType: HtmlShareSourceType.MarkdownFile,
+        fileName: 'README.md',
+        content: '# Demo\n',
+      })).rejects.toThrow('simulated archive stat failure');
+      expect(packagingTempDir).not.toBe('');
+      expect(fs.existsSync(packagingTempDir)).toBe(false);
+    } finally {
+      statSpy.mockRestore();
+      mkdtempSpy.mockRestore();
+    }
   });
 });
