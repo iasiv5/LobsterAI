@@ -18,6 +18,8 @@ export const HtmlShareSourceType = {
   ImageFile: 'image_file',
   SvgFile: 'svg_file',
   DocumentFile: 'document_file',
+  MarkdownFile: 'markdown_file',
+  MermaidFile: 'mermaid_file',
 } as const;
 
 export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];

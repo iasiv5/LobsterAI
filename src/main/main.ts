@@ -463,9 +463,11 @@ function sanitizeArtifactFileShareSourceType(value: unknown): ArtifactFileShareS
   if (
     sourceType !== HtmlShareSourceType.ImageFile &&
     sourceType !== HtmlShareSourceType.SvgFile &&
-    sourceType !== HtmlShareSourceType.DocumentFile
+    sourceType !== HtmlShareSourceType.DocumentFile &&
+    sourceType !== HtmlShareSourceType.MarkdownFile &&
+    sourceType !== HtmlShareSourceType.MermaidFile
   ) {
-    throw new Error('sourceType must be image_file, svg_file, or document_file.');
+    throw new Error('sourceType must be image_file, svg_file, document_file, markdown_file, or mermaid_file.');
   }
   return sourceType;
 }

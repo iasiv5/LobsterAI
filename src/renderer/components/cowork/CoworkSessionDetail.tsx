@@ -100,6 +100,8 @@ const AUTO_SCROLL_THRESHOLD = 120;
 const NAV_SCROLL_LOCK_DURATION = 800;
 const NAV_BOTTOM_SNAP_THRESHOLD = 20;
 const WHEEL_DELTA_LINE_HEIGHT = 16;
+const SCROLL_TO_BOTTOM_SETTLE_THRESHOLD = 24;
+const SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS = [600, 1200, 1800] as const;
 const ARTIFACT_PANEL_TRANSITION_MS = 200;
 const ARTIFACT_PANEL_RESIZE_HANDLE_WIDTH = 4;
 const COWORK_DETAIL_MIN_WIDTH = 480;
@@ -888,7 +890,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   } | null>(null);
   const isLoadingMoreMessagesRef = useRef(false);
   const prevScrollHeightRef = useRef<number | null>(null);
+  const scrollToBottomIntentRef = useRef(false);
+  const scrollToBottomSettleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const suppressSelectedTextActionUntilRef = useRef(0);
+
+  const clearScrollToBottomSettleTimers = useCallback(() => {
+    scrollToBottomSettleTimersRef.current.forEach(timer => clearTimeout(timer));
+    scrollToBottomSettleTimersRef.current = [];
+  }, []);
 
   const closeSelectedTextAction = useCallback((options: {
     clearSelection?: boolean;
@@ -2108,8 +2117,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   useEffect(() => {
     return () => {
       if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
+      clearScrollToBottomSettleTimers();
     };
-  }, []);
+  }, [clearScrollToBottomSettleTimers]);
 
   // Reset nav state when session changes
   useEffect(() => {
@@ -2117,10 +2127,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setCurrentRailIndex(-1);
     currentRailIndexRef.current = -1;
     isNavigatingRef.current = false;
+    scrollToBottomIntentRef.current = false;
+    clearScrollToBottomSettleTimers();
     turnElsCacheRef.current = [];
     if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
     setHoveredRailIndex(null);
-  }, [currentSession?.id]);
+  }, [clearScrollToBottomSettleTimers, currentSession?.id]);
 
   useEffect(() => {
     const handleOpenShareOptions = (event: Event) => {
@@ -2370,6 +2382,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const isNearBottom = distanceToBottom <= AUTO_SCROLL_THRESHOLD;
     setShouldAutoScroll((prev) => (prev === isNearBottom ? prev : isNearBottom));
+    if (scrollToBottomIntentRef.current && distanceToBottom <= SCROLL_TO_BOTTOM_SETTLE_THRESHOLD) {
+      scrollToBottomIntentRef.current = false;
+      clearScrollToBottomSettleTimers();
+    }
 
     // Check if content overflows the container (use functional updater to avoid redundant re-renders)
     const scrollable = container.scrollHeight > container.clientHeight;
@@ -2443,7 +2459,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       currentRailIndexRef.current = railIdx;
       setCurrentRailIndex(railIdx);
     }
-  }, [currentSession?.id, currentSession?.messagesOffset]);
+  }, [clearScrollToBottomSettleTimers, currentSession?.id, currentSession?.messagesOffset]);
 
   const handleScrollToBottom = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -2451,9 +2467,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     const prefersReducedMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    console.debug(
-      `[CoworkSessionDetail] scroll to bottom requested for session ${currentSession?.id ?? 'unknown'}; distance was ${Math.max(0, Math.round(distanceToBottom))}px.`,
-    );
+    const scrollLogMessage = `Scroll to bottom requested for session ${currentSession?.id ?? 'unknown'}; distance was ${Math.max(0, Math.round(distanceToBottom))}px.`;
+    console.debug(`[CoworkSessionDetail] ${scrollLogMessage}`);
+    window.electron?.log?.fromRenderer?.('debug', 'CoworkSessionDetail', scrollLogMessage);
+    clearScrollToBottomSettleTimers();
+    scrollToBottomIntentRef.current = true;
     if (prefersReducedMotion) {
       setShouldAutoScroll(true);
     }
@@ -2464,7 +2482,28 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const lastRail = railItemCountRef.current > 0 ? railItemCountRef.current - 1 : -1;
     currentRailIndexRef.current = lastRail;
     setCurrentRailIndex(lastRail);
-  }, [currentSession?.id]);
+    SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS.forEach((delayMs, index) => {
+      const timer = setTimeout(() => {
+        if (!scrollToBottomIntentRef.current) return;
+        const latestContainer = scrollContainerRef.current;
+        if (!latestContainer) return;
+        const latestDistance = latestContainer.scrollHeight - latestContainer.scrollTop - latestContainer.clientHeight;
+        if (latestDistance <= SCROLL_TO_BOTTOM_SETTLE_THRESHOLD) {
+          scrollToBottomIntentRef.current = false;
+          clearScrollToBottomSettleTimers();
+          setShouldAutoScroll(true);
+          return;
+        }
+        latestContainer.scrollTo({
+          top: latestContainer.scrollHeight,
+          behavior: prefersReducedMotion || index === SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS.length - 1
+            ? 'auto'
+            : 'smooth',
+        });
+      }, delayMs);
+      scrollToBottomSettleTimersRef.current.push(timer);
+    });
+  }, [clearScrollToBottomSettleTimers, currentSession?.id]);
 
   const handleScrollToBottomWheel = useCallback((event: React.WheelEvent<HTMLButtonElement>) => {
     const container = scrollContainerRef.current;
@@ -2513,6 +2552,16 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     prevScrollHeightRef.current = null;
     isLoadingMoreMessagesRef.current = false;
     setIsLoadingMoreMessages(false);
+    if (scrollToBottomIntentRef.current) {
+      requestAnimationFrame(() => {
+        const latestContainer = scrollContainerRef.current;
+        if (!latestContainer || !scrollToBottomIntentRef.current) return;
+        latestContainer.scrollTo({
+          top: latestContainer.scrollHeight,
+          behavior: 'auto',
+        });
+      });
+    }
   }, [currentSession?.messages.length]);
 
   const navigateToRailItem = useCallback((railIndex: number) => {
