@@ -164,6 +164,15 @@ export function buildOpenClawGatewayExecArgv(existingNodeOptions: string | undef
   return [OPENCLAW_GATEWAY_MAX_OLD_SPACE_OPTION];
 }
 
+export function buildOpenClawCompileCacheEnv(compileCacheDir: string): NodeJS.ProcessEnv {
+  return {
+    NODE_COMPILE_CACHE: compileCacheDir,
+    // The cache is already configured by LobsterAI. Prevent the packaged
+    // launcher from respawning through Electron Helper as if it were Node.
+    OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED: '1',
+  };
+}
+
 export class OpenClawEngineManager extends EventEmitter {
   private readonly baseDir: string;
   private readonly logsDir: string;
@@ -513,7 +522,7 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_LOG_LEVEL: 'debug',
       // Enable V8 compile cache for both CJS and ESM modules.
       // This env var works for import() (ESM), unlike enableCompileCache() which is CJS-only.
-      NODE_COMPILE_CACHE: compileCacheDir,
+      ...buildOpenClawCompileCacheEnv(compileCacheDir),
       LOBSTERAI_ELECTRON_PATH: electronNodeRuntimePath.replace(/\\/g, '/'),
       LOBSTERAI_OPENCLAW_ENTRY: openclawEntry.replace(/\\/g, '/'),
       // Inject secret values for ${VAR} placeholders in openclaw.json.

@@ -11,7 +11,19 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { buildOpenClawGatewayExecArgv } from './openclawEngineManager';
+import {
+  buildOpenClawCompileCacheEnv,
+  buildOpenClawGatewayExecArgv,
+} from './openclawEngineManager';
+
+describe('buildOpenClawCompileCacheEnv', () => {
+  test('prevents the packaged launcher from respawning Electron Helper', () => {
+    expect(buildOpenClawCompileCacheEnv('/tmp/openclaw-cache')).toEqual({
+      NODE_COMPILE_CACHE: '/tmp/openclaw-cache',
+      OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED: '1',
+    });
+  });
+});
 
 describe('buildOpenClawGatewayExecArgv', () => {
   test('adds a gateway heap limit when NODE_OPTIONS is empty', () => {
