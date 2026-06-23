@@ -31,6 +31,12 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import {
+  ShareDeploymentIpc,
+  type ShareDeploymentAnalyzeProjectInput,
+  type ShareDeploymentCreateNodeInput,
+  type ShareDeploymentDetectCandidatesInput,
+} from '../shared/shareDeployment/constants';
 import { McpIpcChannel } from '../shared/mcp/constants';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
@@ -641,6 +647,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(HtmlShareIpc.UpdateAccessMode, options),
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
+  },
+  shareDeployment: {
+    detectProjectCandidates: (options: ShareDeploymentDetectCandidatesInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.DetectProjectCandidates, options),
+    analyzeProjectDirectory: (options: ShareDeploymentAnalyzeProjectInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.AnalyzeProjectDirectory, options),
+    createNodeDeployment: (options: ShareDeploymentCreateNodeInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.CreateNodeDeployment, options),
+    get: (deploymentId: string) => ipcRenderer.invoke(ShareDeploymentIpc.Get, deploymentId),
+    getByLocalService: (options: { sessionId: string; localServiceUrl: string }) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.GetByLocalService, options),
   },
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) =>

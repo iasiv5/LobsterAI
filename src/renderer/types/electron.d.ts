@@ -38,6 +38,14 @@ import type {
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
 } from '../../shared/openclawEngine/constants';
+import type {
+  ShareDeploymentAnalyzeProjectInput,
+  ShareDeploymentCreateNodeInput,
+  ShareDeploymentDetectCandidatesInput,
+  ShareDeploymentDetectCandidatesResult,
+  ShareDeploymentProjectAnalysis,
+  ShareDeploymentResult,
+} from '../../shared/shareDeployment/constants';
 import type { ShellOpenFailureReason } from '../../shared/shell/constants';
 interface ApiResponse {
   ok: boolean;
@@ -950,6 +958,21 @@ interface IElectronAPI {
     }) => Promise<HtmlShareResult>;
     disable: (shareId: string) => Promise<HtmlShareResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
+  };
+  shareDeployment: {
+    detectProjectCandidates: (
+      options: ShareDeploymentDetectCandidatesInput,
+    ) => Promise<ShareDeploymentDetectCandidatesResult>;
+    analyzeProjectDirectory: (
+      options: ShareDeploymentAnalyzeProjectInput,
+    ) => Promise<ShareDeploymentProjectAnalysis>;
+    createNodeDeployment: (
+      options: ShareDeploymentCreateNodeInput,
+    ) => Promise<ShareDeploymentResult>;
+    get: (deploymentId: string) => Promise<ShareDeploymentResult>;
+    getByLocalService: (
+      options: { sessionId: string; localServiceUrl: string },
+    ) => Promise<ShareDeploymentResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;

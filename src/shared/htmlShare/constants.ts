@@ -20,6 +20,7 @@ export const HtmlShareSourceType = {
   DocumentFile: 'document_file',
   MarkdownFile: 'markdown_file',
   MermaidFile: 'mermaid_file',
+  NodeServiceDeployment: 'node_service_deployment',
 } as const;
 
 export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];

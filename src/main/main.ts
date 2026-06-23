@@ -87,6 +87,11 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import {
+  ShareDeploymentIpc,
+  type ShareDeploymentCreateNodeInput,
+  ShareDeploymentPackageManager,
+} from '../shared/shareDeployment/constants';
 import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import { normalizeNotificationSettings, type NotificationSettings } from '../shared/notifications/constants';
 import {
@@ -231,6 +236,17 @@ import {
   OpenClawChannelSessionSync,
   parseManagedSessionKey,
 } from './libs/openclawChannelSessionSync';
+import {
+  analyzeNodeServiceProjectDirectory,
+  detectNodeServiceProjectCandidates,
+} from './libs/shareDeployment/nodeServiceProjectAnalyzer';
+import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
+import {
+  buildNodeDeploymentClientSourceKey,
+  getNodeDeployment,
+  getNodeDeploymentByLocalService,
+  uploadNodeDeployment,
+} from './libs/shareDeployment/shareDeploymentClient';
 import {
   classifyAppConfigChange,
   classifyCoworkConfigChange,
@@ -425,6 +441,21 @@ interface HtmlShareUpdateStatusInput {
 interface HtmlShareUpdateAccessModeInput {
   shareId: string;
   accessMode: HtmlShareAccessModeValue;
+}
+
+interface ShareDeploymentDetectProjectCandidatesInput {
+  localServiceUrl: string;
+  workingDirectory?: string;
+}
+
+interface ShareDeploymentAnalyzeProjectDirectoryInput {
+  projectDirectory: string;
+  localServiceUrl?: string;
+}
+
+interface ShareDeploymentGetByLocalServiceInput {
+  sessionId: string;
+  localServiceUrl: string;
 }
 
 function sanitizeHtmlShareString(
@@ -626,6 +657,72 @@ function sanitizeUpdateHtmlShareAccessModeInput(input: unknown): HtmlShareUpdate
   return {
     shareId: sanitizeHtmlShareString(source.shareId, 'shareId', 64),
     accessMode,
+  };
+}
+
+function sanitizeShareDeploymentDetectProjectCandidatesInput(
+  input: unknown,
+): ShareDeploymentDetectProjectCandidatesInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment project detection request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    workingDirectory: sanitizeOptionalHtmlShareString(source.workingDirectory, 'workingDirectory', 4096),
+  };
+}
+
+function sanitizeShareDeploymentAnalyzeProjectDirectoryInput(
+  input: unknown,
+): ShareDeploymentAnalyzeProjectDirectoryInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment project analysis request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    localServiceUrl: sanitizeOptionalHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+  };
+}
+
+function sanitizeShareDeploymentPort(value: unknown): number {
+  const port = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error('port must be a valid TCP port.');
+  }
+  return port;
+}
+
+function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeploymentCreateNodeInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid node deployment request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
+    artifactId: sanitizeHtmlShareString(source.artifactId, 'artifactId', 128),
+    title: sanitizeHtmlShareTitle(source.title),
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+    accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
+    nodeVersion: sanitizeHtmlShareString(source.nodeVersion, 'nodeVersion', 32),
+    installCommand: sanitizeHtmlShareString(source.installCommand, 'installCommand', 512),
+    startCommand: sanitizeHtmlShareString(source.startCommand, 'startCommand', 512),
+    port: sanitizeShareDeploymentPort(source.port),
+  };
+}
+
+function sanitizeShareDeploymentGetByLocalServiceInput(
+  input: unknown,
+): ShareDeploymentGetByLocalServiceInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid deployment lookup request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
+    localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
   };
 }
 
@@ -5156,6 +5253,137 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to disable share',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.DetectProjectCandidates, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentDetectProjectCandidatesInput(input);
+      const candidates = await detectNodeServiceProjectCandidates(options);
+      return {
+        success: true,
+        candidates,
+      };
+    } catch (error) {
+      console.error('[ShareDeployment] failed to detect project candidates:', error);
+      return {
+        success: false,
+        candidates: [],
+        error: error instanceof Error ? error.message : 'Failed to detect project candidates',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.AnalyzeProjectDirectory, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentAnalyzeProjectDirectoryInput(input);
+      return await analyzeNodeServiceProjectDirectory(options);
+    } catch (error) {
+      console.error('[ShareDeployment] failed to analyze project directory:', error);
+      return {
+        success: false,
+        projectDirectory: '',
+        packageManager: ShareDeploymentPackageManager.Unknown,
+        nodeVersion: '20',
+        installCommand: 'npm ci',
+        startCommand: '',
+        totalFiles: 0,
+        totalBytes: 0,
+        excludedCount: 0,
+        warnings: [],
+        blockers: [error instanceof Error ? error.message : 'Failed to analyze project directory'],
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.CreateNodeDeployment, async (_event, input: unknown) => {
+    let archivePath: string | undefined;
+    try {
+      const options = sanitizeShareDeploymentCreateNodeInput(input);
+      console.debug(
+        `[ShareDeployment] received node deployment request for session ${options.sessionId} and artifact ${options.artifactId}`,
+      );
+      const packaged = await packageNodeServiceDeployment({
+        projectDirectory: options.projectDirectory,
+        localServiceUrl: options.localServiceUrl,
+      });
+      archivePath = packaged.archivePath;
+      const clientSourceKey = buildNodeDeploymentClientSourceKey({
+        sessionId: options.sessionId,
+        localServiceUrl: options.localServiceUrl,
+      });
+      const result = await uploadNodeDeployment(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        {
+          ...options,
+          archivePath: packaged.archivePath,
+          sourceSha256: packaged.sourceSha256,
+          analysis: packaged.analysis,
+          archiveBytes: packaged.archiveBytes,
+          clientSourceKey,
+        },
+      );
+      console.debug(
+        `[ShareDeployment] node deployment request finished with success ${result.success} and code ${result.code ?? 'none'}`,
+      );
+      return result;
+    } catch (error) {
+      console.error('[ShareDeployment] failed to create node deployment:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create node deployment',
+      };
+    } finally {
+      if (archivePath) {
+        const archiveDir = path.dirname(archivePath);
+        fs.promises
+          .rm(archiveDir, { recursive: true, force: true })
+          .then(() => {
+            console.debug(`[ShareDeployment] cleaned temporary archive directory ${archiveDir}`);
+          })
+          .catch((cleanupError): undefined => {
+            console.warn('[ShareDeployment] temporary archive cleanup failed:', cleanupError);
+            return undefined;
+          });
+      }
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.Get, async (_event, deploymentId: unknown) => {
+    try {
+      const id = sanitizeHtmlShareString(deploymentId, 'deploymentId', 128);
+      return await getNodeDeployment(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        id,
+      );
+    } catch (error) {
+      console.error('[ShareDeployment] failed to load deployment:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load deployment',
+      };
+    }
+  });
+
+  ipcMain.handle(ShareDeploymentIpc.GetByLocalService, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShareDeploymentGetByLocalServiceInput(input);
+      return await getNodeDeploymentByLocalService(
+        getServerApiBaseUrl(),
+        getHtmlSharePublicBaseUrl(),
+        fetchWithAuth,
+        options,
+      );
+    } catch (error) {
+      console.error('[ShareDeployment] failed to load deployment by local service:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load deployment',
       };
     }
   });

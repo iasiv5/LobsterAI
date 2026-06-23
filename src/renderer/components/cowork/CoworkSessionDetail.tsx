@@ -3669,6 +3669,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <ArtifactPanel
               sessionId={currentSession.id}
               artifacts={sessionArtifacts}
+              workingDirectory={currentSession.cwd}
               activeSpecialTab={activeSpecialPreviewTab}
               minPanelWidth={artifactPanelRenderMinWidth}
               maxPanelWidth={artifactPanelRenderMaxWidth}
