@@ -2,7 +2,23 @@ const OPEN_TAG_PATTERN = /<proposed_plan\b[^>]*>/i;
 const CLOSE_TAG_PATTERN = /<\/proposed_plan\s*>/i;
 const OPEN_TAG_PREFIX = '<proposed_plan';
 const FENCE_PATTERN = /^\s*(```|~~~)/;
-const PLAN_SECTION_LABEL_PATTERN = /^(?:(#{1,6})\s*)?(?:\*\*)?(Summary|Implementation Approach|Key Changes|Validation|Assumptions or Questions)(?:\*\*)?(?:\s*[:：](?:\*\*)?\s+|\s*(?=为))(.+)$/i;
+const PLAN_SECTION_LABELS = 'Summary|Implementation Approach|Key Changes|Validation|Assumptions or Questions';
+const PLAN_SECTION_LABEL_PATTERN = new RegExp(
+  [
+    `^(#{1,6})\\s*(${PLAN_SECTION_LABELS})\\s*$`,
+    `^\\*\\*(${PLAN_SECTION_LABELS})\\*\\*\\s*$`,
+    `^(#{1,6})\\s*(${PLAN_SECTION_LABELS})(?:\\*\\*)?(?:\\s*[:：])?\\s+(.+)$`,
+    `^\\*\\*(${PLAN_SECTION_LABELS})\\*\\*(?:\\s*[:：])?\\s+(.+)$`,
+    `^(?:\\*\\*)?(${PLAN_SECTION_LABELS})(?:\\*\\*)?\\s*[:：](?:\\*\\*)?\\s+(.+)$`,
+    `^(?:\\*\\*)?(${PLAN_SECTION_LABELS})(?:\\*\\*)?\\s*(?=为)(.+)$`,
+  ].join('|'),
+  'i',
+);
+const INLINE_HEADING_SECTION_PATTERN = new RegExp(`\\s+(#{1,6}\\s*(?:${PLAN_SECTION_LABELS})(?=\\s*[:：]?\\s+))`, 'gi');
+const INLINE_BOLD_SECTION_PATTERN = new RegExp(`\\s+(\\*\\*(?:${PLAN_SECTION_LABELS})\\*\\*(?=\\s*[:：]?\\s+))`, 'gi');
+const INLINE_COLON_SECTION_PATTERN = new RegExp(`\\s+((?:${PLAN_SECTION_LABELS})\\s*[:：])`, 'gi');
+const INLINE_CHINESE_CONNECTOR_SECTION_PATTERN = new RegExp(`\\s+((?:${PLAN_SECTION_LABELS})(?=为))`, 'gi');
+const TRAILING_HEADING_MARKER_PATTERN = /(?:^|\n)\s*#{1,6}\s*$/;
 
 export interface ProposedPlanParseResult {
   visibleText: string;
@@ -20,6 +36,46 @@ const findTrailingOpenTagPrefixIndex = (content: string): number => {
   return -1;
 };
 
+const splitInlinePlanSectionLabels = (line: string): string[] => line
+  .replace(INLINE_HEADING_SECTION_PATTERN, '\n$1')
+  .replace(INLINE_BOLD_SECTION_PATTERN, '\n$1')
+  .replace(INLINE_COLON_SECTION_PATTERN, (match, section: string, offset: number, fullText: string) => {
+    if (TRAILING_HEADING_MARKER_PATTERN.test(fullText.slice(0, offset))) return match;
+    return `\n${section}`;
+  })
+  .replace(INLINE_CHINESE_CONNECTOR_SECTION_PATTERN, (match, section: string, offset: number, fullText: string) => {
+    if (TRAILING_HEADING_MARKER_PATTERN.test(fullText.slice(0, offset))) return match;
+    return `\n${section}`;
+  })
+  .split('\n');
+
+const readPlanSectionMatch = (line: string): { headingMarker?: string; label: string; body?: string } | null => {
+  const match = PLAN_SECTION_LABEL_PATTERN.exec(line);
+  if (!match) return null;
+
+  const [
+    ,
+    headingMarker,
+    headingLabel,
+    boldOnlyLabel,
+    bodyHeadingMarker,
+    bodyHeadingLabel,
+    bodyHeadingBody,
+    boldLabel,
+    boldBody,
+    colonLabel,
+    colonBody,
+    connectorLabel,
+    connectorBody,
+  ] = match;
+
+  const label = headingLabel ?? boldOnlyLabel ?? bodyHeadingLabel ?? boldLabel ?? colonLabel ?? connectorLabel;
+  const body = bodyHeadingBody ?? boldBody ?? colonBody ?? connectorBody;
+  if (!label) return null;
+
+  return { headingMarker: headingMarker ?? bodyHeadingMarker, label, body };
+};
+
 const normalizeProposedPlanMarkdownWithFlag = (content: string): { text: string; didNormalize: boolean } => {
   let isInFence = false;
   let didNormalize = false;
@@ -34,16 +90,15 @@ const normalizeProposedPlanMarkdownWithFlag = (content: string): { text: string;
 
       if (isInFence) return [line];
 
-      const match = PLAN_SECTION_LABEL_PATTERN.exec(line);
-      if (!match) return [line];
+      return splitInlinePlanSectionLabels(line).flatMap((segment) => {
+        const match = readPlanSectionMatch(segment);
+        if (!match) return [segment];
 
-      const [, headingMarker, label, body] = match;
-      didNormalize = true;
-      return [
-        `${headingMarker ?? '##'} ${label}`,
-        '',
-        body,
-      ];
+        const { headingMarker, label, body } = match;
+        didNormalize = true;
+        if (!body) return [`${headingMarker ?? '##'} ${label}`];
+        return [`${headingMarker ?? '##'} ${label}`, '', body];
+      });
     })
     .join('\n');
 
