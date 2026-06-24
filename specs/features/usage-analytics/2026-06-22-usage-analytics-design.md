@@ -46,7 +46,7 @@ src/renderer/services/logReporter.ts
 src/renderer/services/logReporter.test.ts
 ```
 
-计划模式开关是当前唯一调用 `reportYdAnalyzer()` 的业务入口。只有用户主动开启计划模式时才发送事件，关闭计划模式时不发送。
+业务调用方统一通过 `reportYdAnalyzer()` 发送事件。当前已接入计划模式、应用启动、技能、MCP、专家套件、模型选择、设置页和 IM 机器人等入口；具体事件列表见下文 2.4。
 
 ### 2.2 日志服务配置
 
@@ -281,6 +281,71 @@ export const LogReporterActionPrefix = {
 - 隐私边界：
   - 不上传测试请求 URL、API Key、请求头、请求体、模型名称、模型 ID 或服务端错误详情。
   - 不上传完整错误 message，因为供应商错误内容可能包含地址、账号、token 片段或其他敏感信息。
+
+#### 2.4.14 `lobsterai_im_settings_saved`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> IM 机器人」保存平台配置成功后发送；微信扫码登录成功并持久化配置后、企业微信快速配置成功并持久化配置后，也按该事件发送。保存失败不发送。
+- 事件含义：统计 IM 机器人平台配置的使用情况和配置规模，不记录具体凭证或会话信息。
+- 发送口径：
+  - 单平台保存成功发送一条事件。
+  - 多实例平台保存成功发送平台摘要，不按每个实例逐条发送。
+  - 微信扫码登录和企业微信快速配置属于自动填充并保存配置，成功后发送一条事件。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_im`。
+  - `platform`：string，IM 平台，例如 `weixin`、`dingtalk`、`feishu`、`telegram`、`discord`、`email`。
+  - `platformKind`：string，平台形态。当前取值为 `single_instance` 或 `multi_instance`。
+  - `enabled`：boolean，保存后的平台是否启用。多实例平台表示是否存在已启用实例。
+  - `instanceCount`：number，多实例平台保存后的实例数量；单实例平台不发送。
+  - `enabledInstanceCount`：number，多实例平台保存后的启用实例数量；单实例平台不发送。
+  - `changedKeys`：string，本次变化类型的去重列表，使用逗号分隔。当前规划取值包括 `enabled`、`instance_count`、`dm_policy`、`agent_binding`、`reply_mode`、`connection_mode`、`credential_state`、`config`。
+  - `hasAgentBinding`：boolean，保存后该平台是否配置了非默认 Agent 绑定。
+- 隐私边界：
+  - 不上传 bot token、app secret、secret、webhook URL、邮箱地址、allowFrom、群 ID、会话 ID、用户 ID、账号 ID、bot username、实例名称或错误详情。
+  - `credential_state` 只表示凭证配置状态发生变化，不上传任何凭证内容。
+
+#### 2.4.15 `lobsterai_im_gateway_toggled`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> IM 机器人」启动或停止某个平台网关并得到结果后发送。
+- 事件含义：统计 IM 网关启停使用情况和失败率。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_im`。
+  - `platform`：string，被操作的 IM 平台。
+  - `operation`：string，当前取值为 `start` 或 `stop`。
+  - `result`：string，当前取值为 `success` 或 `failed`。
+  - `platformKind`：string，平台形态。当前取值为 `single_instance` 或 `multi_instance`。
+  - `enabledInstanceCount`：number，多实例平台当前启用实例数量；单实例平台不发送。
+  - `failureReason`：string，失败分类；无法识别时为 `unknown`。仅失败时发送。
+- 隐私边界：不上传网关错误详情、账号信息、token、secret、会话 ID 或本地日志内容。
+
+#### 2.4.16 `lobsterai_im_connection_tested`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> IM 机器人」点击连接测试，并得到测试结果或发生测试异常后发送。
+- 事件含义：统计 IM 机器人连接可用性和配置成功率。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_im`。
+  - `platform`：string，被测试的 IM 平台。
+  - `platformKind`：string，平台形态。当前取值为 `single_instance` 或 `multi_instance`。
+  - `result`：string，测试结果。当前取值为 `pass`、`warn`、`fail` 或 `failed`。
+  - `checkCount`：number，测试项总数；无法获取时不发送。
+  - `failedCheckCount`：number，失败测试项数量；无法获取时不发送。
+  - `warningCheckCount`：number，警告测试项数量；无法获取时不发送。
+- 隐私边界：不上传测试项 message、网关 URL、账号、会话、群信息、token、secret、请求内容或错误详情。
+
+#### 2.4.17 `lobsterai_im_instance_changed`
+
+- 状态：已实现。
+- 触发时机：用户在「设置 -> IM 机器人」对多实例平台新增、删除、启用或停用实例，并且操作成功后发送。
+- 事件含义：统计多实例 IM 机器人配置规模变化。
+- 业务参数：
+  - `source`：string，触发来源。当前固定为 `settings_im`。
+  - `platform`：string，被操作的 IM 平台。
+  - `operation`：string，当前取值为 `added`、`deleted`、`enabled` 或 `disabled`。
+  - `instanceCount`：number，操作后的实例数量。
+  - `enabledInstanceCount`：number，操作后的启用实例数量。
+- 隐私边界：不上传 instanceId、instanceName、账号、邮箱、token、secret、URL 或其它实例配置内容。
 
 ### 2.5 请求流程
 
