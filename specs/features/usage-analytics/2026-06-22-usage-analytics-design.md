@@ -618,6 +618,46 @@ export const LogReporterActionPrefix = {
   - 文本编辑只记录字段是否发生变更，不记录内容长度或文本内容。
   - 关闭和切换 tab 只记录行为摘要，避免对每次输入做高频上报。
 
+#### 2.4.32 `lobsterai_agent_create_action`
+
+- 状态：已实现。
+- 触发时机：用户打开创建 Agent 弹窗、打开/关闭模板选择、选择模板、切换弹窗 tab、创建 Agent、关闭弹窗或处理未保存变更确认时发送。
+- 事件含义：统计 Agent 创建入口、模板使用、创建配置选择和创建结果。
+- 业务参数：
+  - `source`：string，触发来源。当前取值包括 `home_agent_sidebar`、`home_agent_sidebar_empty`、`agents_view`、`agent_create_modal`。
+  - `actionType`：string，动作类型。当前取值包括 `open`、`close`、`open_template_picker`、`close_template_picker`、`template_selected`、`tab_change`、`create_submit`、`create_success`、`create_failed`、`discard_confirm_open`、`discard_confirm_submit`、`discard_confirm_cancel`。
+  - `activeTab`：string，触发时当前 tab。当前取值包括 `identity`、`prompt`、`user`、`skills`、`im`。
+  - `targetTab`：string，目标 tab；仅 `tab_change` 时发送。
+  - `creationMode`：string，创建方式。当前取值为 `blank` 或 `template`。
+  - `isDirty`：boolean，触发时弹窗内容是否存在未保存变更。
+  - `changedFieldCount`：number，触发时发生变更的字段数量；仅创建和未保存确认相关动作发送。
+  - `changedFields`：string，触发时发生变更的字段 key 列表，以英文逗号连接；当前可能包含 `name`、`description`、`systemPrompt`、`identity`、`userInfo`、`icon`、`model`、`workingDirectory`、`skillIds`、`imBindings`。
+  - `templateId`：string，被选择模板 ID；仅模板选择和模板创建相关动作发送。
+  - `templateName`：string，被选择模板展示名称；仅模板选择和模板创建相关动作发送。
+  - `templateSkillCount`：number，被选择模板包含的技能数量；仅模板选择和模板创建相关动作发送。
+  - `skillCount`：number，当前选择技能数量。
+  - `imBindingCount`：number，当前显式绑定 IM 渠道数量。
+  - `hasModel`：boolean，当前是否选择模型。
+  - `hasWorkingDirectory`：boolean，当前是否设置工作目录。
+  - `result`：string，创建结果。当前取值为 `success` 或 `failed`；仅创建完成后发送。
+  - `errorCode`：string，失败分类。当前取值包括 `user_info_write_failed`、`create_agent_failed`、`unknown`；仅创建失败时发送。
+  - `modelId`：string，当前选择模型 ID；仅创建相关动作发送。
+  - `modelName`：string，当前选择模型展示名称；仅创建相关动作发送。
+  - `modelSource`：string，模型来源分类。当前取值为 `package` 或 `custom`；仅创建相关动作发送。
+  - `providerKey`：string，当前模型所属 provider key；仅创建相关动作发送。
+  - `provider`：string，当前模型所属 provider 展示名称；仅创建相关动作发送。
+  - `selectorGroup`：string，当前模型选择器分组，取值为 `server` 或 `user`；仅创建相关动作发送。
+  - `skillIds`：string，当前选择技能 ID 列表，以英文逗号连接；仅创建相关动作发送。
+  - `skillNames`：string，当前选择技能展示名称列表，以英文逗号连接；仅创建相关动作发送。
+  - `builtInSkillCount`：number，当前选择技能中的内置技能数量；仅创建相关动作发送。
+  - `customSkillCount`：number，当前选择技能中的非内置技能数量；仅创建相关动作发送。
+  - `imPlatforms`：string，当前显式绑定 IM 平台列表，以英文逗号连接；仅创建相关动作发送。
+- 隐私边界：
+  - 不上传 Agent 名称、简介、头像值、system prompt、identity、userInfo、工作目录路径、IM 渠道 key、创建后的 agentId 或错误详情。
+  - 创建相关动作会上传模型 ID/名称、技能 ID/名称、模板 ID/名称和 IM 平台名，用于分析 Agent 创建行为。
+  - 文本编辑只记录字段是否发生变更，不记录内容长度或文本内容。
+  - 关闭和切换 tab 只记录行为摘要，避免对每次输入做高频上报。
+
 ### 2.5 请求流程
 
 ```text

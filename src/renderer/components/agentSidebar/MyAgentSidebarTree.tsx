@@ -83,6 +83,9 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     (state: RootState) => state.cowork.currentSession?.status,
   );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createAgentSource, setCreateAgentSource] = useState<'home_agent_sidebar' | 'home_agent_sidebar_empty'>(
+    'home_agent_sidebar',
+  );
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const { subagentsBySessionId, refetchSubagents, removeSubagent } = useSubagentSessions(
@@ -469,7 +472,10 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       )}
 
       <MyAgentSidebarHeader
-        onCreateAgent={() => setIsCreateOpen(true)}
+        onCreateAgent={() => {
+          setCreateAgentSource('home_agent_sidebar');
+          setIsCreateOpen(true);
+        }}
       />
 
       {agentNodes.length === 0 ? (
@@ -479,7 +485,10 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
           </p>
           <button
             type="button"
-            onClick={() => setIsCreateOpen(true)}
+            onClick={() => {
+              setCreateAgentSource('home_agent_sidebar_empty');
+              setIsCreateOpen(true);
+            }}
             className="mt-3 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover"
           >
             {i18nService.t('createNewAgent')}
@@ -491,7 +500,11 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
         </div>
       ) : null}
 
-      <AgentCreateModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      <AgentCreateModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        source={createAgentSource}
+      />
       <AgentSettingsPanel
         agentId={settingsAgentId}
         onClose={() => setSettingsAgentId(null)}
