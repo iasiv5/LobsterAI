@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, test } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../../../');
@@ -17,6 +18,14 @@ function readContractTools(extensionId: string): string[] {
     : [];
 }
 
+function readPackageOpenClawExtensions(extensionId: string): string[] {
+  const packagePath = path.join(repoRoot, 'openclaw-extensions', extensionId, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { openclaw?: { extensions?: unknown } };
+  return Array.isArray(pkg.openclaw?.extensions)
+    ? pkg.openclaw.extensions.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
 describe('OpenClaw extension manifests', () => {
   test('declares the AskUserQuestion agent tool contract', () => {
     expect(readContractTools('ask-user-question')).toEqual(['AskUserQuestion']);
@@ -27,5 +36,11 @@ describe('OpenClaw extension manifests', () => {
       'lobsterai_image_generate',
       'lobsterai_video_generate',
     ]);
+  });
+
+  test('declares TypeScript entries for local extensions that are precompiled for packaging', () => {
+    expect(readPackageOpenClawExtensions('mcp-bridge')).toEqual(['./index.ts']);
+    expect(readPackageOpenClawExtensions('ask-user-question')).toEqual(['./index.ts']);
+    expect(readPackageOpenClawExtensions('lobster-media-generation')).toEqual(['./index.ts']);
   });
 });

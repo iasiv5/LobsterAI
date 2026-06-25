@@ -139,14 +139,15 @@ async function main() {
         const pkgPath = path.join(pluginDir, 'package.json');
         try {
           const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-          if (Array.isArray(pkg.openclaw?.extensions)) {
-            pkg.openclaw.extensions = pkg.openclaw.extensions.map(e =>
-              e === entry.entryRel ? outRel : e,
-            );
-            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-          }
+          const openclaw = pkg.openclaw && typeof pkg.openclaw === 'object' ? pkg.openclaw : {};
+          const extensions = Array.isArray(openclaw.extensions) ? openclaw.extensions : [entry.entryRel];
+          pkg.openclaw = {
+            ...openclaw,
+            extensions: extensions.map(e => e === entry.entryRel ? outRel : e),
+          };
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
         } catch {
-          // Non-critical — jiti will still find index.js by convention
+          // Non-critical; plugins with explicit package metadata should still be fixed by source manifests.
         }
       }
 
