@@ -605,7 +605,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       });
     }
     // Fill the prompt into input
-    promptInputRef.current?.setValue(prompt);
+    promptInputRef.current?.setValue(prompt, 'template');
     promptInputRef.current?.focus();
   };
 

@@ -101,6 +101,7 @@ import {
   getModelAnalyticsParams,
   getPromptAnalyticsConversationState,
   getPromptAnalyticsSurface,
+  getPromptTextAnalyticsParams,
   getSkillAnalyticsParams,
   reportPromptControlAction,
   reportPromptSubmit,
@@ -291,7 +292,7 @@ const AgentContextAvatar: React.FC<{ agent: AgentSelectorOption; className?: str
 
 export interface CoworkPromptInputRef {
   /** 设置输入框值 */
-  setValue: (value: string) => void;
+  setValue: (value: string, inputSource?: 'template') => void;
   /** 设置图片附件（用于重新编辑消息时还原图片） */
   setImageAttachments: (images: CoworkImageAttachment[]) => void;
   /** 设置选中的 assistant 文本片段（用于重新编辑消息时还原上下文） */
@@ -403,11 +404,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const modelPatchRequestIdRef = useRef(0);
     const skillSubmenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const draftStartedAnalyticsRef = useRef(false);
+    const inputSourceOverrideRef = useRef<'template' | null>(null);
 
   // 暴露方法给父组件
   React.useImperativeHandle(ref, () => ({
-    setValue: (newValue: string) => {
+    setValue: (newValue: string, inputSource?: 'template') => {
       setValue(newValue);
+      if (inputSource) {
+        inputSourceOverrideRef.current = inputSource;
+      } else if (!newValue.trim()) {
+        inputSourceOverrideRef.current = null;
+      }
       // 触发自动调整高度
       requestAnimationFrame(() => {
         const textarea = textareaRef.current;
@@ -652,6 +659,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     promptAnalyticsSurface,
     workingDirectory,
   ]);
+
+  const getPromptInputSource = useCallback((
+    submitMethod: 'button' | 'keyboard' | 'voice',
+    mediaReferenceCount = 0,
+  ): string => {
+    if (submitMethod === 'voice') return 'voice';
+    if (inputSourceOverrideRef.current) return inputSourceOverrideRef.current;
+    if (selectedTextSnippets.length > 0) return 'selected_text';
+    if (mediaReferenceCount > 0) return 'media_reference';
+    return sessionId ? 'history_continue' : 'typed';
+  }, [selectedTextSnippets.length, sessionId]);
 
   const ensureFreshAsrQuota = useCallback(() => {
     dispatch(ensureAsrQuotaFreshForDay(getLocalAsrQuotaDayKey()));
@@ -945,10 +963,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     setValue(newValue);
+    if (!newValue.trim()) {
+      inputSourceOverrideRef.current = null;
+    }
     if (!draftStartedAnalyticsRef.current && newValue.trim().length > 0) {
       draftStartedAnalyticsRef.current = true;
       reportPromptControl('draft_started', {
         promptLength: newValue.trim().length,
+        ...getPromptTextAnalyticsParams(newValue),
       });
     }
 
@@ -981,6 +1003,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       reportPromptControl('submit_blocked', {
         blockedReason: 'working_directory_required',
         submitMethod: effectiveSubmitMethod,
+        ...getPromptTextAnalyticsParams(value),
         ...getPromptCapabilityAnalyticsParams(),
       });
       setShowFolderRequiredWarning(true);
@@ -1012,6 +1035,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       reportPromptControl('submit_blocked', {
         blockedReason: 'streaming',
         submitMethod: effectiveSubmitMethod,
+        ...getPromptTextAnalyticsParams(trimmedValue),
         ...getPromptCapabilityAnalyticsParams(),
       });
       showToast(i18nService.t('coworkSessionStillRunning'));
@@ -1025,6 +1049,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ? 'disabled'
             : 'model_patching',
         submitMethod: effectiveSubmitMethod,
+        ...getPromptTextAnalyticsParams(trimmedValue),
         ...getPromptCapabilityAnalyticsParams(),
       });
       return;
@@ -1047,6 +1072,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         blockedReason: 'model_access_required',
         accessPrompt,
         submitMethod: effectiveSubmitMethod,
+        ...getPromptTextAnalyticsParams(trimmedValue),
         ...getPromptCapabilityAnalyticsParams(),
       });
       setModelAccessPrompt(accessPrompt);
@@ -1080,17 +1106,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
 
     // Extract image attachments (with base64 data) for vision-capable models
-    console.log('[CoworkPromptInput] handleSubmit: attachment diagnosis', {
+    console.debug('[CoworkPromptInput] handleSubmit: attachment diagnosis', {
       totalAttachments: attachments.length,
       modelSupportsImage,
       effectiveModelId: effectiveSelectedModel?.id ?? null,
-      attachmentDetails: attachments.map(a => ({
-        path: a.path,
-        name: a.name,
-        isImage: a.isImage,
-        hasDataUrl: !!a.dataUrl,
-        dataUrlLength: a.dataUrl?.length ?? 0,
-      })),
+      ...getAttachmentAnalyticsParams(attachments),
+      imageAttachmentDataUrlCount: attachments.filter(item => item.isImage && item.dataUrl).length,
     });
     const imageAtts: CoworkImageAttachment[] = [];
     for (const attachment of attachments) {
@@ -1102,7 +1123,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           });
           if (!sizeValidation.ok) {
             console.warn('[CoworkPromptInput] image attachment exceeded single-file limit:', {
-              name: attachment.name,
               mimeType: extracted.mimeType,
               sizeBytes: sizeValidation.sizeBytes,
               maxBytes: sizeValidation.maxBytes,
@@ -1116,6 +1136,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             reportPromptControl('submit_blocked', {
               blockedReason: 'image_attachment_too_large',
               submitMethod: effectiveSubmitMethod,
+              ...getPromptTextAnalyticsParams(trimmedValue),
               attachmentCount: attachments.length,
               imageAttachmentCount: attachments.filter(item => item.isImage).length,
             });
@@ -1143,6 +1164,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               reportPromptControl('submit_blocked', {
                 blockedReason: 'image_preview_failed',
                 submitMethod: effectiveSubmitMethod,
+                ...getPromptTextAnalyticsParams(trimmedValue),
                 attachmentCount: attachments.length,
                 imageAttachmentCount: attachments.filter(item => item.isImage).length,
               });
@@ -1160,14 +1182,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           });
         } else {
           console.warn('[CoworkPromptInput] handleSubmit: extractBase64FromDataUrl returned null', {
-            name: attachment.name,
-            dataUrlPrefix: attachment.dataUrl.slice(0, 60),
+            isImage: attachment.isImage,
+            hasDataUrl: !!attachment.dataUrl,
+            dataUrlLength: attachment.dataUrl.length,
           });
         }
       } else if (attachment.isImage) {
         console.warn('[CoworkPromptInput] handleSubmit: image attachment missing dataUrl', {
-          path: attachment.path,
-          name: attachment.name,
           isImage: attachment.isImage,
           hasDataUrl: !!attachment.dataUrl,
         });
@@ -1196,18 +1217,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
 
     if (imageAtts.length > 0) {
-      console.log('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
+      console.debug('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
         count: imageAtts.length,
-        names: imageAtts.map(a => a.name),
         base64Lengths: imageAtts.map(a => a.base64Data.length),
       });
     } else if (attachments.some(a => a.isImage || isImagePath(a.path))) {
       console.warn('[CoworkPromptInput] handleSubmit: has image-like attachments but imageAtts is EMPTY — images will NOT be sent as base64', {
-        imageAttachments: attachments.filter(a => a.isImage || isImagePath(a.path)).map(a => ({
-          path: a.path,
-          isImage: a.isImage,
-          hasDataUrl: !!a.dataUrl,
-        })),
+        imageAttachmentCount: attachments.filter(a => a.isImage || isImagePath(a.path)).length,
+        imageAttachmentDataUrlCount: attachments.filter(a => (a.isImage || isImagePath(a.path)) && a.dataUrl).length,
       });
     }
 
@@ -1226,6 +1243,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       reportPromptControl('submit_blocked', {
         blockedReason: 'submit_rejected',
         submitMethod: effectiveSubmitMethod,
+        ...getPromptTextAnalyticsParams(trimmedValue),
         ...getPromptCapabilityAnalyticsParams(),
       });
       return;
@@ -1239,6 +1257,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       hasPrompt: trimmedValue.length > 0,
       params: {
         ...getPromptCapabilityAnalyticsParams(),
+        ...getPromptTextAnalyticsParams(trimmedValue),
+        inputSource: getPromptInputSource(effectiveSubmitMethod, mediaReferences.length),
         mediaReferenceCount: mediaReferences.length,
         selectedTextSnippetCount: selectedTextSnippets.length,
         effectiveCollaborationMode,
@@ -1265,7 +1285,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     dispatch(clearDraftSelectedTextSnippets(draftKey));
     setImageVisionHint(false);
     draftStartedAnalyticsRef.current = false;
-  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams]);
+    inputSourceOverrideRef.current = null;
+  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -1715,17 +1736,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             try {
               const readResult = await window.electron.dialog.readFileAsDataUrl(filePath);
               if (readResult.success && readResult.dataUrl) {
-                console.log('[CoworkPromptInput] handleAddFile: image read OK', { filePath, dataUrlLength: readResult.dataUrl.length });
+                console.debug('[CoworkPromptInput] handleAddFile: image read OK', {
+                  dataUrlLength: readResult.dataUrl.length,
+                });
                 addAttachment(filePath, { isImage: true, dataUrl: readResult.dataUrl });
                 continue;
               }
-              console.warn('[CoworkPromptInput] handleAddFile: readFileAsDataUrl returned falsy', { filePath });
+              console.warn('[CoworkPromptInput] handleAddFile: readFileAsDataUrl returned falsy');
             } catch (error) {
               console.error('Failed to read image as data URL:', error);
             }
           } else {
             console.warn('[CoworkPromptInput] handleAddFile: image skipped vision path because modelSupportsImage=false', {
-              filePath,
               effectiveModelId: effectiveSelectedModel?.id ?? null,
             });
             hasImageWithoutVision = true;

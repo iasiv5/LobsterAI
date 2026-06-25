@@ -43,6 +43,23 @@ const bucketCount = (count: number): string => {
   return '30_plus';
 };
 
+const bucketPromptLength = (length: number): string => {
+  if (length <= 0) return '0';
+  if (length <= 20) return '1_20';
+  if (length <= 100) return '21_100';
+  if (length <= 500) return '101_500';
+  if (length <= 2000) return '501_2000';
+  return '2000_plus';
+};
+
+const bucketPromptLineCount = (count: number): string => {
+  if (count <= 0) return '0';
+  if (count === 1) return '1';
+  if (count <= 5) return '2_5';
+  if (count <= 20) return '6_20';
+  return '20_plus';
+};
+
 const bucketAgeMs = (createdAt?: number): string | undefined => {
   if (!createdAt) return undefined;
   const ageMs = Math.max(0, Date.now() - createdAt);
@@ -77,6 +94,48 @@ const getFileTypeGroup = (nameOrPath: string, isImage?: boolean): string => {
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
   if (['js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'cpp', 'c', 'h', 'css', 'html', 'json', 'md', 'yaml', 'yml', 'xml', 'sql', 'sh'].includes(ext)) return 'code';
   return 'other';
+};
+
+const getPromptLanguageType = (prompt: string): string => {
+  const zhMatches = prompt.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+  const latinMatches = prompt.match(/[A-Za-z]/g)?.length ?? 0;
+  if (zhMatches === 0 && latinMatches === 0) return 'unknown';
+  if (zhMatches > 0 && latinMatches > 0) return 'mixed';
+  return zhMatches > 0 ? 'zh' : 'en';
+};
+
+const inferPromptIntentType = (prompt: string): string => {
+  const normalized = prompt.toLowerCase();
+  if (/(报错|错误|bug|debug|error|exception|traceback|修复|fix)/.test(normalized)) return 'debug';
+  if (/(代码|函数|接口|组件|实现|开发|重构|code|function|api|component|implement|refactor)/.test(normalized)) return 'coding';
+  if (/(幻灯片|ppt|presentation|slide|deck)/.test(normalized)) return 'presentation';
+  if (/(网页|网站|页面|html|css|website|web page|landing page)/.test(normalized)) return 'website';
+  if (/(数据|表格|统计|分析|图表|csv|excel|data|analysis|chart|spreadsheet)/.test(normalized)) return 'data';
+  if (/(搜索|查找|查询|资料|新闻|search|find|lookup|research)/.test(normalized)) return 'search';
+  if (/(图片|图像|海报|logo|image|picture|poster)/.test(normalized)) return 'image';
+  if (/(写|总结|润色|翻译|文案|邮件|write|summary|summarize|translate|email|copywriting)/.test(normalized)) return 'writing';
+  if (/(为什么|怎么|如何|分析|解释|why|how|explain|compare)/.test(normalized)) return 'analysis';
+  return prompt.trim().length > 0 ? 'other' : 'empty';
+};
+
+export const getPromptTextAnalyticsParams = (
+  prompt: string,
+): Record<string, PromptAnalyticsValue> => {
+  const trimmed = prompt.trim();
+  const promptLineCount = trimmed.length > 0 ? trimmed.split('\n').length : 0;
+  return {
+    promptLengthBucket: bucketPromptLength(trimmed.length),
+    promptLineCountBucket: bucketPromptLineCount(promptLineCount),
+    inputLanguageType: getPromptLanguageType(trimmed),
+    promptIntentType: inferPromptIntentType(trimmed),
+    hasQuestionMark: /[?？]/.test(trimmed),
+    hasCodeFence: /```/.test(trimmed),
+    hasInlineCode: /`[^`\n]+`/.test(trimmed),
+    hasUrl: /https?:\/\/|www\./i.test(trimmed),
+    hasPathLikeText: /(^|\s)(~\/|\.{1,2}\/|[A-Za-z]:\\|\/[\w.-]+\/|[\w.-]+\\[\w.-]+)/.test(trimmed),
+    hasCommandLikeText: /(^|\n)\s*(npm|pnpm|yarn|node|python|pip|git|curl|docker|kubectl|npx|brew)\s+/.test(trimmed),
+    hasAtMediaMention: /@(图片|视频|音频)\d+/.test(trimmed),
+  };
 };
 
 export interface PromptAnalyticsAttachment {

@@ -856,7 +856,19 @@ export const LogReporterActionPrefix = {
   - `submitMethod`：string，提交方式。当前取值包括 `button`、`keyboard`、`voice`。
   - `promptLength`：number，用户输入正文长度。不包含自动拼接的本地附件路径。
   - `promptLineCount`：number，用户输入正文行数。
+  - `promptLengthBucket`：string，用户输入正文长度分桶。当前取值包括 `0`、`1_20`、`21_100`、`101_500`、`501_2000`、`2000_plus`。
+  - `promptLineCountBucket`：string，用户输入正文行数分桶。当前取值包括 `0`、`1`、`2_5`、`6_20`、`20_plus`。
   - `hasPrompt`：boolean，是否存在文本输入。
+  - `inputLanguageType`：string，本地按字符粗略判断的输入语言类型。当前取值包括 `zh`、`en`、`mixed`、`unknown`。
+  - `promptIntentType`：string，本地关键词/正则粗略推断的输入意图类型。当前取值包括 `debug`、`coding`、`presentation`、`website`、`data`、`search`、`image`、`writing`、`analysis`、`other`、`empty`。
+  - `inputSource`：string，本次提交的输入来源。当前取值包括 `typed`、`template`、`voice`、`selected_text`、`media_reference`、`history_continue`。
+  - `hasQuestionMark`：boolean，输入正文中是否包含中英文问号。
+  - `hasCodeFence`：boolean，输入正文中是否包含 Markdown 代码块标记。
+  - `hasInlineCode`：boolean，输入正文中是否包含 Markdown 行内代码标记。
+  - `hasUrl`：boolean，输入正文中是否包含 URL 形态文本。
+  - `hasPathLikeText`：boolean，输入正文中是否包含疑似本地路径形态文本。
+  - `hasCommandLikeText`：boolean，输入正文中是否包含常见命令行开头形态文本。
+  - `hasAtMediaMention`：boolean，输入正文中是否包含媒体生成结果引用标记。
   - `attachmentCount`：number，提交时附件数量。
   - `imageAttachmentCount`：number，提交时图片附件数量。
   - `fileTypeGroups`：string，附件类型分组，以英文逗号连接。当前取值包括 `image`、`pdf`、`office`、`archive`、`code`、`other`。
@@ -882,7 +894,8 @@ export const LogReporterActionPrefix = {
   - `selectedTextSnippetCount`：number，提交时携带的选中文本片段数量。
   - `effectiveCollaborationMode`：string，实际提交给 Cowork 的协作模式。
 - 隐私边界：
-  - 不上传 prompt 正文、自动拼接的附件路径、文件名、图片/音频内容、选中文本片段内容或历史消息内容。
+  - 不上传 prompt 正文、prompt hash、自动拼接的附件路径、文件名、图片/音频内容、选中文本片段内容或历史消息内容。
+  - `promptIntentType`、`inputLanguageType` 和 `has*` 字段均在本地用规则计算，仅上传结构化分类结果，不上传用于判断的原始文本。
   - 会上传技能/专家套件/模型 ID 和名称、Agent ID、数量和分桶信息，用于分析用户在不同场景下的能力选择和提交转化。
 
 #### 2.4.35 `lobsterai_prompt_control_action`
@@ -902,9 +915,10 @@ export const LogReporterActionPrefix = {
   - `targetAgentId` / `targetIsMainAgent` / `targetAgentSource` / `targetAgentSkillCount` / `hasAgentModel` / `agentModelId`：切换 Agent 时发送。
   - `attachmentCount` / `imageAttachmentCount` / `fileTypeGroups` / `totalAttachmentSizeBucket` / `selectedFileCount` / `modelSupportsImage` / `hasImageWithoutVision`：附件相关动作发送。
   - `submitMethod` / `accessPrompt`：提交阻断时发送。
+  - `promptLength` / `promptLengthBucket` / `promptLineCountBucket` / `inputLanguageType` / `promptIntentType` / `hasQuestionMark` / `hasCodeFence` / `hasInlineCode` / `hasUrl` / `hasPathLikeText` / `hasCommandLikeText` / `hasAtMediaMention`：输入开始或提交阻断时发送，用于分析输入漏斗和阻断场景，不上传正文。
   - `asrQuotaStatus` / `isAsrSubscribed` / `recordingElapsedSeconds`：语音输入相关动作发送。
 - 隐私边界：
-  - 不上传文件路径、文件名、文件内容、工作目录真实路径、Agent 名称、Agent system prompt/identity/userInfo、语音识别文本或错误详情。
+  - 不上传 prompt 正文、prompt hash、文件路径、文件名、文件内容、工作目录真实路径、Agent 名称、Agent system prompt/identity/userInfo、语音识别文本或错误详情。
   - 会上传技能/专家套件 ID 和名称、模型/Agent 结构化上下文、附件类型分组和数量，用于分析输入框周边控件使用率和阻断原因。
 
 #### 2.4.36 `lobsterai_prompt_template_action`
