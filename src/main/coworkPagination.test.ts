@@ -73,14 +73,15 @@ function getPagedSessionMessages(db: Database, sessionId: string, limit: number,
 
 /** Mirror of getSessionMessageRailIndex(sessionId) */
 function getSessionMessageRailIndex(db: Database, sessionId: string) {
-  return getAll<{ id: string; type: string; content: string; message_offset: number }>(
+  const rows = getAll<{ id: string; type: string; content: string; metadata: string | null; message_offset: number }>(
     db,
-    `SELECT id, type, content, message_offset
+    `SELECT id, type, content, metadata, message_offset
      FROM (
        SELECT
          id,
          type,
          content,
+         metadata,
          sequence,
          created_at,
          ROW_NUMBER() OVER (
@@ -94,6 +95,15 @@ function getSessionMessageRailIndex(db: Database, sessionId: string) {
      ORDER BY message_offset ASC`,
     [sessionId],
   );
+  return rows.filter((row) => {
+    if (row.type !== 'assistant' || !row.metadata) return true;
+    try {
+      const metadata = JSON.parse(row.metadata) as { isThinking?: unknown };
+      return metadata.isThinking !== true;
+    } catch {
+      return true;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -359,4 +369,30 @@ test('getSessionMessageRailIndex: messageOffset follows full message order with 
   const rail = getSessionMessageRailIndex(db, sessionId);
   expect(rail.map(item => item.id)).toEqual(['mixed-user-1', 'mixed-assistant-1', 'mixed-user-2']);
   expect(rail.map(item => item.message_offset)).toEqual([0, 2, 4]);
+});
+
+test('getSessionMessageRailIndex: excludes assistant thinking messages from rail previews', () => {
+  const now = Date.now();
+  const sessionId = uuidv4();
+  db.run(
+    `INSERT INTO cowork_sessions (id, title, status, pinned, cwd, created_at, updated_at)
+     VALUES (?, 'Thinking Rail Session', 'idle', 0, '/tmp', ?, ?)`,
+    [sessionId, now, now],
+  );
+
+  [
+    ['thinking-user-1', 'user', 'Explain rail tooltips', null],
+    ['thinking-assistant-1', 'assistant', 'Internal chain of thought', JSON.stringify({ isThinking: true })],
+    ['thinking-assistant-2', 'assistant', 'Final answer content', null],
+  ].forEach(([id, type, content, metadata], index) => {
+    db.run(
+      `INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, sessionId, type, content, metadata, now + index, index + 1],
+    );
+  });
+
+  const rail = getSessionMessageRailIndex(db, sessionId);
+  expect(rail.map(item => item.id)).toEqual(['thinking-user-1', 'thinking-assistant-2']);
+  expect(rail.map(item => item.message_offset)).toEqual([0, 2]);
 });

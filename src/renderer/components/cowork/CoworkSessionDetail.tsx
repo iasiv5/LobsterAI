@@ -80,6 +80,7 @@ import {
   COWORK_DETAIL_CONTENT_CLASS,
   COWORK_DETAIL_GUTTER_CLASS,
   hasRenderableAssistantContent,
+  MEDIA_TOKEN_DISPLAY_RE,
 } from './messageDisplayUtils';
 import { parseProposedPlanBlock } from './proposedPlanParser';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
@@ -191,22 +192,34 @@ type ExpandedConversationPreview = {
 };
 
 const stripRailLabelMarkdown = (value: string): string => value
+  .replace(MEDIA_TOKEN_DISPLAY_RE, ' ')
   .replace(/^#+\s+/gm, '')
   .replace(/```[\s\S]*?```/g, ' ')
   .replace(/`[^`]*`/g, ' ')
+  .replace(/<\/?proposed_?plan\b[^>]*>/gi, ' ')
   .replace(/[*_~>]/g, '')
   .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
   .replace(/\s+/g, ' ')
   .trim();
 
 const getRailLabel = (content: string, fallback: string): string => {
-  const stripped = stripRailLabelMarkdown(content);
+  const proposedPlan = parseProposedPlanBlock(content);
+  const labelSource = [proposedPlan.visibleText, proposedPlan.planText]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join('\n');
+  const stripped = stripRailLabelMarkdown(labelSource || content);
   return stripped.slice(0, 50) || fallback;
 };
 
+const isAssistantRailContentMessage = (message: CoworkMessage): boolean => (
+  message.type === 'assistant'
+  && !message.metadata?.isThinking
+  && Boolean(message.content)
+);
+
 const getAssistantRailMessageId = (turn: ConversationTurn): string | null => {
   for (const item of turn.assistantItems) {
-    if (item.type === 'assistant' && item.message?.content) {
+    if (item.type === 'assistant' && isAssistantRailContentMessage(item.message)) {
       return item.message.id;
     }
   }
@@ -223,7 +236,7 @@ const buildRailItems = (
     const turn = turns[index];
     let assistantContent = '';
     for (const item of turn.assistantItems) {
-      if (item.type === 'assistant' && item.message?.content) {
+      if (item.type === 'assistant' && isAssistantRailContentMessage(item.message)) {
         assistantContent += item.message.content;
       }
     }
@@ -3264,7 +3277,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
       // Compute one rail index per conversation turn (must match grouped rail item logic).
       const hasAssistantContent = turn.assistantItems.some(
-        item => item.type === 'assistant' && Boolean(item.message?.content),
+        item => item.type === 'assistant' && isAssistantRailContentMessage(item.message),
       );
       const turnRailIdx = turn.userMessage || hasAssistantContent ? railCounter++ : -1;
       const assistantRailMessageId = getAssistantRailMessageId(turn);

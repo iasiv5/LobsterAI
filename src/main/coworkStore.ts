@@ -1604,19 +1604,21 @@ export class CoworkStore {
       type: string;
       preview_content: string;
       content_len: number;
+      metadata: string | null;
       created_at: number;
       sequence: number | null;
       message_offset: number;
       is_visible: number;
     }>(
       `
-      SELECT id, type, preview_content, content_len, created_at, sequence, message_offset
+      SELECT id, type, preview_content, content_len, metadata, created_at, sequence, message_offset
       FROM (
         SELECT
           id,
           type,
           substr(content, 1, 2000) as preview_content,
           length(content) as content_len,
+          metadata,
           created_at,
           sequence,
           ROW_NUMBER() OVER (
@@ -1635,7 +1637,17 @@ export class CoworkStore {
       [sessionId],
     );
 
-    return rows.map((row, index) => ({
+    const visibleRows = rows.filter((row) => {
+      if (row.type !== 'assistant' || !row.metadata) return true;
+      try {
+        const metadata = JSON.parse(row.metadata) as CoworkMessageMetadata;
+        return metadata.isThinking !== true;
+      } catch {
+        return true;
+      }
+    });
+
+    return visibleRows.map((row, index) => ({
       messageId: row.id,
       type: row.type as 'user' | 'assistant',
       sequence: row.sequence,
