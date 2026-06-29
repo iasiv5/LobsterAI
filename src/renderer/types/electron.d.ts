@@ -12,7 +12,6 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
-import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   DataMigrationBackupResult,
   DataMigrationLastRestoreResponse,
@@ -700,13 +699,6 @@ interface IElectronAPI {
       messages?: CoworkMessage[];
       offset?: number;
       total?: number;
-      error?: string;
-    }>;
-    getSessionMessageRailIndex: (
-      sessionId: string,
-    ) => Promise<{
-      success: boolean;
-      items?: CoworkMessageRailIndexItem[];
       error?: string;
     }>;
     exportResultImage: (options: {

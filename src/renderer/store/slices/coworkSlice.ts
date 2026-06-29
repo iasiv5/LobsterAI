@@ -1,10 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-import {
-  COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
-  type CoworkMessageRailIndexItem,
-  getCoworkRailPreview,
-} from '../../../shared/cowork/rail';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import {
   CoworkCollaborationMode,
@@ -68,8 +63,6 @@ interface CoworkState {
   compactingSessionIds: string[];
   contextMaintenanceSessionIds: string[];
   notifiedCompactionBySessionId: Record<string, number>;
-  messageRailIndexBySessionId: Record<string, CoworkMessageRailIndexItem[]>;
-  messageRailIndexLoadingBySessionId: Record<string, boolean>;
   remoteManaged: boolean;
   pendingPermissions: CoworkPermissionRequest[];
   config: CoworkConfig;
@@ -99,8 +92,6 @@ const initialState: CoworkState = {
   compactingSessionIds: [],
   contextMaintenanceSessionIds: [],
   notifiedCompactionBySessionId: {},
-  messageRailIndexBySessionId: {},
-  messageRailIndexLoadingBySessionId: {},
   remoteManaged: false,
   pendingPermissions: [],
   config: {
@@ -143,58 +134,6 @@ const markSessionUnread = (state: CoworkState, sessionId: string) => {
   if (state.currentSessionId === sessionId) return;
   if (state.unreadSessionIds.includes(sessionId)) return;
   state.unreadSessionIds.push(sessionId);
-};
-
-const buildRailIndexItemFromMessage = (
-  message: CoworkMessage,
-  fallbackIndex: number,
-): CoworkMessageRailIndexItem | null => {
-  if ((message.type !== 'user' && message.type !== 'assistant') || !message.content.trim()) {
-    return null;
-  }
-
-  return {
-    messageId: message.id,
-    type: message.type,
-    sequence: null,
-    messageOffset: fallbackIndex,
-    timestamp: message.timestamp,
-    preview: getCoworkRailPreview(
-      message.content,
-      message.type === 'user' ? `Turn ${fallbackIndex + 1}` : 'LobsterAI',
-      COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
-    ),
-    contentLen: message.content.length,
-  };
-};
-
-const upsertRailIndexItem = (
-  state: CoworkState,
-  sessionId: string,
-  message: CoworkMessage,
-): void => {
-  const existingItems = state.messageRailIndexBySessionId[sessionId];
-  if (!existingItems) return;
-
-  const existingIndex = existingItems.findIndex(item => item.messageId === message.id);
-  const item = buildRailIndexItemFromMessage(message, existingIndex >= 0 ? existingIndex : existingItems.length);
-  if (!item) {
-    if (existingIndex >= 0) {
-      existingItems.splice(existingIndex, 1);
-    }
-    return;
-  }
-
-  if (existingIndex >= 0) {
-    existingItems[existingIndex] = {
-      ...existingItems[existingIndex],
-      ...item,
-      sequence: existingItems[existingIndex].sequence,
-    };
-    return;
-  }
-
-  existingItems.push(item);
 };
 
 const MediaGenerationToolName = {
@@ -463,50 +402,12 @@ const coworkSlice = createSlice({
     deleteSession(state, action: PayloadAction<string>) {
       removeSessionFromState(state, action.payload);
       delete state.planConfirmations[action.payload];
-      delete state.messageRailIndexBySessionId[action.payload];
-      delete state.messageRailIndexLoadingBySessionId[action.payload];
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
       removeSessionsFromState(state, action.payload);
       for (const sessionId of action.payload) {
         delete state.planConfirmations[sessionId];
-        delete state.messageRailIndexBySessionId[sessionId];
-        delete state.messageRailIndexLoadingBySessionId[sessionId];
-      }
-    },
-
-    setMessageRailIndexLoading(state, action: PayloadAction<{ sessionId: string; loading: boolean }>) {
-      const { sessionId, loading } = action.payload;
-      if (loading) {
-        state.messageRailIndexLoadingBySessionId[sessionId] = true;
-      } else {
-        delete state.messageRailIndexLoadingBySessionId[sessionId];
-      }
-    },
-
-    setMessageRailIndex(state, action: PayloadAction<{ sessionId: string; items: CoworkMessageRailIndexItem[] }>) {
-      const { sessionId, items } = action.payload;
-      state.messageRailIndexBySessionId[sessionId] = items;
-      delete state.messageRailIndexLoadingBySessionId[sessionId];
-    },
-
-    setMessageWindow(
-      state,
-      action: PayloadAction<{
-        sessionId: string;
-        messages: CoworkMessage[];
-        messagesOffset: number;
-        totalMessages: number;
-      }>,
-    ) {
-      const { sessionId, messages, messagesOffset, totalMessages } = action.payload;
-      if (state.currentSession?.id !== sessionId) return;
-      state.currentSession.messages = messages;
-      state.currentSession.messagesOffset = messagesOffset;
-      state.currentSession.totalMessages = totalMessages;
-      for (const message of state.currentSession.messages) {
-        applyPendingMediaStatusUpdates(state, sessionId, message);
       }
     },
 
@@ -535,7 +436,6 @@ const coworkSlice = createSlice({
           state.currentSession.totalMessages += 1;
         }
       }
-      upsertRailIndexItem(state, sessionId, message);
 
       // Update session in list
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
@@ -555,9 +455,6 @@ const coworkSlice = createSlice({
       const toInsert = messages.filter(m => !existingIds.has(m.id));
       state.currentSession.messages = [...toInsert, ...state.currentSession.messages];
       state.currentSession.messagesOffset = newOffset;
-      for (const message of toInsert) {
-        applyPendingMediaStatusUpdates(state, sessionId, message);
-      }
     },
 
     updateMessageContent(state, action: PayloadAction<{ sessionId: string; messageId: string; content: string; metadata?: Record<string, unknown> }>) {
@@ -580,7 +477,6 @@ const coworkSlice = createSlice({
                 : {}),
             };
           }
-          upsertRailIndexItem(state, sessionId, state.currentSession.messages[messageIndex]);
           state.currentSession.updatedAt = updatedAt;
         }
       }
@@ -871,9 +767,6 @@ export const {
   updateSessionStatus,
   deleteSession,
   deleteSessions,
-  setMessageRailIndexLoading,
-  setMessageRailIndex,
-  setMessageWindow,
   addMessage,
   prependMessages,
   updateMessageContent,

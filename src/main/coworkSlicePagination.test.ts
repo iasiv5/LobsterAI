@@ -13,9 +13,6 @@ import coworkReducer, {
   prependMessages,
   setCurrentSession,
   setHasMoreSessions,
-  setMessageRailIndex,
-  setMessageRailIndexLoading,
-  setMessageWindow,
   setSessions,
 } from '../renderer/store/slices/coworkSlice';
 import type { CoworkMessage,CoworkSession, CoworkSessionSummary } from '../renderer/types/cowork';
@@ -231,69 +228,6 @@ test('prependMessages: updates messagesOffset to newOffset', () => {
   }));
 
   expect(state.currentSession?.messagesOffset).toBe(0);
-});
-
-// ---------------------------------------------------------------------------
-// full rail index and message windows
-// ---------------------------------------------------------------------------
-
-test('setMessageRailIndex: stores full lightweight rail index by session', () => {
-  const state = coworkReducer(emptyState, setMessageRailIndex({
-    sessionId: 'sess1',
-    items: [
-      {
-        messageId: 'm1',
-        type: 'user',
-        sequence: 1,
-        messageOffset: 0,
-        timestamp: 1000,
-        preview: 'hello',
-        contentLen: 5,
-      },
-    ],
-  }));
-
-  expect(state.messageRailIndexBySessionId.sess1).toHaveLength(1);
-  expect(state.messageRailIndexBySessionId.sess1[0].messageOffset).toBe(0);
-});
-
-test('setMessageRailIndexLoading: clears loading flag when loading finishes', () => {
-  let state = coworkReducer(emptyState, setMessageRailIndexLoading({ sessionId: 'sess1', loading: true }));
-  expect(state.messageRailIndexLoadingBySessionId.sess1).toBe(true);
-
-  state = coworkReducer(state, setMessageRailIndexLoading({ sessionId: 'sess1', loading: false }));
-  expect(state.messageRailIndexLoadingBySessionId.sess1).toBeUndefined();
-});
-
-test('setMessageWindow: replaces current message window and updates offset', () => {
-  const session = makeFullSession('sess1', [makeMessage('m111'), makeMessage('m112')], 110);
-  let state = coworkReducer(emptyState, setCurrentSession(session));
-
-  state = coworkReducer(state, setMessageWindow({
-    sessionId: 'sess1',
-    messages: [makeMessage('m51'), makeMessage('m52')],
-    messagesOffset: 50,
-    totalMessages: 140,
-  }));
-
-  expect(state.currentSession?.messages.map(message => message.id)).toEqual(['m51', 'm52']);
-  expect(state.currentSession?.messagesOffset).toBe(50);
-  expect(state.currentSession?.totalMessages).toBe(140);
-});
-
-test('setMessageWindow: no-op when sessionId does not match current session', () => {
-  const session = makeFullSession('sess1', [makeMessage('m111')], 110);
-  let state = coworkReducer(emptyState, setCurrentSession(session));
-
-  state = coworkReducer(state, setMessageWindow({
-    sessionId: 'other',
-    messages: [makeMessage('m1')],
-    messagesOffset: 0,
-    totalMessages: 1,
-  }));
-
-  expect(state.currentSession?.messages.map(message => message.id)).toEqual(['m111']);
-  expect(state.currentSession?.messagesOffset).toBe(110);
 });
 
 // ---------------------------------------------------------------------------
