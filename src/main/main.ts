@@ -6361,6 +6361,23 @@ if (!gotTheLock) {
     },
   );
 
+  ipcMain.handle(CoworkIpcChannel.GetSessionMessageRailIndex, async (_event, sessionId: string) => {
+    try {
+      const store = getCoworkStore();
+      const items = store.getSessionMessageRailIndex(sessionId);
+      console.log(
+        `[CoworkIPC] loaded message rail index for session ${sessionId}; returned ${items.length} items.`,
+      );
+      return { success: true, items };
+    } catch (error) {
+      console.error('[CoworkIPC] failed to load message rail index:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get session message rail index',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {
       const usage = await getCoworkEngineRouter().getContextUsage(sessionId);

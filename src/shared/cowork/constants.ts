@@ -11,6 +11,7 @@ export const CoworkIpcChannel = {
   SubagentList: 'cowork:subagent:list',
   SubagentDelete: 'cowork:subagent:delete',
   MarkSessionViewed: 'cowork:session:markViewed',
+  GetSessionMessageRailIndex: 'cowork:session:getMessageRailIndex',
   OpenSessionFromNotification: 'cowork:session:openFromNotification',
   OpenSessionFromNotificationReady: 'cowork:session:openFromNotificationReady',
 } as const;
