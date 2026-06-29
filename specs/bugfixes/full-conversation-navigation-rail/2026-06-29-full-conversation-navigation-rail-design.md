@@ -236,21 +236,28 @@ async loadSessionMessageRailIndex(sessionId: string): Promise<CoworkMessageRailI
 
 `loadSession(sessionId)` 成功后可以并行或随后触发 rail index 加载。rail index 加载失败时，页面应降级为当前 `currentSession.messages` 生成的局部轨道。
 
-### 4.6 CoworkSessionDetail 使用全量 rail index
+### 4.6 CoworkSessionDetail 使用全量 rail index 并按对话轮次分组
 
 **位置**：`src/renderer/components/cowork/CoworkSessionDetail.tsx`
 
-将 `RailItem` 从当前窗口 turn 结构扩展为可表达全局消息：
+轨道的视觉 item 不再按单条 `user` / `assistant` 消息拆分，而是按一轮对话聚合：
+
+- 一条用户消息开始一个 rail item。
+- 紧随其后的助手消息作为该 rail item 的回答摘要。
+- 如果存在没有用户消息的助手消息，则作为独立 rail item 降级展示。
+- 点击 rail item 时定位到该轮的起始消息，优先使用用户消息；没有用户消息时使用助手消息。
+
+将 `RailItem` 从当前窗口 turn 结构扩展为可表达全局对话轮次：
 
 ```typescript
 type RailItem = {
   key: string;
-  messageId: string;
-  sequence: number | null;
+  messageId: string | null;
   absoluteIndex: number;
-  label: string;
+  title: string;
+  summary: string;
   contentLen: number;
-  isUser: boolean;
+  isLoaded: boolean;
   loadedTurnIndex: number | null;
 };
 ```
@@ -264,6 +271,15 @@ const loadedRailTargetByMessageId = new Map<string, HTMLElement>();
 ```
 
 当前 JSX 中已经给 user/assistant 外层标记了 `data-rail-index`。需要改为稳定的 `data-rail-message-id`，避免全量轨道 index 与当前分页窗口 index 不一致。
+
+tooltip 展示需要类似 IDE/Codex 小地图预览：
+
+- 第一行加粗显示该轮用户问题摘要。
+- 第二行显示助手回答摘要，最多 2 行截断。
+- 底部显示来源标识，例如 `LobsterAI`，用于说明该 tooltip 来自当前 Cowork 会话。
+- rail index 尚未返回时允许短暂显示“未加载消息”兜底；rail index 成功后所有 item 都应展示真实摘要。
+
+分组只发生在 renderer 侧，不改变主进程轻量索引接口。主进程仍返回单条消息级别的轻量 preview，以避免一次性传输完整历史正文。
 
 ### 4.7 点击未加载 rail item 时加载目标窗口
 
@@ -365,13 +381,16 @@ setMessageWindow({
 5. 手动向上滚动到顶部附近仍能触发旧消息 prepend 加载。
 6. rail index 加载失败时，对话页仍能使用当前局部轨道，不阻塞会话阅读。
 7. 运行中会话新增消息时，轨道能追加或刷新新增用户/助手消息入口。
-8. 目标实现后，相关 TypeScript 文件通过 changed-file ESLint：
+8. 轨道视觉 item 按一问一答合并展示；140 条交替 user/assistant 消息应展示约 70 个轨道 item。
+9. tooltip 应显示该轮用户问题摘要和助手回答摘要，而不是只显示单条消息或占位 `Message N`。
+10. 合并后的 rail item 点击仍能加载并定位到该轮起始消息，不受 tool/system 消息夹杂影响。
+11. 目标实现后，相关 TypeScript 文件通过 changed-file ESLint：
 
 ```bash
 npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <touched files>
 ```
 
-9. 相关分页和 Redux 行为需要补 Vitest 覆盖，至少包括：
+12. 相关分页和 Redux 行为需要补 Vitest 覆盖，至少包括：
    - rail index action 写入和缓存
    - `setMessageWindow` 替换窗口
    - `prependMessages` 与窗口替换后的 offset 行为

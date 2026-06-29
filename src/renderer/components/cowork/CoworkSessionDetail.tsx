@@ -164,6 +164,7 @@ type RailItem = {
   turnIndex: number;
   absoluteIndex: number;
   label: string;
+  summary: string;
   contentLen: number;
   isUser: boolean;
   isLoaded: boolean;
@@ -212,25 +213,14 @@ const getAssistantRailMessageId = (turn: ConversationTurn): string | null => {
   return null;
 };
 
-const buildRailItems = (turns: ConversationTurn[]): RailItem[] => {
+const buildRailItems = (
+  turns: ConversationTurn[],
+  messageOffsetById: Map<string, number>,
+): RailItem[] => {
   const items: RailItem[] = [];
 
   for (let index = 0; index < turns.length; index += 1) {
     const turn = turns[index];
-    if (turn.userMessage) {
-      const content = turn.userMessage.content ?? '';
-      items.push({
-        key: `${turn.id}-user`,
-        messageId: turn.userMessage.id,
-        turnIndex: index,
-        absoluteIndex: items.length,
-        label: getRailLabel(content, `Turn ${index + 1}`),
-        contentLen: content.length,
-        isUser: true,
-        isLoaded: true,
-      });
-    }
-
     let assistantContent = '';
     for (const item of turn.assistantItems) {
       if (item.type === 'assistant' && item.message?.content) {
@@ -238,18 +228,22 @@ const buildRailItems = (turns: ConversationTurn[]): RailItem[] => {
       }
     }
 
-    if (assistantContent) {
-      items.push({
-        key: `${turn.id}-asst`,
-        messageId: getAssistantRailMessageId(turn),
-        turnIndex: index,
-        absoluteIndex: items.length,
-        label: getRailLabel(assistantContent, 'LobsterAI'),
-        contentLen: assistantContent.length,
-        isUser: false,
-        isLoaded: true,
-      });
-    }
+    const assistantMessageId = getAssistantRailMessageId(turn);
+    const primaryMessageId = turn.userMessage?.id ?? assistantMessageId;
+    if (!primaryMessageId) continue;
+
+    const userContent = turn.userMessage?.content ?? '';
+    items.push({
+      key: `${turn.id}-turn`,
+      messageId: primaryMessageId,
+      turnIndex: index,
+      absoluteIndex: messageOffsetById.get(primaryMessageId) ?? items.length,
+      label: turn.userMessage ? getRailLabel(userContent, `Turn ${index + 1}`) : 'LobsterAI',
+      summary: assistantContent ? getRailLabel(assistantContent, 'LobsterAI') : '',
+      contentLen: userContent.length + assistantContent.length,
+      isUser: false,
+      isLoaded: true,
+    });
   }
 
   return items;
@@ -272,45 +266,84 @@ const buildLoadedRailTurnMap = (turns: ConversationTurn[]): Map<string, number> 
 const buildRailItemsFromIndex = (
   indexItems: CoworkMessageRailIndexItem[],
   loadedTurnByMessageId: Map<string, number>,
-): RailItem[] => indexItems.map((item) => ({
-  key: item.messageId,
-  messageId: item.messageId,
-  turnIndex: loadedTurnByMessageId.get(item.messageId) ?? -1,
-  absoluteIndex: item.messageOffset,
-  label: item.preview,
-  contentLen: item.contentLen,
-  isUser: item.type === 'user',
-  isLoaded: loadedTurnByMessageId.has(item.messageId),
-}));
+): RailItem[] => {
+  const items: RailItem[] = [];
+  let index = 0;
+
+  while (index < indexItems.length) {
+    const current = indexItems[index];
+
+    if (current.type === 'user') {
+      const assistantItems: CoworkMessageRailIndexItem[] = [];
+      let nextIndex = index + 1;
+      while (nextIndex < indexItems.length && indexItems[nextIndex].type === 'assistant') {
+        assistantItems.push(indexItems[nextIndex]);
+        nextIndex += 1;
+      }
+
+      const loadedAssistantTurnIndex = assistantItems
+        .map(item => loadedTurnByMessageId.get(item.messageId))
+        .find((turnIndex): turnIndex is number => turnIndex !== undefined);
+      const loadedTurnIndex = loadedTurnByMessageId.get(current.messageId) ?? loadedAssistantTurnIndex ?? -1;
+      items.push({
+        key: [current.messageId, ...assistantItems.map(item => item.messageId)].join(':'),
+        messageId: current.messageId,
+        turnIndex: loadedTurnIndex,
+        absoluteIndex: current.messageOffset,
+        label: current.preview,
+        summary: assistantItems.map(item => item.preview).join(' '),
+        contentLen: current.contentLen + assistantItems.reduce((acc, item) => acc + item.contentLen, 0),
+        isUser: false,
+        isLoaded: loadedTurnIndex >= 0,
+      });
+      index = nextIndex;
+      continue;
+    }
+
+    const loadedTurnIndex = loadedTurnByMessageId.get(current.messageId) ?? -1;
+    items.push({
+      key: current.messageId,
+      messageId: current.messageId,
+      turnIndex: loadedTurnIndex,
+      absoluteIndex: current.messageOffset,
+      label: 'LobsterAI',
+      summary: current.preview,
+      contentLen: current.contentLen,
+      isUser: false,
+      isLoaded: loadedTurnIndex >= 0,
+    });
+    index += 1;
+  }
+
+  return items;
+};
 
 const buildPlaceholderRailItems = (
   totalMessages: number,
-  messagesOffset: number,
   localItems: RailItem[],
 ): RailItem[] => {
   const count = Math.max(0, Math.floor(totalMessages));
   if (count <= localItems.length) return localItems;
+  const estimatedTurnCount = Math.max(localItems.length, Math.ceil(count / 2));
 
-  const localByAbsoluteIndex = new Map<number, RailItem>();
-  localItems.forEach((item, index) => {
-    localByAbsoluteIndex.set(messagesOffset + index, item);
+  const localByRailIndex = new Map<number, RailItem>();
+  localItems.forEach((item) => {
+    localByRailIndex.set(Math.floor(item.absoluteIndex / 2), item);
   });
 
-  return Array.from({ length: count }, (_, index) => {
-    const localItem = localByAbsoluteIndex.get(index);
+  return Array.from({ length: estimatedTurnCount }, (_, index) => {
+    const localItem = localByRailIndex.get(index);
     if (localItem) {
-      return {
-        ...localItem,
-        absoluteIndex: index,
-      };
+      return localItem;
     }
 
     return {
       key: `placeholder-${index}`,
       messageId: null,
       turnIndex: -1,
-      absoluteIndex: index,
-      label: `Message ${index + 1}`,
+      absoluteIndex: Math.min(Math.max(0, count - 1), index * 2),
+      label: `Turn ${index + 1}`,
+      summary: '',
       contentLen: 1,
       isUser: false,
       isLoaded: false,
@@ -2849,9 +2882,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const latestContainer = scrollContainerRef.current;
       if (!latestContainer) return false;
 
-      const el = targetItem.messageId
+      const messageEl = targetItem.messageId
         ? latestContainer.querySelector<HTMLElement>(`[data-rail-message-id="${CSS.escape(targetItem.messageId)}"]`)
-        : latestContainer.querySelector<HTMLElement>(`[data-rail-index="${targetRailIndex}"]`);
+        : null;
+      const el = messageEl
+        ?? latestContainer.querySelector<HTMLElement>(`[data-rail-index="${targetRailIndex}"]`);
       if (el) {
         const decision = getRailNavigationDecision(latestContainer, el);
         if (decision.behavior === 'auto') {
@@ -3031,17 +3066,24 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const displayItems = useMemo(() => messages ? buildDisplayItems(messages) : [], [messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
   const loadedRailTurnMap = useMemo(() => buildLoadedRailTurnMap(turns), [turns]);
-  const localRailItems = useMemo(() => buildRailItems(turns), [turns]);
+  const messageOffsetById = useMemo(() => {
+    const offsetById = new Map<string, number>();
+    const sessionMessages = currentSession?.messages ?? [];
+    const messagesOffset = currentSession?.messagesOffset ?? 0;
+    sessionMessages.forEach((message, index) => {
+      offsetById.set(message.id, messagesOffset + index);
+    });
+    return offsetById;
+  }, [currentSession?.messages, currentSession?.messagesOffset]);
+  const localRailItems = useMemo(() => buildRailItems(turns, messageOffsetById), [messageOffsetById, turns]);
   const railItems = useMemo(
     () => (messageRailIndex.length > 0
       ? buildRailItemsFromIndex(messageRailIndex, loadedRailTurnMap)
       : buildPlaceholderRailItems(
         currentSession?.totalMessages ?? localRailItems.length,
-        currentSession?.messagesOffset ?? 0,
         localRailItems,
       )),
     [
-      currentSession?.messagesOffset,
       currentSession?.totalMessages,
       loadedRailTurnMap,
       localRailItems,
@@ -3053,10 +3095,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     [railItems],
   );
   const railTooltipItem = railTooltip ? railItems[railTooltip.railIndex] : undefined;
-  const railTooltipLabel = railTooltipItem
+  const railTooltipTitle = railTooltipItem
+    ? railTooltipItem.isPlaceholder
+      ? i18nService.t('coworkRailUnloadedMessageTitle')
+      : railTooltipItem.label
+    : '';
+  const railTooltipSummary = railTooltipItem
     ? railTooltipItem.isPlaceholder
       ? i18nService.t('coworkRailUnloadedMessageHint')
-      : railTooltipItem.label
+      : railTooltipItem.summary
     : '';
 
   // Cache turn-level DOM elements (data-turn-index, always in DOM even for lazy turns)
@@ -3215,12 +3262,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       // Always render last 3 turns (needed for streaming, auto-scroll, and smooth UX)
       const alwaysRender = index >= turns.length - 3;
 
-      // Compute rail indices for user/assistant messages (must match rail IIFE logic)
+      // Compute one rail index per conversation turn (must match grouped rail item logic).
       const hasAssistantContent = turn.assistantItems.some(
         item => item.type === 'assistant' && Boolean(item.message?.content),
       );
-      const userRailIdx = turn.userMessage ? railCounter++ : -1;
-      const asstRailIdx = hasAssistantContent ? railCounter++ : -1;
+      const turnRailIdx = turn.userMessage || hasAssistantContent ? railCounter++ : -1;
       const assistantRailMessageId = getAssistantRailMessageId(turn);
 
       const turnMessageIds = new Set<string>();
@@ -3245,7 +3291,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               data-export-role="user-message"
               data-rail-message-id={turn.userMessage.id}
               className={isLastTurn ? 'animate-message-in' : undefined}
-              {...(userRailIdx >= 0 ? { 'data-rail-index': userRailIdx } : undefined)}
+              {...(turnRailIdx >= 0 ? { 'data-rail-index': turnRailIdx } : undefined)}
             >
               <UserMessageItem
                 message={turn.userMessage}
@@ -3261,7 +3307,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               data-export-role="assistant-block"
               {...(assistantRailMessageId ? { 'data-rail-message-id': assistantRailMessageId } : undefined)}
               className={isLastTurn ? 'animate-message-in' : undefined}
-              {...(asstRailIdx >= 0 ? { 'data-rail-index': asstRailIdx } : undefined)}
+              {...(turnRailIdx >= 0 ? { 'data-rail-index': turnRailIdx } : undefined)}
             >
               <AssistantTurnBlock
                 turn={turn}
@@ -3679,7 +3725,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         {shouldShowTurnNavigationRail && (
           <div
             className="absolute right-[18px] top-1/2 -translate-y-1/2 w-5 flex flex-col items-end z-10"
-            style={{ height: 'calc(100% - 40px)', maxHeight: 'calc(100% - 40px)' }}
+            style={{ maxHeight: 'calc(100% - 40px)' }}
             onWheel={handleRailWheel}
             onMouseEnter={() => setIsRailHovered(true)}
             onMouseLeave={() => {
@@ -3713,8 +3759,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             <div
               ref={railLinesRef}
               onWheel={handleRailWheel}
-              className="overflow-y-auto overscroll-contain min-h-0 flex-1"
-              style={{ scrollbarWidth: 'none' }}
+              className="overflow-y-auto overscroll-contain min-h-0"
+              style={{ maxHeight: 'calc(100% - 56px)', scrollbarWidth: 'none' }}
             >
               {railItems.map((msg, idx) => {
                 const isActive = idx === resolvedRailIndex;
@@ -3781,38 +3827,46 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         {railTooltip && railTooltipItem && createPortal(
           <div
             className={`fixed z-[100] px-3.5 py-2 text-[13px] leading-snug pointer-events-none overflow-hidden
-              max-w-[240px] shadow-[0_2px_12px_rgba(0,0,0,0.12)]
+              shadow-[0_2px_12px_rgba(0,0,0,0.12)]
               border dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)]
-              ${railTooltipItem.isUser
-                ? 'rounded-[12px_12px_4px_12px] bg-white border-neutral-200/80 dark:bg-neutral-800 dark:border-neutral-700'
-                : 'rounded-xl bg-neutral-50 border-neutral-200/80 dark:bg-neutral-800 dark:border-neutral-700'
-              }`}
+              rounded-xl bg-neutral-50 border-neutral-200/80 dark:bg-neutral-800 dark:border-neutral-700`}
             style={{
               top: railTooltip.top,
               right: railTooltip.right,
+              width: `min(420px, calc(100vw - ${railTooltip.right + 16}px))`,
               transform: 'translateY(-50%)',
             }}
           >
-            {railTooltipItem.isPlaceholder ? (
-              <div className="text-[12px] font-medium mb-0.5 text-neutral-800 dark:text-neutral-200">
-                {i18nService.t('coworkRailUnloadedMessageTitle')}
-              </div>
-            ) : !railTooltipItem.isUser && (
-              <div className="text-[12px] font-medium mb-0.5 text-neutral-800 dark:text-neutral-200">
-                LobsterAI:
-              </div>
-            )}
             <div
-              className="text-neutral-600 dark:text-neutral-300"
+              className="text-[13px] font-semibold text-neutral-900 dark:text-neutral-100"
               style={{
                 display: '-webkit-box',
-                WebkitLineClamp: 2,
+                WebkitLineClamp: 1,
                 WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
                 wordBreak: 'break-all',
               }}
             >
-              {railTooltipLabel}
+              {railTooltipTitle}
+            </div>
+            {railTooltipSummary && (
+              <div
+                className="mt-1 text-[13px] text-neutral-600 dark:text-neutral-300"
+                style={{
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {railTooltipSummary}
+              </div>
+            )}
+            <div
+              className="mt-2 flex items-center gap-1.5 text-[12px] text-neutral-400 dark:text-neutral-500"
+            >
+              LobsterAI
             </div>
           </div>,
           document.body
