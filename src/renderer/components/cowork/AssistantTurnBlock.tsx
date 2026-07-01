@@ -33,6 +33,7 @@ import {
   hasText,
   isContextCompactionMessage,
   isDuplicateGeneratedVideoAssistantMessage,
+  type ToolGroupItem,
 } from './messageDisplayUtils';
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallGroup from './ToolCallGroup';
@@ -203,6 +204,7 @@ const AssistantTurnBlock: React.FC<{
   planConfirmationMessageId?: string | null;
   onConfirmPlan?: (messageId: string) => void;
   onAdjustPlan?: (messageId: string) => void;
+  renderToolGroupFooter?: (group: ToolGroupItem) => React.ReactNode;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
   completedGoal?: CoworkGoal | null;
@@ -218,6 +220,7 @@ const AssistantTurnBlock: React.FC<{
   planConfirmationMessageId,
   onConfirmPlan,
   onAdjustPlan,
+  renderToolGroupFooter,
   showTypingIndicator = false,
   showCopyButtons = true,
   completedGoal,
@@ -444,6 +447,7 @@ const AssistantTurnBlock: React.FC<{
                     isLastInSequence={isLastInSequence}
                     mapDisplayText={mapDisplayText}
                     retainedMediaPollCounts={retainedMediaPollCounts}
+                    footer={renderToolGroupFooter?.(item.group)}
                   />
                 );
               }

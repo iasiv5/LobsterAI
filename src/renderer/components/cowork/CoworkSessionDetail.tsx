@@ -36,6 +36,7 @@ import {
   activateArtifactBrowserTab,
   activateArtifactFileListTab,
   activateArtifactPreviewTab,
+  activateArtifactSubagentTab,
   addArtifact,
   type ArtifactPreviewTab,
   ArtifactSpecialTab,
@@ -60,7 +61,7 @@ import { setActiveKitIds } from '../../store/slices/kitSlice';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { Artifact } from '../../types/artifact';
 import { ArtifactTypeValue, PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
-import type { CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import type { CoworkImageAttachment, CoworkMessage, CoworkMessageMetadata, SubagentSessionSummary } from '../../types/cowork';
 import {
   CoworkCollaborationMode,
   type CoworkCollaborationMode as CoworkCollaborationModeType,
@@ -68,7 +69,7 @@ import {
 } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
-import { ArtifactPanel, type BrowserAnnotationPayload } from '../artifacts';
+import { ArtifactPanel, type BrowserAnnotationPayload, SubagentPanelContent } from '../artifacts';
 import { reportArtifactPreviewAction } from '../artifacts/artifactAnalytics';
 import {
   ArtifactAutoPreviewOpenTarget,
@@ -78,6 +79,7 @@ import {
 import ComposeIcon from '../icons/ComposeIcon';
 import FileTypeIcon from '../icons/fileTypes/FileTypeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import SubagentIcon from '../icons/SubagentIcon';
 import MarkdownContent from '../MarkdownContent';
 import WindowTitleBar from '../window/WindowTitleBar';
 import AssistantTurnBlock, { ContextCompactionDivider } from './AssistantTurnBlock';
@@ -100,6 +102,7 @@ import {
   getStreamingActivityStatusText,
   hasRenderableAssistantContent,
   MEDIA_TOKEN_DISPLAY_RE,
+  type ToolGroupItem,
 } from './messageDisplayUtils';
 import { parseProposedPlanBlock } from './proposedPlanParser';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
@@ -111,6 +114,7 @@ import {
   type CoworkTextExportFormat as CoworkTextExportFormatValue,
   mergeCoworkTextExportMessages,
 } from './sessionExport';
+import SubagentTurnLinks from './SubagentTurnLinks';
 import UserMessageContent from './UserMessageContent';
 import UserMessageItem from './UserMessageItem';
 interface CoworkSessionDetailProps {
@@ -150,6 +154,7 @@ const ARTIFACT_PANEL_TRANSITION_MS = 200;
 const ARTIFACT_PANEL_RESIZE_HANDLE_WIDTH = 4;
 const COWORK_DETAIL_MIN_WIDTH = 480;
 const ARTIFACT_PANEL_MIN_WIDTH_RATIO = 1 / 6;
+const SUBAGENT_PANEL_POLL_INTERVAL_MS = 5_000;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const SELECTED_TEXT_ACTION_HALF_WIDTH = 72;
 const SELECTED_TEXT_ACTION_SUPPRESS_MS = 250;
@@ -1601,6 +1606,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [isArtifactPanelTransitioning, setIsArtifactPanelTransitioning] = useState(false);
   const [isFileListPreviewTabOpen, setIsFileListPreviewTabOpen] = useState(isPanelOpen);
   const [isBrowserPreviewTabOpen, setIsBrowserPreviewTabOpen] = useState(false);
+  const [isSubagentPreviewTabOpen, setIsSubagentPreviewTabOpen] = useState(false);
   const [activeSpecialPreviewTab, setActiveSpecialPreviewTab] = useState<ArtifactSpecialTab>(ArtifactSpecialTab.FileList);
   const [browserPreviewAddress, setBrowserPreviewAddress] = useState('');
   const [browserPreviewUrl, setBrowserPreviewUrl] = useState('');
@@ -1615,6 +1621,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [artifactTabsIsOverflowing, setArtifactTabsIsOverflowing] = useState(false);
   const [artifactPanelMinWidth, setArtifactPanelMinWidth] = useState(MIN_PANEL_WIDTH);
   const [artifactPanelMaxWidth, setArtifactPanelMaxWidth] = useState(MAX_PANEL_WIDTH);
+  const [subagents, setSubagents] = useState<SubagentSessionSummary[]>([]);
+  const [subagentsLoading, setSubagentsLoading] = useState(false);
+  const [selectedSubagent, setSelectedSubagent] = useState<SubagentSessionSummary | null>(null);
   const [contentRowWidth, setContentRowWidth] = useState(0);
   const [promptInputAreaHeight, setPromptInputAreaHeight] = useState(0);
   const [isArtifactPanelExpanded, setIsArtifactPanelExpanded] = useState(false);
@@ -1623,6 +1632,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const previousArtifactPanelOpenRef = useRef(isPanelOpen);
   const fileListPreviewTabOpenBySessionRef = useRef<Record<string, boolean>>({});
   const browserPreviewTabOpenBySessionRef = useRef<Record<string, boolean>>({});
+  const subagentPreviewTabOpenBySessionRef = useRef<Record<string, boolean>>({});
   const activeSpecialPreviewTabBySessionRef = useRef<Record<string, ArtifactSpecialTab>>({});
   const browserPreviewAddressBySessionRef = useRef<Record<string, string>>({});
   const browserPreviewUrlBySessionRef = useRef<Record<string, string>>({});
@@ -1661,6 +1671,89 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [artifactPreviewTabs, sessionArtifacts]);
   const shouldPinArtifactAddTab = artifactTabsIsOverflowing || artifactTabsCanScrollLeft || artifactTabsCanScrollRight;
   const browserPreviewTabTitle = browserPreviewTitle.trim() || i18nService.t('artifactBrowserTab');
+  const fetchSubagents = useCallback(async (targetSessionId: string, options: { showLoading?: boolean } = {}) => {
+    if (!targetSessionId) return;
+    if (options.showLoading) {
+      setSubagentsLoading(true);
+    }
+    try {
+      const result = await window.electron?.cowork?.listSubagentSessions(targetSessionId);
+      if (targetSessionId !== currentSession?.id) return;
+      if (!result?.success || !result.runs) {
+        setSubagents([]);
+        return;
+      }
+      setSubagents(result.runs.map((run) => ({
+        id: run.id,
+        agentId: run.agentId,
+        task: run.task,
+        label: run.label,
+        sessionKey: run.sessionKey,
+        parentSessionId: targetSessionId,
+        status: run.status,
+        createdAt: run.createdAt,
+        endedAt: run.endedAt,
+      })));
+    } catch {
+      if (targetSessionId === currentSession?.id) {
+        setSubagents([]);
+      }
+    } finally {
+      if (targetSessionId === currentSession?.id) {
+        setSubagentsLoading(false);
+      }
+    }
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [fetchSubagents, messagesLength, sessionId, subagents.length]);
+
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    const hasRunningSubagents = subagents.some(subagent => subagent.status === 'running');
+    const shouldPoll = isSubagentPreviewTabOpen ||
+      hasRunningSubagents ||
+      currentSession?.status === CoworkSessionStatusValue.Running;
+    if (!shouldPoll) return undefined;
+    const timer = window.setInterval(() => {
+      void fetchSubagents(sessionId);
+    }, SUBAGENT_PANEL_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    currentSession?.status,
+    fetchSubagents,
+    isSubagentPreviewTabOpen,
+    sessionId,
+    subagents,
+  ]);
+
+  const subagentsByRunId = useMemo(() => new Map(
+    subagents.map(subagent => [subagent.id, subagent]),
+  ), [subagents]);
+  const selectedSubagentForPanel = useMemo(() => (
+    selectedSubagent
+      ? subagents.find(subagent => subagent.id === selectedSubagent.id) ?? selectedSubagent
+      : null
+  ), [selectedSubagent, subagents]);
+
+  const getToolGroupSubagents = useCallback((group: ToolGroupItem): SubagentSessionSummary[] => {
+    const seen = new Set<string>();
+    const result: SubagentSessionSummary[] = [];
+    const candidateIds = [
+      group.toolUse.id,
+      group.toolUse.metadata?.toolUseId,
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+    for (const candidateId of candidateIds) {
+      if (seen.has(candidateId)) continue;
+      const subagent = subagentsByRunId.get(candidateId);
+      if (!subagent) continue;
+      seen.add(candidateId);
+      result.push(subagent);
+    }
+    return result;
+  }, [subagentsByRunId]);
 
   const loadedFileIdsRef = useRef<Set<string>>(new Set());
   const autoPreviewHandledTurnIdsRef = useRef<Record<string, Set<string>>>({});
@@ -1810,6 +1903,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   useEffect(() => {
     setIsFileListPreviewTabOpen(sessionId ? fileListPreviewTabOpenBySessionRef.current[sessionId] ?? false : false);
     setIsBrowserPreviewTabOpen(sessionId ? browserPreviewTabOpenBySessionRef.current[sessionId] ?? false : false);
+    setIsSubagentPreviewTabOpen(sessionId ? subagentPreviewTabOpenBySessionRef.current[sessionId] ?? false : false);
     setActiveSpecialPreviewTab(sessionId
       ? activeSpecialPreviewTabBySessionRef.current[sessionId] ?? ArtifactSpecialTab.FileList
       : ArtifactSpecialTab.FileList);
@@ -1822,6 +1916,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsExpandedPromptInputHidden(false);
     setIsExpandedConversationPreviewOpen(false);
     setShowArtifactAddMenu(false);
+    setSubagents([]);
+    setSubagentsLoading(false);
+    setSelectedSubagent(null);
     loadedFileIdsRef.current = new Set();
     setAutoPreviewPendingTurnId(null);
   }, [sessionId]);
@@ -1848,6 +1945,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsBrowserPreviewTabOpen(open);
     if (sessionId) {
       browserPreviewTabOpenBySessionRef.current[sessionId] = open;
+    }
+  }, [sessionId]);
+
+  const setSessionSubagentPreviewTabOpen = useCallback((open: boolean) => {
+    setIsSubagentPreviewTabOpen(open);
+    if (sessionId) {
+      subagentPreviewTabOpenBySessionRef.current[sessionId] = open;
     }
   }, [sessionId]);
 
@@ -1980,6 +2084,48 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Browser);
     dispatch(activateArtifactBrowserTab({ sessionId }));
   }, [artifactTabsWithArtifacts.length, dispatch, sessionId, setSessionActiveSpecialPreviewTab, setSessionBrowserPreviewTabOpen]);
+
+  const handleOpenArtifactSubagentTab = useCallback(() => {
+    reportArtifactPreviewAction({
+      actionType: 'panel_tab_open',
+      source: 'artifact_panel',
+      params: {
+        tabType: 'subagents',
+        tabCount: artifactTabsWithArtifacts.length,
+      },
+    });
+    setShowArtifactAddMenu(false);
+    setSelectedSubagent(null);
+    if (!sessionId) return;
+    setSessionSubagentPreviewTabOpen(true);
+    setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+    dispatch(activateArtifactSubagentTab({ sessionId }));
+    void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [
+    artifactTabsWithArtifacts.length,
+    dispatch,
+    fetchSubagents,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
+    subagents.length,
+  ]);
+
+  const handleSelectSubagent = useCallback((subagent: SubagentSessionSummary) => {
+    if (!sessionId) return;
+    setSelectedSubagent(subagent);
+    setSessionSubagentPreviewTabOpen(true);
+    setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+    dispatch(activateArtifactSubagentTab({ sessionId }));
+    void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [
+    dispatch,
+    fetchSubagents,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
+    subagents.length,
+  ]);
 
   const handleToggleArtifactPanelExpanded = useCallback(() => {
     setIsArtifactPanelExpanded(value => {
@@ -2162,6 +2308,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       return;
     }
 
+    if (isSubagentPreviewTabOpen) {
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+      dispatch(activateArtifactSubagentTab({ sessionId }));
+      return;
+    }
+
     dispatch(closePanel({ sessionId }));
   }, [
     activeArtifactPreviewTab,
@@ -2169,6 +2321,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     artifactTabsWithArtifacts,
     dispatch,
     isBrowserPreviewTabOpen,
+    isSubagentPreviewTabOpen,
     sessionId,
     setSessionActiveSpecialPreviewTab,
     setSessionFileListPreviewTabOpen,
@@ -2188,6 +2341,30 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Browser);
     dispatch(activateArtifactBrowserTab({ sessionId }));
   }, [artifactTabsWithArtifacts.length, dispatch, sessionId, setSessionActiveSpecialPreviewTab, setSessionBrowserPreviewTabOpen]);
+
+  const handleActivateArtifactSubagentTab = useCallback(() => {
+    if (!sessionId) return;
+    reportArtifactPreviewAction({
+      actionType: 'panel_tab_switch',
+      source: 'artifact_panel',
+      params: {
+        tabType: 'subagents',
+        tabCount: artifactTabsWithArtifacts.length,
+      },
+    });
+    setSessionSubagentPreviewTabOpen(true);
+    setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+    dispatch(activateArtifactSubagentTab({ sessionId }));
+    void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [
+    artifactTabsWithArtifacts.length,
+    dispatch,
+    fetchSubagents,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
+    subagents.length,
+  ]);
 
   const handleCloseArtifactBrowserTab = useCallback(() => {
     const wasActive = !activeArtifactPreviewTab && activeSpecialPreviewTab === ArtifactSpecialTab.Browser;
@@ -2221,6 +2398,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       return;
     }
 
+    if (isSubagentPreviewTabOpen) {
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+      dispatch(activateArtifactSubagentTab({ sessionId }));
+      return;
+    }
+
     dispatch(closePanel({ sessionId }));
   }, [
     activeArtifactPreviewTab,
@@ -2229,9 +2412,61 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     dispatch,
     clearBrowserPreviewState,
     isFileListPreviewTabOpen,
+    isSubagentPreviewTabOpen,
     sessionId,
     setSessionActiveSpecialPreviewTab,
     setSessionBrowserPreviewTabOpen,
+  ]);
+
+  const handleCloseArtifactSubagentTab = useCallback(() => {
+    const wasActive = !activeArtifactPreviewTab && activeSpecialPreviewTab === ArtifactSpecialTab.Subagents;
+    reportArtifactPreviewAction({
+      actionType: 'panel_tab_close',
+      source: 'artifact_panel',
+      params: {
+        tabType: 'subagents',
+        wasActive,
+        tabCount: artifactTabsWithArtifacts.length,
+      },
+    });
+    setSessionSubagentPreviewTabOpen(false);
+    setSelectedSubagent(null);
+    if (!sessionId) {
+      dispatch(closePanel(undefined));
+      return;
+    }
+
+    if (!wasActive) return;
+
+    const nextTabId = artifactTabsWithArtifacts[0]?.tab.id;
+    if (nextTabId) {
+      dispatch(activateArtifactPreviewTab({ sessionId, tabId: nextTabId }));
+      return;
+    }
+
+    if (isBrowserPreviewTabOpen) {
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Browser);
+      dispatch(activateArtifactBrowserTab({ sessionId }));
+      return;
+    }
+
+    if (isFileListPreviewTabOpen) {
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.FileList);
+      dispatch(activateArtifactFileListTab({ sessionId }));
+      return;
+    }
+
+    dispatch(closePanel({ sessionId }));
+  }, [
+    activeArtifactPreviewTab,
+    activeSpecialPreviewTab,
+    artifactTabsWithArtifacts,
+    dispatch,
+    isBrowserPreviewTabOpen,
+    isFileListPreviewTabOpen,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
   ]);
 
   const handleActivateArtifactTab = useCallback((tabId: string) => {
@@ -2263,10 +2498,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       },
     });
     dispatch(closeArtifactPreviewTab({ sessionId, tabId }));
-    if (remainingTabs.length === 0 && !isFileListPreviewTabOpen && !isBrowserPreviewTabOpen) {
+    if (remainingTabs.length === 0 && !isFileListPreviewTabOpen && !isBrowserPreviewTabOpen && !isSubagentPreviewTabOpen) {
       dispatch(closePanel({ sessionId }));
     }
-  }, [artifactTabsWithArtifacts, dispatch, isBrowserPreviewTabOpen, isFileListPreviewTabOpen, sessionId]);
+  }, [artifactTabsWithArtifacts, dispatch, isBrowserPreviewTabOpen, isFileListPreviewTabOpen, isSubagentPreviewTabOpen, sessionId]);
 
   const handleToggleArtifactPanel = useCallback(() => {
     reportArtifactPreviewAction({
@@ -2291,7 +2526,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       return;
     }
 
-    if (artifactTabsWithArtifacts.length === 0 && !isFileListPreviewTabOpen && !isBrowserPreviewTabOpen) {
+    if (artifactTabsWithArtifacts.length === 0 && !isFileListPreviewTabOpen && !isBrowserPreviewTabOpen && !isSubagentPreviewTabOpen) {
       setSessionFileListPreviewTabOpen(true);
       setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.FileList);
       dispatch(activateArtifactFileListTab({ sessionId }));
@@ -2305,6 +2540,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     dispatch,
     isBrowserPreviewTabOpen,
     isFileListPreviewTabOpen,
+    isSubagentPreviewTabOpen,
     isPanelOpen,
     markAutoPreviewTurnHandled,
     sessionId,
@@ -4017,6 +4253,17 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 onOpenLocalService={handleOpenLocalServiceArtifact}
                 onOpenHtmlFile={handleOpenHtmlFileInBrowser}
                 onForkMessage={remoteManaged ? undefined : handleForkMessage}
+                renderToolGroupFooter={(group) => {
+                  const groupSubagents = getToolGroupSubagents(group);
+                  if (groupSubagents.length === 0) return null;
+                  return (
+                    <SubagentTurnLinks
+                      subagents={groupSubagents}
+                      variant="tool"
+                      onSelectSubagent={handleSelectSubagent}
+                    />
+                  );
+                }}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming || !isLastTurn}
                 completedGoal={
@@ -4159,6 +4406,45 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                         }}
                         className={`mr-1 rounded p-0.5 transition-colors ${
                           activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.Browser
+                            ? 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
+                            : 'text-secondary hover:bg-surface-hover hover:text-foreground'
+                        }`}
+                        title={i18nService.t('artifactCloseTab')}
+                      >
+                        <ArtifactTabCloseIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                  {isSubagentPreviewTabOpen && (
+                    <div
+                      data-artifact-preview-active={
+                        !activeArtifactPreviewTab && activeSpecialPreviewTab === ArtifactSpecialTab.Subagents
+                          ? 'true'
+                          : undefined
+                      }
+                      className={`non-draggable group flex h-7 max-w-[190px] items-center rounded-lg text-xs transition-colors ${
+                        activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.Subagents
+                          ? 'text-secondary hover:bg-surface hover:text-foreground'
+                          : 'bg-surface-raised text-foreground shadow-sm'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={handleActivateArtifactSubagentTab}
+                        className="flex min-w-0 items-center gap-1.5 px-2 text-left"
+                        title={i18nService.t('subagentPanelTitle')}
+                      >
+                        <SubagentIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{i18nService.t('subagentPanelTitle')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCloseArtifactSubagentTab();
+                        }}
+                        className={`mr-1 rounded p-0.5 transition-colors ${
+                          activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.Subagents
                             ? 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
                             : 'text-secondary hover:bg-surface-hover hover:text-foreground'
                         }`}
@@ -4319,6 +4605,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           >
             <ArtifactBrowserTabIcon className="h-4 w-4 shrink-0" />
             <span className="truncate">{i18nService.t('artifactBrowserTab')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenArtifactSubagentTab}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface"
+          >
+            <SubagentIcon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{i18nService.t('subagentPanelTitle')}</span>
           </button>
         </div>,
         document.body
@@ -4813,6 +5107,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               onOpenBrowserTab={handleOpenArtifactBrowserTab}
               onOpenHtmlFileInBrowser={handleOpenHtmlFileInBrowser}
               onBrowserAnnotationCaptured={handleBrowserAnnotationCaptured}
+              subagentPanel={(
+                <SubagentPanelContent
+                  subagents={subagents}
+                  loading={subagentsLoading}
+                  selectedSubagent={selectedSubagentForPanel}
+                  onBackToList={() => setSelectedSubagent(null)}
+                  onSelectSubagent={handleSelectSubagent}
+                />
+              )}
               onAddSelectedText={addSelectedTextSnippetToDraft}
               selectedTextEnabled={!remoteManaged}
             />

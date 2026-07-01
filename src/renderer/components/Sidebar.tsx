@@ -147,7 +147,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [batchSelectableItems, setBatchSelectableItems] = useState<AgentSidebarBatchItem[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>([]);
-  const [deletedSubagentItems, setDeletedSubagentItems] = useState<AgentSidebarSubagentBatchItem[]>([]);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -438,9 +437,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (deletedSessions) {
       setDeletedSessionIds(sessionIds);
     }
-    if (deletedSubagents.length > 0) {
-      setDeletedSubagentItems(deletedSubagents);
-    }
     handleExitBatchMode();
   }, [
     batchAgentId,
@@ -632,7 +628,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             isBatchMode={isBatchMode}
             batchAgentId={batchAgentId}
             deletedSessionIds={deletedSessionIds}
-            deletedSubagentItems={deletedSubagentItems}
             selectedKeys={selectedKeys}
             onShowCowork={onShowCowork}
             onTaskSelected={(params) => {

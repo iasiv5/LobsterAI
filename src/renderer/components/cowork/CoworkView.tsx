@@ -24,7 +24,7 @@ import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitId
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus, type SubagentSessionSummary } from '../../types/cowork';
+import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -40,7 +40,6 @@ import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInpu
 import CoworkSessionDetail from './CoworkSessionDetail';
 import { reportPromptTemplateAction } from './promptAnalytics';
 import { buildCoworkContinuationSystemPrompt, buildCoworkSystemPrompt } from './skillSystemPrompt';
-import SubagentSessionDetail from './SubagentSessionDetail';
 
 const logCoworkViewModel = (message: string): void => {
   console.debug(`[CoworkView] ${message}`);
@@ -79,24 +78,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const currentSession = useSelector(selectCurrentSession);
   const isStreaming = useSelector(selectIsStreaming);
   const config = useSelector(selectCoworkConfig);
-
-  // Subagent detail view state
-  const [viewingSubagent, setViewingSubagent] = useState<SubagentSessionSummary | null>(null);
-
-  // Listen for subagent selection events from sidebar
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
-      setViewingSubagent(detail ?? null);
-    };
-    window.addEventListener(CoworkUiEvent.SelectSubagent, handler);
-    return () => window.removeEventListener(CoworkUiEvent.SelectSubagent, handler);
-  }, []);
-
-  // Clear subagent view when session changes
-  useEffect(() => {
-    setViewingSubagent(null);
-  }, [currentSession?.id]);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   const skills = useSelector((state: RootState) => state.skill.skills);
@@ -748,26 +729,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       </button>
     </div>
   ) : null;
-
-  // When viewing a subagent, show the subagent detail view
-  if (viewingSubagent) {
-    return (
-      <div className="flex-1 flex flex-col h-full">
-        {engineStatusBanner}
-        <SubagentSessionDetail
-          subagent={viewingSubagent}
-          onBack={() => {
-            setViewingSubagent(null);
-            window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
-          }}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={onToggleSidebar}
-          onNewChat={onNewChat}
-          updateBadge={updateBadge}
-        />
-      </div>
-    );
-  }
 
   // When there's a current session, show the session detail view
   if (currentSession) {

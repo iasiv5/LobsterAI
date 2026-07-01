@@ -956,6 +956,7 @@ interface ArtifactPanelProps {
   onBrowserAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
   onAddSelectedText?: (snippet: CoworkSelectedTextSnippet) => void;
   selectedTextEnabled?: boolean;
+  subagentPanel?: React.ReactNode;
 }
 
 export const BrowserAnnotationShape = {
@@ -1031,6 +1032,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   onBrowserAnnotationCaptured,
   onAddSelectedText,
   selectedTextEnabled = false,
+  subagentPanel,
 }) => {
   const dispatch = useDispatch();
   const panelWidth = useSelector(selectPanelWidth);
@@ -4056,6 +4058,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             onLocalServiceOpen={handleBrowserLocalServiceOpen}
             onAnnotationCaptured={onBrowserAnnotationCaptured}
           />
+        ) : activeSpecialTab === ArtifactSpecialTab.Subagents && subagentPanel ? (
+          subagentPanel
         ) : (
           /* No artifact selected: show full-width file list */
           <div className="flex-1 flex flex-col h-full overflow-hidden">

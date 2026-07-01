@@ -85,11 +85,13 @@ const ToolCallGroup: React.FC<{
   isLastInSequence?: boolean;
   mapDisplayText?: (value: string) => string;
   retainedMediaPollCounts?: Map<string, number>;
+  footer?: React.ReactNode;
 }> = ({
   group,
   isLastInSequence = true,
   mapDisplayText,
   retainedMediaPollCounts,
+  footer,
 }) => {
   const { toolUse, toolResult } = group;
   const shouldExpandByDefault = isMediaStatusPoll(group);
@@ -212,6 +214,11 @@ const ToolCallGroup: React.FC<{
           )}
         </div>
       </button>
+      {footer && (
+        <div className="ml-4 mt-2">
+          {footer}
+        </div>
+      )}
       {isMediaGenerateRunning(group) && isSessionStreaming && (() => {
         const streamingInfo = parseMediaStreamingInfo(group);
         const pollCount = streamingInfo.pollCount ?? getRetainedMediaPollCount(streamingInfo, retainedMediaPollCounts);
