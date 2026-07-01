@@ -23,15 +23,15 @@ type CommandLookup = (
   env?: NodeJS.ProcessEnv,
 ) => string[];
 
-function normalizeForCompare(value: string): string {
-  return path.resolve(value).toLowerCase();
+function normalizeWindowsPathForCompare(value: string): string {
+  return path.win32.resolve(value).toLowerCase();
 }
 
-function isInsideDirectory(candidate: string, parent: string): boolean {
-  const resolvedCandidate = normalizeForCompare(candidate);
-  const resolvedParent = normalizeForCompare(parent);
+function isInsideWindowsDirectory(candidate: string, parent: string): boolean {
+  const resolvedCandidate = normalizeWindowsPathForCompare(candidate);
+  const resolvedParent = normalizeWindowsPathForCompare(parent);
   return resolvedCandidate === resolvedParent
-    || resolvedCandidate.startsWith(`${resolvedParent}${path.sep}`);
+    || resolvedCandidate.startsWith(`${resolvedParent}${path.win32.sep}`);
 }
 
 function getUserDataNodeShimDir(): string | null {
@@ -63,12 +63,12 @@ function defaultCommandLookup(command: string, env?: NodeJS.ProcessEnv): string[
 
 export function isSpawnableWindowsNode(candidate: string, userDataPath?: string | null): boolean {
   if (!candidate.trim().toLowerCase().endsWith('.exe')) return false;
-  if (path.basename(candidate).toLowerCase() !== 'node.exe') return false;
+  if (path.win32.basename(candidate).toLowerCase() !== 'node.exe') return false;
 
   const shimDir = userDataPath
-    ? path.join(userDataPath, 'cowork', 'bin')
+    ? path.win32.join(userDataPath, 'cowork', 'bin')
     : getUserDataNodeShimDir();
-  if (shimDir && isInsideDirectory(candidate, shimDir)) return false;
+  if (shimDir && isInsideWindowsDirectory(candidate, shimDir)) return false;
 
   return true;
 }
