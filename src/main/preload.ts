@@ -90,8 +90,12 @@ contextBridge.exposeInMainWorld('electron', {
     create: (data: any) => ipcRenderer.invoke(McpIpcChannel.Create, data),
     update: (id: string, data: any) => ipcRenderer.invoke(McpIpcChannel.Update, id, data),
     delete: (id: string) => ipcRenderer.invoke(McpIpcChannel.Delete, id),
+    deleteByRegistryId: (registryId: string) =>
+      ipcRenderer.invoke(McpIpcChannel.DeleteByRegistryId, registryId),
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke(McpIpcChannel.SetEnabled, options),
+    setEnabledByRegistryId: (options: { registryId: string; enabled: boolean }) =>
+      ipcRenderer.invoke(McpIpcChannel.SetEnabledByRegistryId, options),
     retryLaunchResolution: (id: string) => ipcRenderer.invoke(McpIpcChannel.RetryLaunchResolution, id),
     fetchMarketplace: () => ipcRenderer.invoke(McpIpcChannel.FetchMarketplace),
     connectQichacha: () => ipcRenderer.invoke(McpIpcChannel.ConnectQichacha),

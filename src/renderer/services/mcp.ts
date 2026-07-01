@@ -97,6 +97,20 @@ class McpService {
     }
   }
 
+  async deleteByRegistryId(registryId: string): Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }> {
+    try {
+      const result = await window.electron.mcp.deleteByRegistryId(registryId);
+      if (result.success && result.servers) {
+        this.servers = result.servers;
+      }
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete MCP registry servers';
+      console.error('Failed to delete MCP registry servers:', error);
+      return { success: false, error: message };
+    }
+  }
+
   async setServerEnabled(id: string, enabled: boolean): Promise<McpServerConfig[]> {
     try {
       const previousServer = this.servers.find(server => server.id === id);
@@ -120,6 +134,20 @@ class McpService {
       throw new Error(result.error || 'Failed to update MCP server');
     } catch (error) {
       console.error('Failed to update MCP server:', error);
+      throw error;
+    }
+  }
+
+  async setRegistryEnabled(registryId: string, enabled: boolean): Promise<McpServerConfig[]> {
+    try {
+      const result = await window.electron.mcp.setEnabledByRegistryId({ registryId, enabled });
+      if (result.success && result.servers) {
+        this.servers = result.servers;
+        return this.servers;
+      }
+      throw new Error(result.error || 'Failed to update MCP registry servers');
+    } catch (error) {
+      console.error('Failed to update MCP registry servers:', error);
       throw error;
     }
   }

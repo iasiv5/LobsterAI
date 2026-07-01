@@ -480,8 +480,15 @@ interface IElectronAPI {
     delete: (
       id: string,
     ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    deleteByRegistryId: (
+      registryId: string,
+    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     setEnabled: (options: {
       id: string;
+      enabled: boolean;
+    }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    setEnabledByRegistryId: (options: {
+      registryId: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     retryLaunchResolution: (

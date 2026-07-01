@@ -222,6 +222,31 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
     }
   });
 
+  ipcMain.handle(McpIpcChannel.DeleteByRegistryId, async (_event, registryId: string) => {
+    try {
+      const normalizedRegistryId = registryId.trim();
+      if (!normalizedRegistryId) {
+        throw new Error('MCP registry id is required');
+      }
+      const mcpRuntime = getMcpRuntime();
+      const store = mcpRuntime.getStore();
+      const matchingServers = store
+        .listServers()
+        .filter(server => server.registryId === normalizedRegistryId);
+      for (const server of matchingServers) {
+        store.deleteServer(server.id);
+      }
+      const servers = store.listServers();
+      syncMcpConfig(syncOpenClawConfig, 'mcp-registry-deleted');
+      return { success: true, servers };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete MCP registry servers',
+      };
+    }
+  });
+
   ipcMain.handle(McpIpcChannel.SetEnabled, async (_event, options: { id: string; enabled: boolean }) => {
     try {
       const mcpRuntime = getMcpRuntime();
@@ -239,6 +264,37 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
       };
     }
   });
+
+  ipcMain.handle(
+    McpIpcChannel.SetEnabledByRegistryId,
+    async (_event, options: { registryId: string; enabled: boolean }) => {
+      try {
+        const normalizedRegistryId = options.registryId.trim();
+        if (!normalizedRegistryId) {
+          throw new Error('MCP registry id is required');
+        }
+        const mcpRuntime = getMcpRuntime();
+        const store = mcpRuntime.getStore();
+        const matchingServers = store
+          .listServers()
+          .filter(server => server.registryId === normalizedRegistryId);
+        for (const server of matchingServers) {
+          store.setEnabled(server.id, options.enabled);
+          if (options.enabled) {
+            mcpRuntime.ensureLaunchResolution(server.id, 'mcp-registry-enabled');
+          }
+        }
+        const servers = store.listServers();
+        syncMcpConfig(syncOpenClawConfig, 'mcp-registry-toggled');
+        return { success: true, servers };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update MCP registry servers',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(McpIpcChannel.RetryLaunchResolution, async (_event, id: string) => {
     try {
