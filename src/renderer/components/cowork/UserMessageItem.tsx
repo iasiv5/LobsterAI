@@ -1,6 +1,7 @@
 import { PhotoIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useMemo, useState } from 'react';
 
+import { hasGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
 import type { CoworkImageAttachmentPreview } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import type { KitReference } from '../../../shared/kit/constants';
@@ -13,6 +14,7 @@ import type { Skill } from '../../types/skill';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import EditIcon from '../icons/EditIcon';
+import GoalIcon from '../icons/GoalIcon';
 import MessageCopyIcon from '../icons/MessageCopyIcon';
 import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 import SkillIcon from '../icons/SkillIcon';
@@ -196,6 +198,7 @@ const UserMessageItem: React.FC<{
   }, []);
 
   const metadata = message.metadata as CoworkMessageMetadata | undefined;
+  const isGoalSettingMessage = hasGoalSettingMessageMetadata(metadata);
   const displayContent = useMemo(
     () => parseUserMessageForDisplay(message.content || '', {
       localMediaAttachments: Array.isArray(metadata?.localMediaAttachments)
@@ -301,27 +304,35 @@ const UserMessageItem: React.FC<{
                   </div>
                 )}
               </div>
-              <div className={messageMetaClassName(isHovered, 'right')} aria-hidden={!isHovered}>
-                <span>{formatMessageDateTime(message.timestamp)}</span>
-                {modelLabel && <span>{modelLabel}</span>}
-                <CopyButton
-                  content={message.content}
-                  onCopy={(result) => reportConversationMessageAction({
-                    actionType: 'copy_message',
-                    message,
-                    params: {
-                      result,
-                      copySource: 'user_message',
-                      copiedLength: message.content.length,
-                    },
-                  })}
-                  visible={isHovered}
-                />
-                {onReEdit && (
-                  <ReEditButton
+              <div className="flex w-full items-center justify-end gap-2">
+                <div className={messageMetaClassName(isHovered, 'right')} aria-hidden={!isHovered}>
+                  <span>{formatMessageDateTime(message.timestamp)}</span>
+                  {modelLabel && <span>{modelLabel}</span>}
+                  <CopyButton
+                    content={message.content}
+                    onCopy={(result) => reportConversationMessageAction({
+                      actionType: 'copy_message',
+                      message,
+                      params: {
+                        result,
+                        copySource: 'user_message',
+                        copiedLength: message.content.length,
+                      },
+                    })}
                     visible={isHovered}
-                    onClick={handleReEditClick}
                   />
+                  {onReEdit && (
+                    <ReEditButton
+                      visible={isHovered}
+                      onClick={handleReEditClick}
+                    />
+                  )}
+                </div>
+                {isGoalSettingMessage && (
+                  <div className="mt-1 inline-flex h-5 shrink-0 items-center gap-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 select-none">
+                    <GoalIcon className="h-4 w-4 text-[var(--icon-secondary)]" />
+                    <span>{i18nService.t('coworkGoalSetAsGoal')}</span>
+                  </div>
                 )}
               </div>
             </div>

@@ -1,10 +1,22 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ExclamationTriangleIcon,
+  PauseCircleIcon,
+  PlayCircleIcon,
+} from '@heroicons/react/24/outline';
 import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
 import { AuthSubscriptionStatus } from '@shared/auth/constants';
 import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import {
+  type CoworkGoal,
+  CoworkGoalStatus,
+  formatCoworkGoalUsage,
+} from '../../../shared/cowork/goal';
 import {
   COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES,
   formatCoworkImageAttachmentLimit,
@@ -47,6 +59,7 @@ import {
   setDraftSkillIds,
   setPlanConfirmationHandled,
   updateCurrentSessionModelOverride,
+  updateSessionGoal,
 } from '../../store/slices/coworkSlice';
 import { setActiveKitIds, toggleActiveKit } from '../../store/slices/kitSlice';
 import type { Model } from '../../store/slices/modelSlice';
@@ -55,6 +68,7 @@ import { CoworkCollaborationMode, CoworkImageAttachment } from '../../types/cowo
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
 import { getAgentDisplayName, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
+import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
@@ -67,11 +81,14 @@ import {
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
 import DefaultAgentIcon from '../icons/DefaultAgentIcon';
+import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
+import PencilIcon from '../icons/PencilIcon';
 import PlanModeIcon from '../icons/PlanModeIcon';
 import PromptAddIcon from '../icons/PromptAddIcon';
 import SkillIcon from '../icons/SkillIcon';
 import TaskPauseIcon from '../icons/TaskPauseIcon';
+import TrashIcon from '../icons/TrashIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import { ActiveKitBadge, KitsButton } from '../kits';
 import ModelSelector, {
@@ -253,6 +270,7 @@ const ContextLabelMaxLength = {
 } as const;
 
 const READ_ONLY_CONTEXT_COMPACT_WIDTH = 168;
+type GoalInputMode = 'start' | 'set';
 
 const truncateDisplayText = (value: string, maxLength: number): string => {
   const trimmed = value.trim();
@@ -266,6 +284,28 @@ const getSendShortcutLabel = (value: string): string => {
   const option = SEND_SHORTCUT_OPTIONS.find(o => o.value === value);
   if (!option) return value;
   return isMacPlatform ? option.labelMac : option.label;
+};
+
+const getGoalStatusLabel = (goal: CoworkGoal): string => {
+  switch (goal.status) {
+    case CoworkGoalStatus.Active:
+      return i18nService.t('coworkGoalStatusActive');
+    case CoworkGoalStatus.Paused:
+      return i18nService.t('coworkGoalStatusPaused');
+    case CoworkGoalStatus.Blocked:
+      return i18nService.t('coworkGoalStatusBlocked');
+    case CoworkGoalStatus.UsageLimited:
+      return i18nService.t('coworkGoalStatusUsageLimited');
+    case CoworkGoalStatus.BudgetLimited:
+      return i18nService.t('coworkGoalStatusBudgetLimited');
+    case CoworkGoalStatus.Complete:
+      return i18nService.t('coworkGoalStatusComplete');
+  }
+};
+
+const getGoalSummary = (goal: CoworkGoal): string => {
+  const usage = formatCoworkGoalUsage(goal);
+  return [getGoalStatusLabel(goal), usage].filter(Boolean).join(' · ');
 };
 
 interface AgentSelectorOption {
@@ -330,6 +370,8 @@ interface CoworkPromptInputProps {
   onManageKits?: () => void;
   sessionId?: string;
   contextUsageControl?: React.ReactNode;
+  goal?: CoworkGoal | null;
+  onGoalCommand?: (command: string) => boolean | void | Promise<boolean | void>;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
 }
@@ -357,6 +399,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onManageKits,
       sessionId,
       contextUsageControl,
+      goal,
+      onGoalCommand,
       remoteManaged = false,
     } = props;
     const dispatch = useDispatch();
@@ -388,6 +432,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [textareaScrollTop, setTextareaScrollTop] = useState(0);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [showSkillsPopover, setShowSkillsPopover] = useState(false);
+    const [goalInputActive, setGoalInputActive] = useState(false);
+    const [goalInputMode, setGoalInputMode] = useState<GoalInputMode>('start');
+    const [goalEditModalOpen, setGoalEditModalOpen] = useState(false);
+    const [goalEditDraft, setGoalEditDraft] = useState('');
+    const [goalEditSaving, setGoalEditSaving] = useState(false);
     const [modelAccessPrompt, setModelAccessPrompt] = useState<ModelAccessPromptKind | null>(null);
     const [showVoiceLoginPrompt, setShowVoiceLoginPrompt] = useState(false);
     const [showVoiceQuotaPrompt, setShowVoiceQuotaPrompt] = useState(false);
@@ -395,6 +444,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
     const addMenuRef = useRef<HTMLDivElement>(null);
+    const goalEditTextareaRef = useRef<HTMLTextAreaElement>(null);
     const skillMenuItemRef = useRef<HTMLButtonElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const agentButtonRef = useRef<HTMLButtonElement>(null);
@@ -404,6 +454,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
     const skillSubmenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const goalInputBaselineRef = useRef<string | null>(null);
+    const goalInputReturnDraftRef = useRef<string | null>(null);
     const draftStartedAnalyticsRef = useRef(false);
     const inputSourceOverrideRef = useRef<'template' | null>(null);
 
@@ -529,7 +581,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large' || isCompact;
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext || isCompact);
-  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode;
+  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode || goalInputActive;
   const hasAttachments = attachments.length > 0;
   const minHeight = isCompact
     ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
@@ -998,6 +1050,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     });
   }, [attachments.length, reportPromptControl, value]);
 
+  const resetGoalInput = useCallback((restoreDraft: boolean) => {
+    const restoredDraft = restoreDraft ? goalInputReturnDraftRef.current : null;
+    goalInputBaselineRef.current = null;
+    goalInputReturnDraftRef.current = null;
+    setGoalInputActive(false);
+    setGoalInputMode('start');
+    if (restoreDraft) {
+      const nextDraft = restoredDraft ?? '';
+      setValue(nextDraft);
+      dispatch(setDraftPrompt({ sessionId: draftKey, draft: nextDraft }));
+    }
+  }, [dispatch, draftKey]);
+
   const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
     let effectiveSubmitMethod = submitMethod;
     if (showFolderSelector && !workingDirectory?.trim()) {
@@ -1032,7 +1097,26 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
 
     const trimmedValue = submitValue.trim();
-    if (isStreaming) {
+    if (goalInputActive && !trimmedValue) {
+      reportPromptControl('submit_blocked', {
+        blockedReason: 'empty_goal',
+        submitMethod: effectiveSubmitMethod,
+        ...getPromptCapabilityAnalyticsParams(),
+      });
+      return;
+    }
+    if (
+      goalInputActive
+      && goalInputMode === 'set'
+      && goalInputBaselineRef.current !== null
+      && trimmedValue === goalInputBaselineRef.current
+    ) {
+      console.debug('[CoworkGoal] goal edit submitted without changes; cancelling edit mode.');
+      resetGoalInput(true);
+      return;
+    }
+    const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
+    if (isStreaming && !goalCommandCanRunWhileStreaming) {
       reportPromptControl('submit_blocked', {
         blockedReason: 'streaming',
         submitMethod: effectiveSubmitMethod,
@@ -1062,7 +1146,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const awaitingPlanConfirmation = planConfirmation?.state === PlanConfirmationState.Awaiting
       ? planConfirmation
       : null;
-    const effectivePlanMode = isPlanMode && !exitsPlanModeForImplementation;
+    const effectivePlanMode = isPlanMode && !goalInputActive && !exitsPlanModeForImplementation;
     const effectiveCollaborationMode = effectivePlanMode
       ? CoworkCollaborationMode.Plan
       : CoworkCollaborationMode.Default;
@@ -1077,6 +1161,44 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         ...getPromptCapabilityAnalyticsParams(),
       });
       setModelAccessPrompt(accessPrompt);
+      return;
+    }
+
+    if (goalInputActive && sessionId && onGoalCommand) {
+      const goalCommand = `/goal ${goalInputMode} ${trimmedValue}`;
+      console.debug(`[CoworkGoal] submitting goal command via goal IPC for session ${sessionId}.`);
+      const accepted = await Promise.resolve(onGoalCommand(goalCommand)).then((result) => result !== false).catch((error) => {
+        console.warn(`[CoworkGoal] failed to submit goal command for session ${sessionId}.`, error);
+        return false;
+      });
+      if (!accepted) {
+        reportPromptControl('submit_blocked', {
+          blockedReason: 'goal_command_rejected',
+          submitMethod: effectiveSubmitMethod,
+          ...getPromptTextAnalyticsParams(trimmedValue),
+          ...getPromptCapabilityAnalyticsParams(),
+        });
+        return;
+      }
+      resetGoalInput(false);
+      setValue('');
+      dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+      setShowAddMenu(false);
+      reportPromptSubmit({
+        ...getPromptContextAnalyticsParams(),
+        submitMethod: effectiveSubmitMethod,
+        promptLength: trimmedValue.length,
+        promptLineCount: trimmedValue.length > 0 ? trimmedValue.split('\n').length : 0,
+        hasPrompt: trimmedValue.length > 0,
+        params: {
+          ...getPromptCapabilityAnalyticsParams(),
+          ...getPromptTextAnalyticsParams(trimmedValue),
+          inputSource: getPromptInputSource(effectiveSubmitMethod, 0),
+          mediaReferenceCount: 0,
+          selectedTextSnippetCount: selectedTextSnippets.length,
+          effectiveCollaborationMode,
+        },
+      });
       return;
     }
 
@@ -1208,8 +1330,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       .filter((a) => !a.path.startsWith('inline:') && !(a.isImage && a.dataUrl))
       .map((attachment) => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
       .join('\n');
-    const finalPrompt = trimmedValue
-      ? (attachmentLines ? `${trimmedValue}\n\n${attachmentLines}` : trimmedValue)
+    const goalCommandPrompt = goalInputActive ? `/goal ${goalInputMode} ${trimmedValue}` : trimmedValue;
+    const finalPrompt = goalCommandPrompt
+      ? (attachmentLines ? `${goalCommandPrompt}\n\n${attachmentLines}` : goalCommandPrompt)
       : attachmentLines;
 
     logPromptModelSelection(
@@ -1249,6 +1372,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       });
       return;
     }
+    if (goalInputActive && sessionId) {
+      const optimisticGoal = applyOptimisticGoalCommand(finalPrompt, goal, sessionId);
+      if (optimisticGoal !== undefined) {
+        console.debug(`[CoworkGoal] applying optimistic goal after submit for session ${sessionId}.`);
+        dispatch(updateSessionGoal({ sessionId, goal: optimisticGoal }));
+      }
+    }
     const promptLineCount = trimmedValue.length > 0 ? trimmedValue.split('\n').length : 0;
     reportPromptSubmit({
       ...getPromptContextAnalyticsParams(),
@@ -1285,9 +1415,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     dispatch(clearDraftAttachments(draftKey));
     dispatch(clearDraftSelectedTextSnippets(draftKey));
     setImageVisionHint(false);
+    resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource]);
+  }, [value, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -1422,7 +1553,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         break;
     }
 
-    if (isSendCombo && isStreaming) {
+    const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
+    if (isSendCombo && isStreaming && !goalCommandCanRunWhileStreaming) {
       event.preventDefault();
       window.dispatchEvent(new CustomEvent('app:showToast', {
         detail: i18nService.t('coworkSessionStillRunning'),
@@ -1842,6 +1974,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     reportPromptControl(nextMode === CoworkCollaborationMode.Plan ? 'plan_mode_enabled' : 'plan_mode_disabled', {
       entry: LogReporterEntry.PromptToolsMenu,
     });
+    if (nextMode === CoworkCollaborationMode.Plan && goalInputActive) {
+      logPromptModelSelection('debug', `goal input mode disabled because plan mode was enabled for draft ${draftKey}`);
+      resetGoalInput(true);
+    }
     dispatch(setDraftCollaborationMode({
       draftKey,
       mode: nextMode,
@@ -1858,7 +1994,125 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         entry: LogReporterEntry.PromptToolsMenu,
       });
     }
-  }, [dispatch, draftKey, isPlanMode, planConfirmation?.messageId, planConfirmation?.state, reportPromptControl]);
+  }, [dispatch, draftKey, goalInputActive, isPlanMode, planConfirmation?.messageId, planConfirmation?.state, reportPromptControl, resetGoalInput]);
+
+  const handleEnableGoalInput = useCallback((mode: GoalInputMode = 'start', initialValue?: string) => {
+    if (disabled || voiceInputLocksEditing || !onGoalCommand) return;
+    handleCloseSkillsPopover();
+    setShowAddMenu(false);
+    goalInputReturnDraftRef.current = value;
+    goalInputBaselineRef.current = mode === 'set' && initialValue !== undefined
+      ? initialValue.trim()
+      : null;
+    if (isPlanMode) {
+      logPromptModelSelection('debug', `plan mode disabled because goal input mode was enabled for draft ${draftKey}`);
+      dispatch(setDraftCollaborationMode({
+        draftKey,
+        mode: CoworkCollaborationMode.Default,
+      }));
+      if (planConfirmation?.state === PlanConfirmationState.Awaiting) {
+        dispatch(setPlanConfirmationHandled({
+          sessionId: draftKey,
+          messageId: planConfirmation.messageId,
+        }));
+      }
+      reportPromptControl('plan_mode_disabled', {
+        entry: 'goal_mode',
+      });
+    }
+    setGoalInputMode(mode);
+    setGoalInputActive(true);
+    if (initialValue !== undefined) {
+      setValue(initialValue);
+      dispatch(setDraftPrompt({ sessionId: draftKey, draft: initialValue }));
+    }
+    reportPromptControl('goal_mode_open', {
+      entry: LogReporterEntry.PromptToolsMenu,
+      hasGoal: !!goal,
+      mode,
+    });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [
+    disabled,
+    dispatch,
+    draftKey,
+    goal,
+    handleCloseSkillsPopover,
+    isPlanMode,
+    onGoalCommand,
+    planConfirmation?.messageId,
+    planConfirmation?.state,
+    reportPromptControl,
+    value,
+    voiceInputLocksEditing,
+  ]);
+
+  const handleOpenGoalEditModal = useCallback((initialValue: string) => {
+    if (disabled || voiceInputLocksEditing || !onGoalCommand) return;
+    handleCloseSkillsPopover();
+    setShowAddMenu(false);
+    setGoalEditDraft(initialValue);
+    setGoalEditModalOpen(true);
+    console.debug('[CoworkGoal] opening goal edit modal.');
+    requestAnimationFrame(() => {
+      goalEditTextareaRef.current?.focus();
+      goalEditTextareaRef.current?.select();
+    });
+  }, [disabled, handleCloseSkillsPopover, onGoalCommand, voiceInputLocksEditing]);
+
+  const handleCloseGoalEditModal = useCallback(() => {
+    if (goalEditSaving) return;
+    setGoalEditModalOpen(false);
+    setGoalEditDraft('');
+    console.debug('[CoworkGoal] closing goal edit modal.');
+  }, [goalEditSaving]);
+
+  const handleSubmitGoalEditModal = useCallback(async () => {
+    if (!goal || !sessionId || !onGoalCommand || goalEditSaving) return;
+    const trimmedValue = goalEditDraft.trim();
+    if (!trimmedValue) return;
+    if (trimmedValue === goal.objective.trim()) {
+      handleCloseGoalEditModal();
+      return;
+    }
+    setGoalEditSaving(true);
+    console.debug(`[CoworkGoal] submitting goal edit modal for session ${sessionId}.`);
+    try {
+      const accepted = await Promise.resolve(onGoalCommand(`/goal set ${trimmedValue}`))
+        .then((result) => result !== false);
+      if (!accepted) {
+        console.warn(`[CoworkGoal] goal edit modal command was rejected for session ${sessionId}.`);
+        return;
+      }
+      setGoalEditModalOpen(false);
+      setGoalEditDraft('');
+    } catch (error) {
+      console.warn(`[CoworkGoal] failed to submit goal edit modal for session ${sessionId}.`, error);
+    } finally {
+      setGoalEditSaving(false);
+    }
+  }, [goal, goalEditDraft, goalEditSaving, handleCloseGoalEditModal, onGoalCommand, sessionId]);
+
+  const handleGoalCommandClick = useCallback((command: string) => {
+    if (disabled || voiceInputLocksEditing || !onGoalCommand) return;
+    const goalAction = command.split(/\s+/, 2)[1] ?? 'unknown';
+    console.debug(`[CoworkGoal] prompt goal status action=${goalAction}`);
+    reportPromptControl('goal_status_action', {
+      action: goalAction,
+      hasGoal: !!goal,
+    });
+    void Promise.resolve(onGoalCommand(command)).then((result) => {
+      if (result === false) return;
+      if (!sessionId) return;
+      const optimisticGoal = applyOptimisticGoalCommand(command, goal, sessionId);
+      if (optimisticGoal !== undefined) {
+        console.debug(`[CoworkGoal] applying optimistic goal action=${goalAction} for session ${sessionId}.`);
+        dispatch(updateSessionGoal({ sessionId, goal: optimisticGoal }));
+      }
+    }).catch((error) => {
+      console.warn(`[CoworkGoal] prompt goal status action=${goalAction} failed.`, error);
+    });
+  }, [disabled, dispatch, goal, onGoalCommand, reportPromptControl, sessionId, voiceInputLocksEditing]);
 
   const handleDisablePlanMode = useCallback((event?: React.MouseEvent) => {
     event?.stopPropagation();
@@ -1951,6 +2205,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   );
   const sendButtonTitle = `${i18nService.t('sendMessage')} (${getSendShortcutLabel(currentSendShortcut)})`;
   const stopButtonLabel = i18nService.t('stop');
+  const goalCommandCanRunWhileStreaming = goalInputActive && !!sessionId && !!onGoalCommand;
   const currentAgentForDisplay: AgentSelectorOption = currentAgent ?? {
     id: currentAgentId,
     name: currentAgentId,
@@ -2095,7 +2350,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       {showAddMenu && (
         <div
           ref={addMenuRef}
-          className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
+          className="absolute bottom-full left-0 z-50 mb-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
           onMouseEnter={cancelCloseSkillsPopover}
           onMouseLeave={scheduleCloseSkillsPopover}
@@ -2128,6 +2383,29 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <SkillIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 flex-1 truncate">{i18nService.t('useSkill')}</span>
             <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (goal?.objective) {
+                handleOpenGoalEditModal(goal.objective);
+              } else {
+                handleEnableGoalInput('start');
+              }
+            }}
+            onMouseEnter={handleCloseSkillsPopover}
+            onFocus={handleCloseSkillsPopover}
+            disabled={disabled || voiceInputLocksEditing || !onGoalCommand}
+            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              goalInputActive ? 'bg-surface-raised text-foreground' : 'text-foreground hover:bg-surface-raised'
+            }`}
+            role="menuitem"
+          >
+            <GoalIcon className="h-5 w-5 shrink-0 text-secondary" />
+            <span className="shrink-0 text-foreground">{i18nService.t('coworkGoal')}</span>
+            <span className="min-w-0 flex-1 truncate text-secondary">
+              {goal?.objective || i18nService.t('coworkGoalMenuDescription')}
+            </span>
           </button>
           <button
             type="button"
@@ -2230,7 +2508,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </button>
   );
 
-  const canUseSubmitButton = canSubmit && !isStreaming;
+  const canUseSubmitButton = canSubmit && (!isStreaming || goalCommandCanRunWhileStreaming);
   const largeSubmitButton = (
     <button
       type="button"
@@ -2283,6 +2561,75 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </div>
   ) : null;
 
+  const goalActionsDisabled = disabled || voiceInputLocksEditing || !onGoalCommand;
+  const sessionGoalStatusBar = goal && !goalInputActive ? (() => {
+    const summary = getGoalSummary(goal);
+    const detail = goal.lastStatusNote
+      ? `${summary}: ${goal.objective} - ${goal.lastStatusNote}`
+      : `${summary}: ${goal.objective}`;
+    const canTogglePause = goal.status !== CoworkGoalStatus.Complete;
+    const pauseCommand = goal.status === CoworkGoalStatus.Active ? '/goal pause' : '/goal resume';
+    const pauseLabel = goal.status === CoworkGoalStatus.Active
+      ? i18nService.t('coworkGoalPause')
+      : i18nService.t('coworkGoalResume');
+    return (
+      <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
+        <div
+          role="status"
+          title={detail}
+          aria-label={detail}
+          className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-surface-raised/70 px-2.5 py-1.5 text-xs text-secondary"
+        >
+          <GoalIcon className={`h-4 w-4 shrink-0 ${
+            goal.status === CoworkGoalStatus.Active
+              ? 'text-primary'
+              : goal.status === CoworkGoalStatus.Complete
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-warning'
+          }`} />
+          <span className="shrink-0 font-semibold text-foreground">{summary}</span>
+          <span className="min-w-0 flex-1 truncate">{goal.objective}</span>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => handleOpenGoalEditModal(goal.objective)}
+              disabled={goalActionsDisabled}
+              className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title={i18nService.t('coworkGoalEdit')}
+              aria-label={i18nService.t('coworkGoalEdit')}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+            {canTogglePause && (
+              <button
+                type="button"
+                onClick={() => handleGoalCommandClick(pauseCommand)}
+                disabled={goalActionsDisabled}
+                className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                title={pauseLabel}
+                aria-label={pauseLabel}
+              >
+                {goal.status === CoworkGoalStatus.Active
+                  ? <PauseCircleIcon className="h-3.5 w-3.5" />
+                  : <PlayCircleIcon className="h-3.5 w-3.5" />}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleGoalCommandClick('/goal clear')}
+              disabled={goalActionsDisabled}
+              className="rounded-md p-1 text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              title={i18nService.t('coworkGoalClear')}
+              aria-label={i18nService.t('coworkGoalClear')}
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
+
   const planModeBadge = isPlanMode ? (
     <button
       type="button"
@@ -2297,6 +2644,27 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       </span>
       <span className="min-w-0 truncate">
         {i18nService.t('coworkPlanMode')}
+      </span>
+    </button>
+  ) : null;
+
+  const goalModeBadge = goalInputActive ? (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        resetGoalInput(true);
+      }}
+      className={ACTIVE_CONTEXT_BADGE_BUTTON_CLASS}
+      title={i18nService.t('coworkGoalClearInputMode')}
+      aria-label={i18nService.t('coworkGoalClearInputMode')}
+    >
+      <span className={ACTIVE_CONTEXT_BADGE_ICON_WRAP_CLASS}>
+        <GoalIcon className={ACTIVE_CONTEXT_BADGE_ICON_CLASS} />
+        <XMarkIcon className={ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS} />
+      </span>
+      <span className="min-w-0 truncate">
+        {i18nService.t('coworkGoal')}
       </span>
     </button>
   ) : null;
@@ -2316,10 +2684,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     >
       <ActiveSkillBadge />
       <ActiveKitBadge />
+      {goalModeBadge}
       {planModeBadge}
     </div>
   ) : null;
-  const textareaPlaceholder = placeholder;
+  const textareaPlaceholder = goalInputActive
+    ? i18nService.t('coworkGoalInputPlaceholder')
+    : placeholder;
 
   const renderMentionTextarea = ({
     rows,
@@ -2444,9 +2815,86 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     setShowVoiceQuotaPrompt(false);
     await window.electron.shell.openExternal(getPortalPricingUrl());
   };
+  const normalizedGoalEditDraft = goalEditDraft.trim();
+  const canSaveGoalEdit = Boolean(
+    goal
+    && normalizedGoalEditDraft
+    && normalizedGoalEditDraft !== goal.objective.trim()
+    && !goalEditSaving
+  );
 
   return (
     <div className="relative">
+      {goalEditModalOpen && (
+        <Modal
+          onClose={handleCloseGoalEditModal}
+          overlayClassName="fixed inset-0 z-[10050] flex items-center justify-center modal-backdrop px-4"
+          className="w-full max-w-xl rounded-2xl border border-border bg-surface p-6 shadow-modal"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cowork-goal-edit-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                handleCloseGoalEditModal();
+              }
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void handleSubmitGoalEditModal();
+              }
+            }}
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary">
+                  <GoalIcon className="h-5 w-5" />
+                </div>
+                <h2 id="cowork-goal-edit-title" className="text-xl font-semibold text-foreground">
+                  {i18nService.t('coworkGoalEdit')}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseGoalEditModal}
+                disabled={goalEditSaving}
+                className="rounded-lg p-1.5 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={i18nService.t('cancel')}
+                title={i18nService.t('cancel')}
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <textarea
+              ref={goalEditTextareaRef}
+              value={goalEditDraft}
+              onChange={(event) => setGoalEditDraft(event.target.value)}
+              disabled={goalEditSaving}
+              placeholder={i18nService.t('coworkGoalInputPlaceholder')}
+              className="min-h-[220px] w-full resize-none rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCloseGoalEditModal}
+                disabled={goalEditSaving}
+                className="rounded-xl bg-surface-raised px-5 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmitGoalEditModal()}
+                disabled={!canSaveGoalEdit}
+                className="rounded-xl bg-foreground px-5 py-2 text-sm font-medium text-background transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-hover disabled:text-muted disabled:opacity-100"
+              >
+                {i18nService.t('save')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {!isLarge && compactAttachmentPreview}
       {!isLarge && selectedTextSnippetPreview}
       {imageVisionHint && (
@@ -2482,6 +2930,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card">
                 {largeAttachmentPreview}
                 {selectedTextSnippetPreview}
+                {sessionGoalStatusBar}
                 {activeSkillContextRow}
                 {renderMentionTextarea({
                   rows: 2,
@@ -2608,6 +3057,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <>
               {largeAttachmentPreview}
               {selectedTextSnippetPreview}
+              {sessionGoalStatusBar}
               {activeSkillContextRow}
               {renderMentionTextarea({
                 rows: isCompact ? 1 : 2,
@@ -2728,6 +3178,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             {isStreaming ? (
               <div className="flex flex-shrink-0 items-center gap-3">
                 {contextUsageControl}
+                {goalCommandCanRunWhileStreaming && (
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit('button')}
+                    disabled={!canUseSubmitButton}
+                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-all ${
+                      canUseSubmitButton
+                        ? 'bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800 active:scale-95 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200'
+                        : 'cursor-not-allowed bg-neutral-300 text-white dark:bg-neutral-700 dark:text-neutral-500'
+                    }`}
+                    aria-label={i18nService.t('sendMessage')}
+                    title={sendButtonTitle}
+                  >
+                    <ArrowUpIcon className="h-[17px] w-[17px]" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleStopClick}

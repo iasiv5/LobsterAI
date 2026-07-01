@@ -8,6 +8,8 @@
  * arrive here already partially stripped (e.g. Feishu messages may be just a bare path).
  */
 
+import { stripGoalCommandPrefixForDisplay } from '../../common/sessionTitle';
+
 // --------------- Pattern A: NIM/DingTalk ---------------
 
 // Placeholder line — e.g. "[图片] https://nos.netease.com/..."
@@ -70,6 +72,9 @@ export function parseUserMessageForDisplay(
 
   // Normalize \r\n to \n so all line-anchored regexes work correctly
   let result = (content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // LobsterAI sends goal-mode submissions to OpenClaw as local /goal commands.
+  // The command is transport/control syntax, not user-facing message text.
+  result = stripGoalCommandPrefixForDisplay(result);
 
   const imagePaths: string[] = [];
   const imagePathKeys = new Set<string>();

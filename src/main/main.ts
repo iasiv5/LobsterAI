@@ -22,6 +22,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
+import { buildGoalSettingMessageMetadata } from '../common/goalCommandDisplay';
 import type { OpenClawSessionPatch } from '../common/openclawSession';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
@@ -2466,6 +2467,18 @@ const bindCoworkRuntimeForwarder = (): void => {
     });
   });
 
+  runtime.on('goalUpdate', (sessionId: string, goal: unknown) => {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach(win => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send(CoworkIpcChannel.StreamGoal, { sessionId, goal });
+      } catch (error) {
+        console.error('[CoworkRuntime] failed to forward goal update:', error);
+      }
+    });
+  });
+
   runtime.on('contextMaintenance', (sessionId: string, active: boolean) => {
     const windows = BrowserWindow.getAllWindows();
     console.log(
@@ -2894,6 +2907,7 @@ function validateCoworkImageAttachmentsForRuntime(
 }
 
 function buildCoworkUserSelectionMetadata(options: {
+  prompt?: string;
   skillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
@@ -2901,7 +2915,9 @@ function buildCoworkUserSelectionMetadata(options: {
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   imageAttachmentPreviews?: CoworkImageAttachmentPreview[];
 }): Record<string, unknown> | undefined {
-  const metadata: Record<string, unknown> = {};
+  const metadata: Record<string, unknown> = {
+    ...(options.prompt ? buildGoalSettingMessageMetadata(options.prompt) : undefined),
+  };
 
   if (options.skillIds?.length) {
     metadata.skillIds = options.skillIds;
@@ -6229,6 +6245,7 @@ if (!gotTheLock) {
         }
         const imageAttachmentPreviews = buildCoworkImageAttachmentPreviews(options.imageAttachments);
         const messageMetadata = buildCoworkUserSelectionMetadata({
+          prompt: options.prompt,
           skillIds: options.activeSkillIds,
           kitIds: options.kitIds,
           kitReferences: options.kitReferences,
@@ -6448,6 +6465,47 @@ if (!gotTheLock) {
       }
     },
   );
+
+  ipcMain.handle(CoworkIpcChannel.GoalCommand, async (
+    _event,
+    options: { sessionId: string; command: string },
+  ) => {
+    try {
+      const engineStatus = await ensureOpenClawRunningForCowork();
+      if (engineStatus.phase !== 'running') {
+        return getEngineNotReadyResponse(engineStatus);
+      }
+      const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
+      const command = typeof options?.command === 'string' ? options.command.trim() : '';
+      if (!sessionId || !command) {
+        return {
+          success: false,
+          error: 'Session id and goal command are required.',
+        };
+      }
+      const runtime = getCoworkEngineRouter();
+      if (!runtime.runGoalCommand) {
+        return {
+          success: false,
+          error: 'Goal commands are not supported by the current runtime.',
+        };
+      }
+      const action = command.split(/\s+/, 2)[1] ?? 'status';
+      console.debug(
+        '[CoworkGoal] goal command IPC received.',
+        `Session ${sessionId}.`,
+        `Action ${action}.`,
+      );
+      const goal = await runtime.runGoalCommand(sessionId, command);
+      return { success: true, goal };
+    } catch (error) {
+      console.error('[CoworkGoal] goal command IPC failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to run goal command',
+      };
+    }
+  });
 
   ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
     try {

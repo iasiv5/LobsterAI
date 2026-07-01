@@ -360,6 +360,8 @@ contextBridge.exposeInMainWorld('electron', {
         dataUrl?: string; role?: string;
       }>;
     }) => ipcRenderer.invoke('cowork:session:continue', options),
+    runGoalCommand: (options: { sessionId: string; command: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.GoalCommand, options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
     deleteSessions: (sessionIds: string[]) =>
@@ -508,6 +510,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { sessionId: string; usage: any }) => callback(data);
       ipcRenderer.on('cowork:stream:contextUsage', handler);
       return () => ipcRenderer.removeListener('cowork:stream:contextUsage', handler);
+    },
+    onStreamGoal: (callback: (data: { sessionId: string; goal: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; goal: any }) => callback(data);
+      ipcRenderer.on(CoworkIpcChannel.StreamGoal, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamGoal, handler);
     },
     onStreamContextMaintenance: (
       callback: (data: { sessionId: string; active: boolean }) => void,

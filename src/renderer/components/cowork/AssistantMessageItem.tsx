@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
+import {
+  type CoworkGoal,
+  formatCoworkGoalCompletionDuration,
+} from '../../../shared/cowork/goal';
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
+import GoalIcon from '../icons/GoalIcon';
 import MessageForkIcon from '../icons/MessageForkIcon';
 import MarkdownContent from '../MarkdownContent';
 import { reportConversationMessageAction } from './conversationAnalytics';
@@ -53,6 +58,7 @@ const AssistantMessageItem: React.FC<{
   showCopyButton?: boolean;
   onFork?: (messageId: string) => void;
   turnMetadata?: CoworkMessageMetadata | null;
+  completedGoal?: CoworkGoal | null;
   planConfirmationMessageId?: string | null;
   onConfirmPlan?: (messageId: string) => void;
   onAdjustPlan?: (messageId: string) => void;
@@ -63,6 +69,7 @@ const AssistantMessageItem: React.FC<{
   showCopyButton = false,
   onFork,
   turnMetadata,
+  completedGoal,
   planConfirmationMessageId,
   onConfirmPlan,
   onAdjustPlan,
@@ -77,6 +84,13 @@ const AssistantMessageItem: React.FC<{
     proposedPlan.planText,
   ].filter((part): part is string => Boolean(part)).join('\n\n');
   const modelLabel = getMessageModelLabel(turnMetadata);
+  const goalCompletionDuration = completedGoal
+    ? formatCoworkGoalCompletionDuration(completedGoal)
+    : null;
+  const goalCompletionLabel = goalCompletionDuration
+    ? i18nService.t('coworkGoalCompletedIn').replace('{duration}', goalCompletionDuration)
+    : null;
+  const metaVisible = isHovered || !!goalCompletionLabel;
   const showPlanConfirmationActions = planConfirmationMessageId === message.id;
   const handleImageClick = useCallback((image: ImagePreviewSource) => {
     reportConversationMessageAction({
@@ -137,7 +151,13 @@ const AssistantMessageItem: React.FC<{
               onImageClick={handleImageClick}
             />
             {showCopyButton && (
-              <div className={messageMetaClassName(isHovered)} aria-hidden={!isHovered}>
+              <div className={messageMetaClassName(metaVisible)} aria-hidden={!metaVisible}>
+                {goalCompletionLabel && (
+                  <span className="inline-flex items-center gap-1 text-secondary">
+                    <GoalIcon className="h-3.5 w-3.5" />
+                    <span>{goalCompletionLabel}</span>
+                  </span>
+                )}
                 <span>{formatMessageDateTime(message.timestamp)}</span>
                 {modelLabel && <span>{modelLabel}</span>}
                 {onFork && (
@@ -178,7 +198,13 @@ const AssistantMessageItem: React.FC<{
         )}
       </div>
       {showCopyButton && !displayContent && (
-        <div className={messageMetaClassName(isHovered)} aria-hidden={!isHovered}>
+        <div className={messageMetaClassName(metaVisible)} aria-hidden={!metaVisible}>
+          {goalCompletionLabel && (
+            <span className="inline-flex items-center gap-1 text-secondary">
+              <GoalIcon className="h-3.5 w-3.5" />
+              <span>{goalCompletionLabel}</span>
+            </span>
+          )}
           <span>{formatMessageDateTime(message.timestamp)}</span>
           {modelLabel && <span>{modelLabel}</span>}
           {onFork && (

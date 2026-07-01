@@ -44,6 +44,32 @@ describe('passthrough (no transformation)', () => {
   });
 });
 
+// ─── LobsterAI goal mode ────────────────────────────────────
+
+describe('LobsterAI goal mode command display', () => {
+  test('strips /goal start prefix from displayed user text', () => {
+    const input = '/goal start 帮我做一个烘焙工作室的展示网页';
+    expect(parseUserMessageForDisplay(input)).toBe('帮我做一个烘焙工作室的展示网页');
+  });
+
+  test('strips /goal set and preserves following attachment lines', () => {
+    const input = [
+      '/goal set Ship the landing page',
+      '',
+      '文件: /Users/admin/Desktop/brief.md',
+    ].join('\n');
+    expect(parseUserMessageForDisplay(input)).toBe([
+      'Ship the landing page',
+      '',
+      '文件: /Users/admin/Desktop/brief.md',
+    ].join('\n'));
+  });
+
+  test('does not strip non-start goal commands', () => {
+    expect(parseUserMessageForDisplay('/goal status')).toBe('/goal status');
+  });
+});
+
 // ─── Pattern A: NIM/DingTalk ────────────────────────────────
 
 describe('Pattern A: NIM/DingTalk', () => {

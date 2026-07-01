@@ -14,6 +14,8 @@ export const CoworkIpcChannel = {
   GetSessionMessageRailIndex: 'cowork:session:getMessageRailIndex',
   OpenSessionFromNotification: 'cowork:session:openFromNotification',
   OpenSessionFromNotificationReady: 'cowork:session:openFromNotificationReady',
+  GoalCommand: 'cowork:session:goalCommand',
+  StreamGoal: 'cowork:stream:goal',
 } as const;
 export type CoworkIpcChannel = typeof CoworkIpcChannel[keyof typeof CoworkIpcChannel];
 

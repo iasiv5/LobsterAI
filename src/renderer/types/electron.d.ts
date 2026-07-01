@@ -12,6 +12,7 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import type { CoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   DataMigrationBackupResult,
@@ -675,6 +676,13 @@ interface IElectronAPI {
       code?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
+    runGoalCommand: (options: { sessionId: string; command: string }) => Promise<{
+      success: boolean;
+      goal?: CoworkGoal | null;
+      error?: string;
+      code?: string;
+      engineStatus?: OpenClawEngineStatus;
+    }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
@@ -855,6 +863,9 @@ interface IElectronAPI {
     ) => () => void;
     onStreamContextUsage?: (
       callback: (data: { sessionId: string; usage: CoworkContextUsage }) => void,
+    ) => () => void;
+    onStreamGoal?: (
+      callback: (data: { sessionId: string; goal: CoworkGoal | null }) => void,
     ) => () => void;
     onStreamContextMaintenance?: (
       callback: (data: { sessionId: string; active: boolean }) => void,

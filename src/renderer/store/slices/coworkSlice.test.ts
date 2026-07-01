@@ -10,6 +10,7 @@ import coworkReducer, {
   setSessions,
   updateCurrentSessionModelOverride,
   updateMessageContent,
+  updateSessionGoal,
   updateSessionStatus,
   updateSessionTitle,
   updateToolUseMediaStatus,
@@ -123,6 +124,38 @@ test('addSession preserves the agent id in session summaries', () => {
   })));
 
   expect(state.sessions[0].agentId).toBe('agent-2');
+});
+
+test('updateSessionGoal updates the current session and session summary', () => {
+  const session = makeSession({ updatedAt: 1234 });
+  const goal = {
+    id: 'goal-1',
+    objective: 'Ship goal mode',
+    status: 'active' as const,
+    createdAt: 100,
+    updatedAt: 100,
+    tokensUsed: 0,
+  };
+
+  const state = coworkReducer(
+    coworkReducer(undefined, addSession(session)),
+    updateSessionGoal({ sessionId: session.id, goal }),
+  );
+
+  expect(state.currentSession?.goal).toEqual(goal);
+  expect(state.currentSession?.updatedAt).toBe(1234);
+  expect(state.sessions[0].goal).toEqual(goal);
+  expect(state.sessions[0].updatedAt).toBe(1234);
+
+  const cleared = coworkReducer(
+    state,
+    updateSessionGoal({ sessionId: session.id, goal: null }),
+  );
+
+  expect(cleared.currentSession?.goal).toBeNull();
+  expect(cleared.currentSession?.updatedAt).toBe(1234);
+  expect(cleared.sessions[0].goal).toBeNull();
+  expect(cleared.sessions[0].updatedAt).toBe(1234);
 });
 
 test('setCurrentSession preserves the agent id when inserting a summary', () => {

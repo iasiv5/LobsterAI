@@ -2,6 +2,7 @@ import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { buildGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
 import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
 import { buildCoworkImageAttachmentPreviews } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
@@ -19,12 +20,13 @@ import {
   selectCurrentSession,
   selectIsStreaming,
 } from '../../store/selectors/coworkSelectors';
-import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
+import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionGoal, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus, type SubagentSessionSummary } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
+import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import CreditsResetCampaignFloat from '../CreditsResetCampaignFloat';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -303,6 +305,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         i18nService.t('coworkDefaultSessionTitle')
       );
       const now = Date.now();
+      const optimisticGoal = applyOptimisticGoalCommand(prompt, null, tempSessionId, now);
 
       // Capture active skill IDs and kit IDs before clearing them
       const sessionSkillIds = [...activeSkillIds];
@@ -315,6 +318,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         resolvedKitCapabilities,
       } = buildCapabilitySelection(sessionSkillIds, sessionKitIds);
       const isPlanMode = collaborationMode === CoworkCollaborationMode.Plan;
+      const goalSettingMetadata = buildGoalSettingMessageMetadata(prompt);
       const displayDirectSkillIds = directSkillIds;
       const displayKitIds = sessionKitIds;
       const effectiveRuntimeSkillIds = isPlanMode ? [] : runtimeSkillIds;
@@ -338,14 +342,16 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         activeSkillIds: effectiveRuntimeSkillIds,
         activeKitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
         agentId: currentAgentId,
+        ...(optimisticGoal !== undefined ? { goal: optimisticGoal } : {}),
         messages: [
           {
             id: `msg-${now}`,
             type: 'user',
             content: prompt,
             timestamp: now,
-            metadata: (displayDirectSkillIds.length > 0 || displayKitIds.length > 0 || imageAttachmentPreviews?.length || (selectedTextSnippets && selectedTextSnippets.length > 0))
+            metadata: (displayDirectSkillIds.length > 0 || displayKitIds.length > 0 || imageAttachmentPreviews?.length || (selectedTextSnippets && selectedTextSnippets.length > 0) || goalSettingMetadata)
               ? {
+                ...goalSettingMetadata,
                 ...(displayDirectSkillIds.length > 0 ? { skillIds: displayDirectSkillIds } : {}),
                 ...(displayKitIds.length > 0 ? {
                   kitIds: displayKitIds,
@@ -427,6 +433,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       if (!startedSession) {
         return false;
       }
+      if (optimisticGoal !== undefined) {
+        const startedGoal = applyOptimisticGoalCommand(prompt, null, startedSession.id, Date.now());
+        if (startedGoal !== undefined) {
+          console.debug(`[CoworkGoal] applying optimistic goal after session start for session ${startedSession.id}.`);
+          dispatch(updateSessionGoal({ sessionId: startedSession.id, goal: startedGoal }));
+        }
+      }
       if (isPlanMode) {
         dispatch(setDraftCollaborationMode({
           draftKey: startedSession.id,
@@ -447,6 +460,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       }
       isStartingRef.current = false;
     }
+  };
+
+  const handleStartGoalSession = (command: string) => {
+    console.debug('[CoworkGoal] dispatching new goal session from home prompt.');
+    void handleStartSession(command);
   };
 
   const handleContinueSession = async (
@@ -825,6 +843,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               showAgentSelector={true}
               onManageSkills={() => onShowSkills?.()}
               onManageKits={() => onShowKits?.()}
+              onGoalCommand={handleStartGoalSession}
             />
           </div>
 

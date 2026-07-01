@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
+import type { CoworkGoal } from '../../../shared/cowork/goal';
 import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
   type CoworkMessageRailIndexItem,
@@ -370,6 +371,7 @@ const toSessionSummary = (session: CoworkSession): CoworkSessionSummary => ({
   parentSessionId: session.parentSessionId ?? null,
   forkedAt: session.forkedAt ?? null,
   forkMode: session.forkMode,
+  goal: session.goal ?? null,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
 });
@@ -481,6 +483,17 @@ const coworkSlice = createSlice({
 
       if (status === CoworkSessionStatusValue.Completed) {
         markSessionUnread(state, sessionId);
+      }
+    },
+
+    updateSessionGoal(state, action: PayloadAction<{ sessionId: string; goal: CoworkGoal | null }>) {
+      const { sessionId, goal } = action.payload;
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].goal = goal;
+      }
+      if (state.currentSession?.id === sessionId) {
+        state.currentSession.goal = goal;
       }
     },
 
@@ -893,6 +906,7 @@ export const {
   clearDraftSelectedTextSnippets,
   addSession,
   updateSessionStatus,
+  updateSessionGoal,
   deleteSession,
   deleteSessions,
   setMessageRailIndexLoading,
