@@ -34,7 +34,7 @@
 <h3 align="center"><a href="https://lobsterai.youdao.com/#/download-list"><ins>下载 LobsterAI</ins></a></h3>
 
 <p align="center">
-  <img src="docs/res/main_zh.png" alt="main page" />
+  <img src="docs/res/mainpage_zh.png" alt="main page" />
 </p>
 
 LobsterAI 是一个可以进入真实工作环境的桌面级 Agent：本地文件、终端命令、浏览器流程、文档、表格、幻灯片、IM 渠道、定时任务和项目工作区。

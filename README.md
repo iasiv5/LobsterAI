@@ -34,7 +34,7 @@
 <h3 align="center"><a href="https://lobsterai.youdao.com/#/download-list"><ins>Download LobsterAI</ins></a></h3>
 
 <p align="center">
-  <img src="docs/res/main_en.png" alt="main page" />
+  <img src="docs/res/mainpage_en.png" alt="main page" />
 </p>
 
 LobsterAI is a desktop Agent that can operate in your real working environment: local files, terminal commands, browser workflows, documents, spreadsheets, slides, IM channels, scheduled jobs, and project workspaces.
