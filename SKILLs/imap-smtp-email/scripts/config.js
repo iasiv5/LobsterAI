@@ -282,6 +282,7 @@ module.exports = {
   normalizeAccounts,
   redactAccount,
   redactEmail,
+  resolveAccount,
   slugifyAccountId,
   withAccountResult,
 };

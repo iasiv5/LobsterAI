@@ -11,10 +11,28 @@ const path = require('path');
 const {
   createSmtpConfig,
   getTargetAccounts,
+  loadAccountsConfig,
+  resolveAccount,
   listAccountsConfig,
   redactAccount,
   redactEmail,
 } = require('./config');
+
+function redactAddressList(value) {
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values.map(item => redactEmail(String(item)));
+}
+
+function resolveRecipientAccount(accountId) {
+  const config = loadAccountsConfig();
+  return resolveAccount(config, accountId);
+}
+
+function containsRedactedAddress(value) {
+  if (!value) return false;
+  return String(value).split(',').some(item => item.includes('*'));
+}
 
 // Parse command-line arguments
 function parseArgs() {
@@ -49,6 +67,15 @@ function createTransporter(account) {
 
 // Send email
 async function sendEmail(account, options) {
+  if (options['to-account']) {
+    const recipientAccount = resolveRecipientAccount(options['to-account']);
+    options.to = recipientAccount.email;
+    options.recipientAccountId = recipientAccount.id;
+  }
+  if (containsRedactedAddress(options.to) || containsRedactedAddress(options.cc) || containsRedactedAddress(options.bcc)) {
+    throw new Error('Refusing to send to a redacted email address. Use the full recipient address or --to-account <id> for a configured account.');
+  }
+
   if (account.requireSendConfirmation !== false && options.confirmed !== true && options.confirmed !== 'true') {
     return {
       success: false,
@@ -89,14 +116,24 @@ async function sendEmail(account, options) {
   }
 
   const info = await transporter.sendMail(mailOptions);
+  const accepted = redactAddressList(info.accepted);
+  const rejected = redactAddressList(info.rejected);
+  const pending = redactAddressList(info.pending);
 
   return {
     success: true,
+    status: rejected.length > 0 ? 'partially_accepted_by_smtp' : 'accepted_by_smtp',
+    message: 'Email was accepted by the SMTP server. Final delivery can still fail later and may appear as a bounce email.',
     accountId: account.id,
-    accountName: account.name,
+    accountName: redactEmail(account.name),
+    from: redactEmail(mailOptions.from),
+    recipientAccountId: options.recipientAccountId,
+    accepted,
+    rejected,
+    pending,
     messageId: info.messageId,
     response: info.response,
-    to: mailOptions.to,
+    to: redactEmail(mailOptions.to),
   };
 }
 
@@ -188,7 +225,9 @@ async function main() {
         }
         account = getTargetAccounts(options).accounts[0];
         if (!options.to) {
-          throw new Error('Missing required option: --to <email>');
+          if (!options['to-account']) {
+            throw new Error('Missing required option: --to <email> or --to-account <id>');
+          }
         }
         if (!options.subject && !options['subject-file']) {
           throw new Error('Missing required option: --subject <text> or --subject-file <file>');
@@ -241,6 +280,7 @@ async function main() {
         console.error('\nUsage:');
         console.error('  accounts List configured accounts without secrets');
         console.error('  send   --to <email> --subject <text> [--body <text>] [--html] [--cc <email>] [--bcc <email>] [--attach <file>]');
+        console.error('  send   --to-account <id> --subject <text> [--body <text>] [--html] [--attach <file>]');
         console.error('  send   --to <email> --subject <text> --body-file <file> [--html-file <file>] [--attach <file>]');
         console.error('  test   Test SMTP connection');
         console.error('  verify Verify SMTP connection without sending email');

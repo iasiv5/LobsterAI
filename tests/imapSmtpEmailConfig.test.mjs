@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 
@@ -248,6 +249,87 @@ test('preserves explicit disabled-account errors', withTempDir(async tempDir => 
   } finally {
     restore();
   }
+}));
+
+test('resolves configured recipient accounts by id without exposing full address in listings', withTempDir(async tempDir => {
+  fs.writeFileSync(path.join(tempDir, 'accounts.json'), JSON.stringify({
+    version: 1,
+    defaultAccountId: 'sender',
+    accounts: [
+      {
+        id: 'sender',
+        enabled: true,
+        email: 'sender@example.com',
+        password: 'secret',
+        imapHost: 'imap.sender.example.com',
+        smtpHost: 'smtp.sender.example.com',
+      },
+      {
+        id: 'recipient',
+        enabled: true,
+        email: 'recipient@example.com',
+        password: 'secret',
+        imapHost: 'imap.recipient.example.com',
+        smtpHost: 'smtp.recipient.example.com',
+      },
+    ],
+  }));
+
+  const { module, restore } = await loadConfigModule(tempDir);
+  try {
+    const listed = module.listAccountsConfig();
+    assert.equal(listed.accounts[1].email, 're***@example.com');
+
+    const config = module.loadAccountsConfig();
+    const recipient = module.resolveAccount(config, 'recipient');
+    assert.equal(recipient.email, 'recipient@example.com');
+  } finally {
+    restore();
+  }
+}));
+
+test('smtp CLI rejects redacted recipient addresses before sending', withTempDir(async tempDir => {
+  fs.writeFileSync(path.join(tempDir, 'accounts.json'), JSON.stringify({
+    version: 1,
+    defaultAccountId: 'sender',
+    accounts: [
+      {
+        id: 'sender',
+        enabled: true,
+        email: 'sender@example.com',
+        password: 'secret',
+        imapHost: 'imap.sender.example.com',
+        smtpHost: 'smtp.sender.example.com',
+      },
+    ],
+  }));
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      'SKILLs/imap-smtp-email/scripts/smtp.js',
+      'send',
+      '--to',
+      're***@example.com',
+      '--subject',
+      'test',
+      '--body',
+      'test',
+      '--confirmed',
+    ],
+    {
+      cwd: path.resolve('.'),
+      env: {
+        ...process.env,
+        EMAIL_ACCOUNTS_PATH: path.join(tempDir, 'accounts.json'),
+        EMAIL_ENV_PATH: path.join(tempDir, '.env'),
+      },
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Refusing to send to a redacted email address/);
 }));
 
 test('loads legacy .env when accounts.json is absent', withTempDir(async tempDir => {

@@ -2,7 +2,7 @@
 name: imap-smtp-email
 description: Read and send email via IMAP/SMTP. Check for new/unread messages, fetch content, search mailboxes, mark as read/unread, and send emails with attachments. Works with any IMAP/SMTP server including Gmail, Outlook, 163.com, vip.163.com, 126.com, vip.126.com, 188.com, and vip.188.com.
 official: true
-version: 1.0.4
+version: 1.0.6
 ---
 
 # IMAP/SMTP Email Tool
@@ -31,6 +31,10 @@ For multi-account setups:
 - JSON results for read/list commands include `success`, redacted account metadata, `command`, `count`, and result arrays such as `messages` or `mailboxes`.
 
 For sending email, always review recipient, subject, sender account, and body with the user first. Sending is blocked unless `--confirmed` is passed.
+
+For SMTP send results, `success: true` means the sending SMTP server accepted the message for processing. Do not claim final delivery or inbox receipt. Report it as "submitted to the SMTP server" and mention that the recipient provider may still reject it later via a bounce message. If `rejected` or `pending` recipients are present, call them out explicitly.
+
+Never use a redacted account email such as `ab***@example.com` as a recipient address. If the user asks to send to another configured email account, use that account's `id` with `--to-account <id>` so the script resolves the real address internally without exposing it.
 
 ## Configuration Reference
 
@@ -167,7 +171,7 @@ node scripts/smtp.js accounts
 ```
 
 ### send
-Send email via SMTP.
+Submit email via SMTP. A successful command means the SMTP server accepted the message for processing, not that the recipient inbox has received it.
 
 ```bash
 node scripts/smtp.js send --to <email> --subject <text> --confirmed [options]
@@ -187,6 +191,7 @@ node scripts/smtp.js send --to <email> --subject <text> --confirmed [options]
 - `--attach <file>`: Attachments (comma-separated)
 - `--from <email>`: Override default sender
 - `--account <id>`: Send from a specific configured account
+- `--to-account <id>`: Send to a configured account by ID without exposing its full email address
 - `--confirmed`: Required after the user confirms the email details
 
 **Examples:**
@@ -202,6 +207,9 @@ node scripts/smtp.js send --to recipient@example.com --subject "Report" --body "
 
 # Multiple recipients
 node scripts/smtp.js send --to "a@example.com,b@example.com" --cc "c@example.com" --subject "Update" --body "Team update"
+
+# Send to another configured account by ID
+node scripts/smtp.js send --account default --to-account account-2 --subject "Hello" --body "World"
 ```
 
 ### test
