@@ -108,8 +108,14 @@ const ToolCallGroup: React.FC<{
   const toolInputSummaryRaw = getToolInputSummary(rawToolName, toolInput) ?? toolInputDisplayRaw;
   const toolInputSummary = toolInputSummaryRaw ? mapText(toolInputSummaryRaw) : null;
   const [isExpanded, setIsExpanded] = useState(shouldExpandByDefault);
-  const collapsedToolResult = toolResult ? getToolResultCollapsedDisplay(toolResult) : null;
-  const toolResultDisplayRaw = toolResult && isExpanded ? getToolResultDisplay(toolResult) : '';
+  const collapsedToolResult = useMemo(
+    () => toolResult ? getToolResultCollapsedDisplay(toolResult) : null,
+    [toolResult],
+  );
+  const toolResultDisplayRaw = useMemo(
+    () => toolResult && isExpanded ? getToolResultDisplay(toolResult) : '',
+    [isExpanded, toolResult],
+  );
   const toolResultDisplay = toolResultDisplayRaw ? mapText(toolResultDisplayRaw) : '';
   const hasExpandedToolResultText = hasText(toolResultDisplay);
   const hasToolResultText = isExpanded

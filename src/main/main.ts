@@ -149,6 +149,7 @@ import {
   initScheduledTaskHelpers,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
+import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
 import { registerSkillHandlers } from './ipcHandlers/skills';
 import {
   type CoworkAgentEngine,
@@ -7248,6 +7249,14 @@ if (!gotTheLock) {
       }
     },
   );
+
+  // ── Session diagnostics IPC ────────────────────────────────────────────
+
+  registerSessionDiagnosticsHandlers({
+    getDatabase: () => getStore().getDatabase(),
+    getAppVersion: () => app.getVersion(),
+    getDownloadsPath: () => app.getPath('downloads'),
+  });
 
   // ── Subagent tracking IPC ──────────────────────────────────────────────
 

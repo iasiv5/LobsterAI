@@ -38,6 +38,18 @@ test('collapsed tool result display keeps small output details', () => {
   expect(collapsed.text).toBe('line one\nline two');
 });
 
+test('collapsed tool result display summarizes medium output without structured formatting', () => {
+  const mediumJson = `{"value":"${'x'.repeat(TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS)}"}`;
+  const collapsed = getToolResultCollapsedDisplay(createToolResultMessage(mediumJson));
+
+  expect(collapsed.hasText).toBe(true);
+  expect(collapsed.isLarge).toBe(true);
+  expect(collapsed.sizeLabel).not.toBeNull();
+  expect(collapsed.lineCount).toBe(0);
+  expect(collapsed.text.length).toBeLessThan(mediumJson.length);
+  expect(collapsed.text).not.toContain('\n  "value"');
+});
+
 test('collapsed tool result display summarizes large output without full formatting', () => {
   const largeOutput = `first line\n${'x'.repeat(TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS)}`;
   const collapsed = getToolResultCollapsedDisplay(createToolResultMessage(largeOutput));

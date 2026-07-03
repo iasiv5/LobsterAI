@@ -1070,6 +1070,25 @@ class CoworkService {
     }
   }
 
+  async exportSessionDiagnostics(options: {
+    sessionId: string;
+  }): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.exportSessionDiagnostics) {
+      return { success: false, error: 'Cowork diagnostics export API not available' };
+    }
+
+    try {
+      const result = await cowork.exportSessionDiagnostics(options);
+      return result ?? { success: false, error: 'Failed to export session diagnostics' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to export session diagnostics',
+      };
+    }
+  }
+
   async loadSession(sessionId: string): Promise<CoworkSession | null> {
     const cowork = window.electron?.cowork;
     if (!cowork) return null;
