@@ -931,6 +931,9 @@ const ArtifactTabPlusIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => 
   </svg>
 );
 
+const artifactTabCloseButtonClassName =
+  'mr-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-transparent transition-colors group-hover:bg-muted group-hover:text-background hover:!bg-foreground hover:!text-background';
+
 const ArtifactBrowserTabIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" {...props}>
     <circle cx="8" cy="8" r="6" />
@@ -4392,14 +4395,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                           event.stopPropagation();
                           handleCloseArtifactFileListTab();
                         }}
-                        className={`mr-1 rounded p-0.5 transition-colors ${
-                          activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.FileList
-                            ? 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
-                            : 'text-secondary hover:bg-surface-hover hover:text-foreground'
-                        }`}
+                        className={artifactTabCloseButtonClassName}
                         title={i18nService.t('artifactCloseTab')}
                       >
-                        <ArtifactTabCloseIcon className="h-3 w-3" />
+                        <ArtifactTabCloseIcon className="h-2.5 w-2.5" />
                       </button>
                     </div>
                   )}
@@ -4431,14 +4430,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                           event.stopPropagation();
                           handleCloseArtifactBrowserTab();
                         }}
-                        className={`mr-1 rounded p-0.5 transition-colors ${
-                          activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.Browser
-                            ? 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
-                            : 'text-secondary hover:bg-surface-hover hover:text-foreground'
-                        }`}
+                        className={artifactTabCloseButtonClassName}
                         title={i18nService.t('artifactCloseTab')}
                       >
-                        <ArtifactTabCloseIcon className="h-3 w-3" />
+                        <ArtifactTabCloseIcon className="h-2.5 w-2.5" />
                       </button>
                     </div>
                   )}
@@ -4470,14 +4465,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                           event.stopPropagation();
                           handleCloseArtifactSubagentTab();
                         }}
-                        className={`mr-1 rounded p-0.5 transition-colors ${
-                          activeArtifactPreviewTab || activeSpecialPreviewTab !== ArtifactSpecialTab.Subagents
-                            ? 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
-                            : 'text-secondary hover:bg-surface-hover hover:text-foreground'
-                        }`}
+                        className={artifactTabCloseButtonClassName}
                         title={i18nService.t('artifactCloseTab')}
                       >
-                        <ArtifactTabCloseIcon className="h-3 w-3" />
+                        <ArtifactTabCloseIcon className="h-2.5 w-2.5" />
                       </button>
                     </div>
                   )}
@@ -4509,14 +4500,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                             event.stopPropagation();
                             handleCloseArtifactTab(tab.id);
                           }}
-                          className={`mr-1 rounded p-0.5 transition-colors ${
-                            isActive
-                              ? 'text-secondary hover:bg-surface-hover hover:text-foreground'
-                              : 'text-transparent group-hover:text-secondary group-hover:hover:bg-surface-hover group-hover:hover:text-foreground'
-                          }`}
+                          className={artifactTabCloseButtonClassName}
                           title={i18nService.t('artifactCloseTab')}
                         >
-                          <ArtifactTabCloseIcon className="h-3 w-3" />
+                          <ArtifactTabCloseIcon className="h-2.5 w-2.5" />
                         </button>
                       </div>
                     );

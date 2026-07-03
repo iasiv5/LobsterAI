@@ -779,7 +779,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-h-0 relative">
-        <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 pt-[clamp(88px,19vh,140px)] pb-8">
+        <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 py-8">
+          {/* Flexible spacers (2:3) keep the welcome block at the optical
+              center on tall windows; min-h preserves breathing room before
+              the page starts scrolling on short windows. */}
+          <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
           {/* Welcome Section - staggered entrance animation */}
           <div className="w-full max-w-3xl text-center">
             <img
@@ -842,6 +846,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             )}
             <CreditsResetCampaignFloat />
           </div>
+          <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />
         </div>
       </div>
     </div>

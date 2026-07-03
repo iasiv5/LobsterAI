@@ -568,7 +568,6 @@ const App: React.FC = () => {
     window.electron.window.close();
   }, []);
 
-  const handleWelcomeClose = useCallback(() => setShowWelcome(false), []);
   const handleWelcomeLogin = useCallback(async () => {
     setShowWelcome(false);
     await authService.login();
@@ -1116,7 +1115,6 @@ const App: React.FC = () => {
         <WelcomeDialog
           onLogin={handleWelcomeLogin}
           onCustomModel={handleWelcomeCustomModel}
-          onClose={handleWelcomeClose}
         />
       )}
     </div>

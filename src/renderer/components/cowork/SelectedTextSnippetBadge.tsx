@@ -70,6 +70,10 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
   if (snippets.length === 0) return null;
   const canRemove = Boolean(onClear || onRemove);
   const popoverAlignmentClass = align === 'right' ? 'right-0' : 'left-0';
+  const popoverOriginClass = align === 'right' ? 'origin-bottom-right' : 'origin-bottom-left';
+  const pillSurfaceClass = expanded
+    ? 'bg-surface-raised/70'
+    : 'bg-surface hover:bg-surface-raised/50';
   const popoverWidthUnits = clampSelectedTextPopoverWidth(
     snippets.reduce((longestWidth, snippet) => {
       const sourceLabelWidth = getApproximateTextWidthUnits(getSourceLabel(snippet));
@@ -92,13 +96,14 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
 
   return (
     <div ref={rootRef} className="group relative inline-flex max-w-full">
-      <div className="inline-flex h-7 max-w-full items-center rounded-full border border-border bg-surface-raised text-xs text-foreground shadow-subtle transition-colors hover:bg-surface">
+      <div className={`inline-flex h-7 max-w-full items-center rounded-full border border-border text-xs text-foreground shadow-subtle transition-colors ${pillSurfaceClass}`}>
         <button
           type="button"
           onClick={() => setExpanded(value => !value)}
+          aria-expanded={expanded}
           className="inline-flex h-full min-w-0 items-center gap-1.5 rounded-full pl-2.5 pr-2 text-left"
         >
-          <SelectedTextIcon className="h-4 w-4 shrink-0 text-foreground" />
+          <SelectedTextIcon className="h-4 w-4 shrink-0 text-secondary" />
           <span className="min-w-0 truncate">
             {i18nService.t('coworkSelectedTextSnippetCount').replace('{count}', String(snippets.length))}
           </span>
@@ -107,7 +112,7 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
           <button
             type="button"
             onClick={handleClear}
-            className="pointer-events-none mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface text-secondary opacity-0 transition-all hover:bg-surface-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+            className="pointer-events-none mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted opacity-0 transition-all hover:bg-surface-raised hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
             title={i18nService.t('coworkSelectedTextRemove')}
             aria-label={i18nService.t('coworkSelectedTextRemove')}
           >
@@ -117,12 +122,13 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
       </div>
       {expanded && (
         <div
-          className={`absolute bottom-full ${popoverAlignmentClass} z-50 mb-1.5 max-w-[calc(100vw-48px)] rounded-xl border border-border bg-surface p-2 shadow-popover`}
+          className={`absolute bottom-full ${popoverAlignmentClass} z-50 mb-1.5 max-w-[calc(100vw-48px)] ${popoverOriginClass} animate-scale-in rounded-xl border border-border bg-surface p-1.5 shadow-popover`}
           style={popoverStyle}
         >
           <div className="flex max-h-56 max-w-full flex-col items-stretch gap-1 overflow-y-auto">
             {snippets.map(snippet => (
-              <div key={snippet.id} className="flex w-full items-start gap-1 rounded-lg bg-surface-raised px-2 py-1.5 text-xs text-secondary">
+              <div key={snippet.id} className="group/snippet relative flex w-full items-start gap-1 rounded-lg bg-surface-raised/40 py-1.5 pl-3.5 pr-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised/80">
+                <span aria-hidden="true" className="absolute inset-y-1.5 left-1.5 w-0.5 rounded-full bg-primary/40 transition-colors group-hover/snippet:bg-primary/60" />
                 <button
                   type="button"
                   onClick={() => {
@@ -145,7 +151,7 @@ const SelectedTextSnippetBadge: React.FC<SelectedTextSnippetBadgeProps> = ({
                   <button
                     type="button"
                     onClick={() => onRemove(snippet.id)}
-                    className="shrink-0 rounded p-0.5 hover:bg-surface"
+                    className="pointer-events-none shrink-0 rounded-md p-0.5 text-muted opacity-0 transition-all hover:bg-surface hover:text-foreground focus-visible:opacity-100 group-hover/snippet:pointer-events-auto group-hover/snippet:opacity-100 group-focus-within/snippet:pointer-events-auto group-focus-within/snippet:opacity-100"
                     title={i18nService.t('coworkSelectedTextRemove')}
                   >
                     <XMarkIcon className="h-3.5 w-3.5" />
