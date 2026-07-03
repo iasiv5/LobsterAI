@@ -3732,6 +3732,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Confirm;
   const isNodeDeploymentStatusDialog =
     nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Status;
+  const shouldShowNodeDeploymentHeaderMessage = Boolean(
+    nodeDeploymentDialog?.message &&
+      (isNodeDeploymentAccessModeDialog || isNodeDeploymentConfirmDialog),
+  );
   const nodeDeploymentAnalysis = nodeDeploymentDialog?.analysis;
   const nodeDeploymentSelectedAccessMode = normalizeHtmlShareAccessMode(
     nodeDeploymentDialog?.accessMode,
@@ -4329,13 +4333,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               >
                 <CloseIcon />
               </button>
-              <div className="border-b border-border px-5 py-4 pr-12">
+              <div className="shrink-0 border-b border-border px-5 py-4 pr-12">
                 <div className="text-base font-semibold leading-6 text-foreground">
                   {nodeDeploymentDialog.title}
                 </div>
-                <div className="mt-1 text-xs leading-5 text-muted">
-                  {nodeDeploymentDialog.message}
-                </div>
+                {shouldShowNodeDeploymentHeaderMessage && (
+                  <div className="mt-1 text-xs leading-5 text-muted">
+                    {nodeDeploymentDialog.message}
+                  </div>
+                )}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -4593,7 +4599,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
+              <div className="shrink-0 flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
                 {isNodeDeploymentAccessModeDialog && (
                   <button
                     type="button"
