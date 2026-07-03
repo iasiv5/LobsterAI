@@ -7962,6 +7962,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const erroredSessionKey = turn.sessionKey;
+    this.clearContextMaintenanceState(sessionId, turn, 'chat error');
     this.store.updateSession(sessionId, { status: 'error' });
     // Persist error message to SQLite so it survives session switches
     const errorMsg = this.store.addMessage(sessionId, {

@@ -3821,6 +3821,47 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(adapter.activeTurns.has(session.id)).toBe(true);
 });
 
+test('chat error clears context maintenance after compaction starts', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const maintenanceSpy = vi.fn();
+  const errorSpy = vi.fn();
+
+  session.status = 'running';
+  adapter.on('contextMaintenance', maintenanceSpy);
+  adapter.on('error', errorSpy);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction-error'));
+
+  adapter.handleAgentEvent({
+    runId: 'run-compaction-error',
+    sessionKey,
+    stream: 'compaction',
+    data: { phase: 'start' },
+  }, 1);
+
+  adapter.handleChatEvent({
+    state: 'error',
+    runId: 'run-compaction-error',
+    sessionKey,
+    errorMessage: 'LLM request failed.',
+    providerRuntimeFailureKind: 'timeout',
+    rawErrorPreview: 'LLM idle timeout (120s): no response from model',
+  }, 2);
+
+  expect(maintenanceSpy).toHaveBeenNthCalledWith(1, session.id, true);
+  expect(maintenanceSpy).toHaveBeenNthCalledWith(2, session.id, false);
+  expect(session.status).toBe('error');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
+  expect(errorSpy).toHaveBeenCalledWith(session.id, expect.stringContaining('网络连接失败'));
+  expect(session.messages.some((message) => (
+    message.type === 'system'
+    && message.content.includes('网络连接失败')
+  ))).toBe(true);
+});
+
 test('compaction stream reuses active structured message for duplicate start events', () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
