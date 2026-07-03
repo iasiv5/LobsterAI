@@ -4865,11 +4865,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 {railTooltipSummary}
               </div>
             )}
-            <div
-              className="mt-2 flex items-center gap-1.5 text-[12px] text-neutral-400 dark:text-neutral-500"
-            >
-              LobsterAI
-            </div>
           </div>,
           document.body
         )}

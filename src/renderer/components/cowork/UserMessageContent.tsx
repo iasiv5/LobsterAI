@@ -64,7 +64,7 @@ const UserMessageContent: React.FC<UserMessageContentProps> = ({
   onImageClick,
 }) => {
   return (
-    <div className={`min-w-0 max-w-full text-[15px] leading-[1.55] ${className}`}>
+    <div className={`min-w-0 max-w-full text-markdown-body-compact ${className}`}>
       {renderUserMessageParts(content, onImageClick)}
     </div>
   );

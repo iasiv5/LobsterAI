@@ -1,7 +1,7 @@
 import { ProviderName } from '@shared/providers';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { type AppConfig, CONFIG_KEYS, defaultConfig, ShortcutAction } from '../config';
+import { type AppConfig, CONFIG_KEYS, defaultConfig, FontPreferences, ShortcutAction } from '../config';
 
 const makeLegacyConfigWithoutMiniMaxAddedModels = (): AppConfig => ({
   ...defaultConfig,
@@ -452,5 +452,32 @@ describe('configService provider migrations', () => {
     const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
     expect(savedConfig.providerModelMigrationVersions?.[ProviderName.Qianfan]).toBe(1);
     expect(savedConfig.providers?.[ProviderName.Qianfan].models?.map(model => model.id)).not.toContain(deletedModelId);
+  });
+
+  test('hydrates font preferences with defaults for legacy configs', async () => {
+    const legacyConfig: AppConfig = {
+      ...defaultConfig,
+      uiFontSize: undefined,
+      codeFontSize: undefined,
+    };
+    const { configService } = await loadConfigServiceWithStoredConfig(legacyConfig);
+
+    await configService.init();
+
+    expect(configService.getConfig().uiFontSize).toBe(FontPreferences.UiFontSizeDefault);
+    expect(configService.getConfig().codeFontSize).toBe(FontPreferences.CodeFontSizeDefault);
+  });
+
+  test('clamps font preferences when saving config updates', async () => {
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(defaultConfig);
+
+    await configService.updateConfig({
+      uiFontSize: 100,
+      codeFontSize: 1,
+    });
+
+    const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
+    expect(savedConfig.uiFontSize).toBe(FontPreferences.UiFontSizeMax);
+    expect(savedConfig.codeFontSize).toBe(FontPreferences.CodeFontSizeMin);
   });
 });

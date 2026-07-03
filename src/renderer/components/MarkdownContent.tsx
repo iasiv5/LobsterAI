@@ -392,7 +392,7 @@ const createMarkdownComponents = (
     </h1>
   ),
   h2: ({ node: _node, className: _className, children, ...props }: any) => (
-    <h2 className={`${spacing === 'compact' ? 'mt-2.5 mb-1' : 'mt-5 mb-2.5'} text-[17px] font-semibold leading-snug first:mt-0 text-foreground`} {...props}>
+    <h2 className={`${spacing === 'compact' ? 'mt-2.5 mb-1' : 'mt-5 mb-2.5'} text-[length:var(--lobster-text-markdownH2)] font-semibold leading-snug first:mt-0 text-foreground`} {...props}>
       {children}
     </h2>
   ),
@@ -402,7 +402,7 @@ const createMarkdownComponents = (
     </h3>
   ),
   h4: ({ node: _node, className: _className, children, ...props }: any) => (
-    <h4 className={`${spacing === 'compact' ? 'mt-2 mb-1' : 'mt-4 mb-1.5'} text-[15px] font-semibold leading-snug first:mt-0 text-foreground`} {...props}>
+    <h4 className={`${spacing === 'compact' ? 'mt-2 mb-1' : 'mt-4 mb-1.5'} text-[length:var(--lobster-text-markdownH4)] font-semibold leading-snug first:mt-0 text-foreground`} {...props}>
       {children}
     </h4>
   ),
@@ -678,7 +678,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
     () => createMarkdownComponents(resolveLocalFilePath, showRevealInFolderAction, onImageClick, spacing),
     [resolveLocalFilePath, showRevealInFolderAction, onImageClick, spacing]
   );
-  const leadingClassName = spacing === 'compact' ? 'leading-[1.55]' : 'leading-[1.75]';
+  const markdownTextClassName = spacing === 'compact' ? 'text-markdown-body-compact' : 'text-markdown-body';
   const normalizedContent = useMemo(() => {
     if (useLargePreview) {
       return '';
@@ -688,7 +688,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
 
   if (useLargePreview) {
     return (
-      <div className={`markdown-content min-w-0 max-w-full text-[15px] ${leadingClassName} ${className}`}>
+      <div className={`markdown-content min-w-0 max-w-full ${markdownTextClassName} ${className}`}>
         <div className="rounded-lg border border-border bg-surface-raised/60">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted">
             <span>
@@ -702,7 +702,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
               {i18nService.t('expand')}
             </button>
           </div>
-          <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words p-3 text-[13px] leading-5 text-foreground">
+          <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words p-3 text-code text-foreground">
             {getLargeMarkdownPreview(content)}
           </pre>
         </div>
@@ -711,7 +711,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({
   }
 
   return (
-    <div className={`markdown-content min-w-0 max-w-full text-[15px] ${leadingClassName} ${className}`}>
+    <div className={`markdown-content min-w-0 max-w-full ${markdownTextClassName} ${className}`}>
       {canUseLargePreview && (
         <div className="mb-2 flex justify-end">
           <button

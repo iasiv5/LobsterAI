@@ -189,7 +189,7 @@ const ToolCallGroup: React.FC<{
               {toolName}
             </span>
             {toolInputSummary && (
-              <code className="text-xs text-muted font-mono truncate max-w-full">
+              <code className="text-code text-muted font-mono truncate max-w-full">
                 {toolInputSummary}
               </code>
             )}
@@ -282,7 +282,7 @@ const ToolCallGroup: React.FC<{
                 <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                 <span className="ml-2 text-[10px] text-secondary font-medium">Terminal</span>
               </div>
-              <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-xs">
+              <div className="bg-surface-inset px-3 py-3 max-h-72 overflow-y-auto font-mono text-code">
                 {toolInputDisplay && (
                   <div className="text-foreground">
                     <span className="text-primary select-none">$ </span>
@@ -325,7 +325,7 @@ const ToolCallGroup: React.FC<{
                     {i18nService.t('coworkToolResult')}
                   </div>
                   <div className="max-h-32 overflow-y-auto">
-                    <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                    <pre className={`text-code whitespace-pre-wrap break-words font-mono ${
                       isToolError
                         ? 'text-red-500'
                         : hasToolResultText
@@ -346,7 +346,7 @@ const ToolCallGroup: React.FC<{
                     {i18nService.t('coworkToolInput')}
                   </div>
                   <div className="max-h-48 overflow-y-auto">
-                    <pre className="text-xs text-foreground whitespace-pre-wrap break-words font-mono">
+                    <pre className="text-code text-foreground whitespace-pre-wrap break-words font-mono">
                       {toolInputDisplay}
                     </pre>
                   </div>
@@ -358,7 +358,7 @@ const ToolCallGroup: React.FC<{
                     {i18nService.t('coworkToolResult')}
                   </div>
                   <div className="max-h-64 overflow-y-auto">
-                    <pre className={`text-xs whitespace-pre-wrap break-words font-mono ${
+                    <pre className={`text-code whitespace-pre-wrap break-words font-mono ${
                       isToolError
                         ? 'text-red-500'
                         : hasToolResultText
