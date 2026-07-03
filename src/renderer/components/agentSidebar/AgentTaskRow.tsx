@@ -1,5 +1,5 @@
 import { ShareIcon } from '@heroicons/react/20/solid';
-import { ArchiveBoxArrowDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
@@ -24,7 +24,6 @@ interface AgentTaskRowProps {
   onSelect: () => void;
   onDelete: () => Promise<void>;
   onShare: () => Promise<void>;
-  onExportDiagnostics: () => Promise<void>;
   onTogglePin: (pinned: boolean) => Promise<void>;
   onRename: (title: string) => Promise<void>;
   onToggleSelection: () => void;
@@ -49,8 +48,8 @@ interface AgentTaskRowProps {
 
 const ACTION_MENU_VIEWPORT_PADDING = 8;
 const ACTION_MENU_VERTICAL_GAP = 4;
-const ACTION_MENU_HEIGHT = 196;
-const ACTION_MENU_WITH_BATCH_HEIGHT = 228;
+const ACTION_MENU_HEIGHT = 164;
+const ACTION_MENU_WITH_BATCH_HEIGHT = 196;
 
 const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
   task,
@@ -62,7 +61,6 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
   onSelect,
   onDelete,
   onShare,
-  onExportDiagnostics,
   onTogglePin,
   onRename,
   onToggleSelection,
@@ -381,19 +379,6 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
           >
             <ShareIcon className={menuIconClassName} />
             {i18nService.t('coworkShareSession')}
-          </button>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              closeMenu();
-              void onExportDiagnostics();
-            }}
-            className={menuItemClassName}
-            role="menuitem"
-          >
-            <ArchiveBoxArrowDownIcon className={menuIconClassName} />
-            {i18nService.t('coworkExportDiagnostics')}
           </button>
           <button
             type="button"

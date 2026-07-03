@@ -240,22 +240,6 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     }, 0);
   };
 
-  const handleExportTaskDiagnostics = async (task: AgentSidebarTaskNode) => {
-    onSidebarAction?.('task_export_diagnostics_start', getTaskActionParams(task));
-    const result = await coworkService.exportSessionDiagnostics({ sessionId: task.id });
-    if (result.canceled) return;
-
-    onSidebarAction?.(result.success ? 'task_export_diagnostics_success' : 'task_export_diagnostics_failed', {
-      ...getTaskActionParams(task),
-      result: result.success ? 'success' : 'failed',
-    });
-    window.dispatchEvent(new CustomEvent('app:showToast', {
-      detail: result.success
-        ? i18nService.t('coworkExportDiagnosticsSuccess')
-        : result.error || i18nService.t('coworkExportDiagnosticsFailed'),
-    }));
-  };
-
   const handleEnterBatchMode = (task: AgentSidebarTaskNode) => {
     if (task.agentId !== currentAgentId) {
       agentService.switchAgent(task.agentId);
@@ -366,7 +350,6 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       onSelectTask={(task) => void handleSelectTask(task)}
       onDeleteTask={handleDeleteTask}
       onShareTask={handleShareTask}
-      onExportTaskDiagnostics={handleExportTaskDiagnostics}
       onToggleTaskPin={handleToggleTaskPin}
       onRenameTask={handleRenameTask}
       onToggleSelection={onToggleSelection}

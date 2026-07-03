@@ -80,12 +80,26 @@ describe('sessionDiagnosticsArchive', () => {
     const fileName = buildSessionDiagnosticsDefaultFileName({
       title: 'LOFTER <>:"/\\|?* content safety review Prompt',
       sessionId: 'session-1234567890',
-      now: new Date('2026-07-03T01:02:03Z'),
+      now: new Date(2026, 6, 3, 1, 2, 3),
     });
 
-    expect(fileName).toMatch(
-      /^lobsterai-session-diagnostics-LOFTER content safety review Prompt-session--\d{8}-\d{6}\.zip$/,
+    expect(fileName).toBe(
+      'lobsterai-diagnostics-LOFTER content safety review Prompt-session--20260703-010203.zip',
     );
+  });
+
+  test('normalizes unusual characters and bounds the file name length', () => {
+    const fileName = buildSessionDiagnosticsDefaultFileName({
+      title: `CON.\u0000\u200B😀<>:"/\\|?* ${'会'.repeat(100)}`,
+      sessionId: '../../会话?session-id',
+      now: new Date(2026, 6, 3, 1, 2, 3),
+    });
+
+    expect(fileName).toBe(
+      `lobsterai-diagnostics-CON ${'会'.repeat(36)}-session--20260703-010203.zip`,
+    );
+    expect(Array.from(fileName)).toHaveLength(91);
+    expect(fileName).not.toMatch(/[<>:"/\\|?*\u0000-\u001F\u200B]/);
   });
 
   test('builds archive entries with raw JSONL messages and stats', () => {

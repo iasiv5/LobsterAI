@@ -8,7 +8,8 @@ import type {
 } from './types';
 
 const EXPORT_TIMEOUT_MS = 30_000;
-const MAX_FILE_NAME_PART_CHARS = 80;
+const MAX_TITLE_FILE_NAME_CHARS = 40;
+const MAX_SESSION_ID_FILE_NAME_CHARS = 8;
 const SESSION_DIAGNOSTICS_SCHEMA_VERSION = 1;
 
 export interface SessionDiagnosticsArchiveInput {
@@ -42,14 +43,21 @@ const formatTimestampForFileName = (date: Date): string => (
   + `-${padTwoDigits(date.getHours())}${padTwoDigits(date.getMinutes())}${padTwoDigits(date.getSeconds())}`
 );
 
-const sanitizeFileNamePart = (value: string): string => {
+const sanitizeTitleFileNamePart = (value: string): string => {
   const sanitized = value
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{M}\p{N} _()-]+/gu, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[. ]+$/g, '');
+    .trim();
 
-  return sanitized.slice(0, MAX_FILE_NAME_PART_CHARS).trim();
+  return Array.from(sanitized).slice(0, MAX_TITLE_FILE_NAME_CHARS).join('').trim();
+};
+
+const sanitizeSessionIdFileNamePart = (value: string): string => {
+  return value
+    .normalize('NFKC')
+    .replace(/[^A-Za-z0-9_-]+/g, '')
+    .slice(0, MAX_SESSION_ID_FILE_NAME_CHARS);
 };
 
 const parseJsonObject = (value: string | null): Record<string, unknown> | null => {
@@ -77,10 +85,10 @@ export function buildSessionDiagnosticsDefaultFileName(input: {
   sessionId: string;
   now?: Date;
 }): string {
-  const titlePart = sanitizeFileNamePart(input.title) || 'session';
-  const sessionPart = sanitizeFileNamePart(input.sessionId).slice(0, 8) || 'unknown';
+  const titlePart = sanitizeTitleFileNamePart(input.title) || 'session';
+  const sessionPart = sanitizeSessionIdFileNamePart(input.sessionId) || 'unknown';
   const timestamp = formatTimestampForFileName(input.now ?? new Date());
-  return `lobsterai-session-diagnostics-${titlePart}-${sessionPart}-${timestamp}.zip`;
+  return `lobsterai-diagnostics-${titlePart}-${sessionPart}-${timestamp}.zip`;
 }
 
 export function buildSessionDiagnosticsStats(
