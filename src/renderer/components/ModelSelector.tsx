@@ -631,6 +631,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         onClick={toggleOpen}
         className={`flex min-w-0 items-center overflow-hidden hover:bg-surface-raised text-foreground transition-colors disabled:opacity-70 disabled:cursor-wait ${triggerClassName} ${isOpen ? 'bg-surface-raised' : ''}`}
       >
+        {selectedModel?.isServerModel && (
+          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
+            {renderProviderIcon(selectedModel)}
+          </span>
+        )}
         <span className={`${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
         <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
       </button>
