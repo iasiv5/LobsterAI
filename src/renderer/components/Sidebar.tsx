@@ -63,9 +63,9 @@ const SidebarNewFeatureBadge = {
   KitsVersion: '2026-06-05',
 } as const;
 const sidebarNavItemClassName =
-  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
 const activeSidebarNavItemClassName =
-  `${sidebarNavItemClassName} bg-black/[0.06] hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
+  `${sidebarNavItemClassName} bg-black/[0.06] font-medium hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
 const sidebarCreateIconClassName = 'h-4 w-4 shrink-0';
 
 type SidebarAnalyticsSource = 'home_sidebar' | 'home_agent_sidebar';
@@ -699,7 +699,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
           <div className="flex items-center gap-2">
-            <label className="inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]">
+            <label className="inline-flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-1.5 text-[length:var(--lobster-text-sidebarCompact)] font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]">
               <input
                 type="checkbox"
                 checked={isBatchSelectAllChecked}
@@ -736,7 +736,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => onShowSettings()}
-              className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
+              className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
               aria-label={i18nService.t('settings')}
             >
               <Cog6ToothIcon className="h-4 w-4 shrink-0" />

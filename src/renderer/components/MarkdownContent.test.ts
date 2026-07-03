@@ -46,7 +46,7 @@ test('compact spacing reduces list margins for user message rendering', () => {
   }));
 
   expect(defaultHtml).toContain('my-3');
-  expect(compactHtml).toContain('leading-[1.55]');
+  expect(compactHtml).toContain('text-markdown-body-compact');
   expect(compactHtml).toContain('my-1');
 });
 

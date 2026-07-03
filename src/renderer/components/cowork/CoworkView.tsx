@@ -788,13 +788,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               className="mx-auto h-12 w-12 animate-fade-in-up"
             />
             <h2
-              className="mt-4 text-[24px] font-semibold leading-8 tracking-normal text-foreground animate-fade-in-up"
+              className="mt-4 text-2xl font-semibold leading-[var(--lobster-leading-2xl)] tracking-normal text-foreground animate-fade-in-up"
               style={{ animationDelay: '70ms', animationFillMode: 'both' }}
             >
               {i18nService.t('coworkWelcome')}
             </h2>
             <p
-              className="mt-2 text-[15px] font-normal leading-6 text-secondary animate-fade-in-up"
+              className="mt-2 text-[length:var(--lobster-text-promptLarge)] font-normal leading-[var(--lobster-leading-promptLarge)] text-secondary animate-fade-in-up"
               style={{ animationDelay: '120ms', animationFillMode: 'both' }}
             >
               {i18nService.t('coworkDescription')}

@@ -57,7 +57,7 @@ const TOOL_USE_ERROR_TAG_PATTERN = /^<tool_use_error>([\s\S]*?)<\/tool_use_error
 const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 export const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA:\s*`?[^`\n]+?`?\s*$/gim;
 const SILENT_TOKEN_RE = /^[`*_~"'""''()[\]{}<>.,!?;:，。！？；：\s-]{0,8}NO_REPLY[`*_~"'""''()[\]{}<>.,!?;:，。！？；：\s-]{0,8}$/i;
-export const TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS = 64 * 1024;
+export const TOOL_RESULT_COLLAPSED_FULL_DISPLAY_MAX_CHARS = 16 * 1024;
 export const TOOL_RESULT_COLLAPSED_PREVIEW_MAX_CHARS = 4 * 1024;
 export const STRUCTURED_TEXT_FORMAT_MAX_CHARS = 128 * 1024;
 

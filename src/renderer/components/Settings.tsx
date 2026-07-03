@@ -13,7 +13,7 @@ import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants
 import { normalizeNotificationSettings } from '../../shared/notifications/constants';
 import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
-import { type AppConfig, defaultConfig, getProviderDisplayName, getVisibleProviders, ShortcutAction, type ShortcutConfig } from '../config';
+import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, normalizeFontPreference, ShortcutAction, type ShortcutConfig } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { apiService } from '../services/api';
 import { configService } from '../services/config';
@@ -24,6 +24,7 @@ import { imService } from '../services/im';
 import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import { formatShortcutForDisplay, getShortcutConflictSignature, matchesShortcut } from '../services/shortcuts';
 import { themeService } from '../services/theme';
+import { applyTypographyPreferences } from '../services/typography';
 import type { RootState } from '../store';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import { setAvailableModels } from '../store/slices/modelSlice';
@@ -1278,6 +1279,45 @@ const SettingsToggleRow: React.FC<{
   </div>
 );
 
+const SettingsNumberInputRow: React.FC<{
+  id: string;
+  title: string;
+  description: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}> = ({ id, title, description, value, min, max, onChange }) => (
+  <div className="flex items-center justify-between gap-4">
+    <div className="min-w-0 flex-1">
+      <label htmlFor={id} className="block text-sm font-medium text-foreground">
+        {title}
+      </label>
+      <p className="mt-1 text-sm text-secondary">
+        {description}
+      </p>
+    </div>
+    <div className="flex shrink-0 items-center gap-2">
+      <input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onChange={(event) => {
+          onChange(normalizeFontPreference(event.currentTarget.value, value, min, max));
+        }}
+        onBlur={(event) => {
+          onChange(normalizeFontPreference(event.currentTarget.value, value, min, max));
+        }}
+        className="h-8 w-16 rounded-lg border border-border bg-surface px-2 text-center text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+      />
+      <span className="text-sm text-secondary">px</span>
+    </div>
+  </div>
+);
+
 const Settings: React.FC<SettingsProps> = ({
   onClose,
   initialTab,
@@ -1293,6 +1333,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
+  const [uiFontSize, setUiFontSize] = useState<number>(FontPreferences.UiFontSizeDefault);
+  const [codeFontSize, setCodeFontSize] = useState<number>(FontPreferences.CodeFontSizeDefault);
   const [language, setLanguage] = useState<LanguageType>('zh');
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [useSystemProxy, setUseSystemProxy] = useState(false);
@@ -1325,6 +1367,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [isExportingProviders, setIsExportingProviders] = useState(false);
   const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
+  const initialUiFontSizeRef = useRef<number>(FontPreferences.UiFontSizeDefault);
+  const initialCodeFontSizeRef = useRef<number>(FontPreferences.CodeFontSizeDefault);
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
 
@@ -1365,6 +1409,8 @@ const Settings: React.FC<SettingsProps> = ({
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
+  // 内容区下方仍有未滚出的内容时，在底部按钮区上方显示渐隐遮罩
+  const [footerFadeVisible, setFooterFadeVisible] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const emailCopiedTimerRef = useRef<number | null>(null);
   const openClawGatewayCopiedTimerRef = useRef<number | null>(null);
@@ -1714,9 +1760,25 @@ const Settings: React.FC<SettingsProps> = ({
       const config = configService.getConfig();
 
       // Set general settings
+      const resolvedUiFontSize = normalizeFontPreference(
+        config.uiFontSize,
+        FontPreferences.UiFontSizeDefault,
+        FontPreferences.UiFontSizeMin,
+        FontPreferences.UiFontSizeMax,
+      );
+      const resolvedCodeFontSize = normalizeFontPreference(
+        config.codeFontSize,
+        FontPreferences.CodeFontSizeDefault,
+        FontPreferences.CodeFontSizeMin,
+        FontPreferences.CodeFontSizeMax,
+      );
       initialThemeRef.current = config.theme;
+      initialUiFontSizeRef.current = resolvedUiFontSize;
+      initialCodeFontSizeRef.current = resolvedCodeFontSize;
       initialLanguageRef.current = config.language;
       setTheme(config.theme);
+      setUiFontSize(resolvedUiFontSize);
+      setCodeFontSize(resolvedCodeFontSize);
       setLanguage(config.language);
       setUseSystemProxy(config.useSystemProxy ?? false);
       setSqliteAutoBackupEnabled(config.sqliteAutoBackupEnabled === true);
@@ -1961,12 +2023,18 @@ const Settings: React.FC<SettingsProps> = ({
   useEffect(() => {
     const initialThemeId = initialThemeIdRef.current;
     const initialTheme = initialThemeRef.current;
+    const initialUiFontSize = initialUiFontSizeRef.current;
+    const initialCodeFontSize = initialCodeFontSizeRef.current;
     const initialLanguage = initialLanguageRef.current;
     return () => {
       if (didSaveRef.current) {
         return;
       }
       themeService.restoreTheme(initialThemeId, initialTheme);
+      applyTypographyPreferences({
+        uiFontSize: initialUiFontSize,
+        codeFontSize: initialCodeFontSize,
+      });
       i18nService.setLanguage(initialLanguage, { persist: false });
     };
   }, []);
@@ -1977,6 +2045,33 @@ const Settings: React.FC<SettingsProps> = ({
       contentRef.current.scrollTop = 0;
     }
   }, [activeTab]);
+
+  // 跟踪内容区滚动/尺寸/内容变化，决定底部渐隐遮罩是否显示
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setFooterFadeVisible(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+    };
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(update);
+    };
+    scheduleUpdate();
+    el.addEventListener('scroll', scheduleUpdate, { passive: true });
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(el);
+    const mutationObserver = new MutationObserver(scheduleUpdate);
+    mutationObserver.observe(el, { childList: true, subtree: true });
+    return () => {
+      el.removeEventListener('scroll', scheduleUpdate);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     setNoticeMessage(buildNoticeMessage());
@@ -2984,6 +3079,18 @@ const Settings: React.FC<SettingsProps> = ({
         previousConfig.notificationSettings,
       ).taskCompletionNotificationsEnabled;
       const previousThemeId = initialThemeIdRef.current;
+      const previousUiFontSize = normalizeFontPreference(
+        previousConfig.uiFontSize,
+        FontPreferences.UiFontSizeDefault,
+        FontPreferences.UiFontSizeMin,
+        FontPreferences.UiFontSizeMax,
+      );
+      const previousCodeFontSize = normalizeFontPreference(
+        previousConfig.codeFontSize,
+        FontPreferences.CodeFontSizeDefault,
+        FontPreferences.CodeFontSizeMin,
+        FontPreferences.CodeFontSizeMax,
+      );
       let savedPluginPendingChanges: PluginPendingChanges | null = null;
 
       await configService.updateConfig({
@@ -2993,6 +3100,8 @@ const Settings: React.FC<SettingsProps> = ({
         },
         providers: normalizedProviders, // Save all providers configuration
         theme,
+        uiFontSize,
+        codeFontSize,
         language,
         useSystemProxy,
         sqliteAutoBackupEnabled,
@@ -3010,6 +3119,7 @@ const Settings: React.FC<SettingsProps> = ({
 
       // 应用主题
       themeService.setTheme(theme);
+      applyTypographyPreferences({ uiFontSize, codeFontSize });
 
       // 应用语言
       i18nService.setLanguage(language, { persist: false });
@@ -3119,6 +3229,12 @@ const Settings: React.FC<SettingsProps> = ({
         }
         if (previousThemeId !== themeId) {
           reportAppearanceSettingChanged('themeId', themeId, previousThemeId);
+        }
+        if (previousUiFontSize !== uiFontSize) {
+          reportAppearanceSettingChanged('uiFontSize', uiFontSize, previousUiFontSize);
+        }
+        if (previousCodeFontSize !== codeFontSize) {
+          reportAppearanceSettingChanged('codeFontSize', codeFontSize, previousCodeFontSize);
         }
         const browserSettingParams = buildBrowserSettingAnalyticsParams(
           previousBrowserWebAccess,
@@ -3986,6 +4102,22 @@ const Settings: React.FC<SettingsProps> = ({
     return () => document.removeEventListener('keydown', handleSettingsTabShortcut);
   }, [shortcuts, sidebarTabs, handleTabChange]);
 
+  const handleUiFontSizeChange = useCallback((nextValue: number) => {
+    setUiFontSize(nextValue);
+    applyTypographyPreferences({
+      uiFontSize: nextValue,
+      codeFontSize,
+    });
+  }, [codeFontSize]);
+
+  const handleCodeFontSizeChange = useCallback((nextValue: number) => {
+    setCodeFontSize(nextValue);
+    applyTypographyPreferences({
+      uiFontSize,
+      codeFontSize: nextValue,
+    });
+  }, [uiFontSize]);
+
   const renderAppearanceSettings = () => (
     <div className="space-y-8">
       <div>
@@ -4149,6 +4281,31 @@ const Settings: React.FC<SettingsProps> = ({
             </>
           );
         })()}
+
+        <div className="mt-5 divide-y divide-border rounded-xl border border-border bg-surface">
+          <div className="px-4 py-3">
+            <SettingsNumberInputRow
+              id="ui-font-size"
+              title={i18nService.t('uiFontSize')}
+              description={i18nService.t('uiFontSizeDescription')}
+              value={uiFontSize}
+              min={FontPreferences.UiFontSizeMin}
+              max={FontPreferences.UiFontSizeMax}
+              onChange={handleUiFontSizeChange}
+            />
+          </div>
+          <div className="px-4 py-3">
+            <SettingsNumberInputRow
+              id="code-font-size"
+              title={i18nService.t('codeFontSize')}
+              description={i18nService.t('codeFontSizeDescription')}
+              value={codeFontSize}
+              min={FontPreferences.CodeFontSizeMin}
+              max={FontPreferences.CodeFontSizeMax}
+              onChange={handleCodeFontSizeChange}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -5074,21 +5231,29 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
 
             {/* Footer buttons */}
-            <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
-              <button
-                type="button"
-                onClick={guardedClose}
-                className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-              >
-                {isSaving ? i18nService.t('saving') : i18nService.t('save')}
-              </button>
+            <div className="relative shrink-0">
+              <div
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-x-0 bottom-full h-10 bg-gradient-to-t from-background to-transparent transition-opacity duration-200 ${
+                  footerFadeVisible ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              <div className="flex justify-end space-x-4 px-6 pb-5 pt-3 bg-background">
+                <button
+                  type="button"
+                  onClick={guardedClose}
+                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
+                </button>
+              </div>
             </div>
           </form>
 

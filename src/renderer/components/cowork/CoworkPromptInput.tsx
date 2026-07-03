@@ -1616,12 +1616,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     : 'relative flex items-end gap-2 p-3 rounded-xl border border-border bg-surface';
 
   const textareaClass = isCompact
-    ? `w-full resize-none bg-transparent px-4 pb-1.5 text-[14px] leading-[20px] text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${hasActiveContext ? 'pt-1.5' : 'pt-2'}`
+    ? `w-full resize-none bg-transparent px-4 pb-1.5 text-sm leading-[var(--lobster-leading-sm)] text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${hasActiveContext ? 'pt-1.5' : 'pt-2'}`
     : isLarge
     ? `w-full resize-none bg-transparent px-4 pb-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${
       useHomeContextLayout
-        ? `${hasActiveContext ? 'pt-2' : 'pt-3'} text-[14px] leading-[22px]`
-        : `${hasActiveContext ? 'pt-2' : 'pt-2.5'} text-[15px] leading-[23px]`
+        ? `${hasActiveContext ? 'pt-2' : 'pt-3'} text-sm leading-[var(--lobster-leading-prompt)]`
+        : `${hasActiveContext ? 'pt-2' : 'pt-2.5'} text-[length:var(--lobster-text-promptLarge)] leading-[var(--lobster-leading-promptLarge)]`
     }`
     : 'flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
@@ -2434,9 +2434,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           >
             <GoalIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="shrink-0 text-foreground">{i18nService.t('coworkGoal')}</span>
-            <span className="min-w-0 flex-1 truncate text-secondary">
-              {goal?.objective || i18nService.t('coworkGoalMenuDescription')}
-            </span>
+            {goal?.objective && (
+              <span className="min-w-0 flex-1 truncate text-secondary">
+                {goal.objective}
+              </span>
+            )}
           </button>
           <button
             type="button"

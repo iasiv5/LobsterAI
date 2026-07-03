@@ -624,14 +624,14 @@ const oneLightHighlightStyle = HighlightStyle.define([
 
 const baseTheme = EditorView.theme({
   '&': {
-    fontSize: '13px',
+    fontSize: 'var(--lobster-code-font-size)',
     fontFamily: "'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   },
   '.cm-gutters': { border: 'none', userSelect: 'none' },
   '.cm-lineNumbers .cm-gutterElement': {
     minWidth: '2.5em',
     padding: '0 8px 0 4px',
-    fontSize: '12px',
+    fontSize: 'calc(var(--lobster-code-font-size) - 1px)',
   },
   '.cm-content': { padding: '10px 0' },
   '.cm-line': { padding: '0 14px' },
@@ -651,7 +651,7 @@ const baseTheme = EditorView.theme({
     borderBottom: '1px solid var(--lobster-border)',
     background: 'var(--lobster-surface-raised)',
     fontFamily: "'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-    fontSize: '12px',
+    fontSize: 'var(--lobster-code-font-size)',
   },
   '.cm-search-input': {
     flex: '0 0 160px',
@@ -661,7 +661,7 @@ const baseTheme = EditorView.theme({
     border: '1px solid var(--lobster-border)',
     background: 'var(--lobster-surface)',
     color: 'var(--lobster-foreground)',
-    fontSize: '12px',
+    fontSize: 'var(--lobster-code-font-size)',
     outline: 'none',
   },
   '.cm-search-input:focus': {
@@ -670,7 +670,7 @@ const baseTheme = EditorView.theme({
   '.cm-search-count': {
     flex: '0 0 auto',
     minWidth: '36px',
-    fontSize: '11px',
+    fontSize: 'calc(var(--lobster-code-font-size) - 1px)',
     color: 'var(--lobster-text-secondary)',
     textAlign: 'center',
     fontVariantNumeric: 'tabular-nums',
@@ -711,7 +711,7 @@ const baseTheme = EditorView.theme({
     padding: '0 6px',
     borderRadius: '5px',
     border: '1px solid transparent',
-    fontSize: '12px',
+    fontSize: 'var(--lobster-code-font-size)',
     lineHeight: '1',
     color: 'var(--lobster-text-secondary)',
     cursor: 'pointer',
@@ -996,7 +996,7 @@ const CodeFullscreenModal: React.FC<CodeFullscreenModalProps> = ({ code, lang, i
       >
         {/* Modal header */}
         <div className="bg-surface-raised px-4 py-2 flex items-center justify-between border-b border-border flex-shrink-0">
-          <span className="font-mono text-xs text-secondary opacity-70">{lang ?? 'code'}</span>
+          <span className="font-mono text-code text-secondary opacity-70">{lang ?? 'code'}</span>
           <div className="flex items-center gap-0.5">
             <CodeBlockTooltip content={searchOpen ? t('codeBlockSearchClose') : t('codeBlockSearch')}>
               <HeaderButton
@@ -1507,7 +1507,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ node, className, children, ...pro
   // -------------------------------------------------------------------------
   if (isInline) {
     const inlineClassName = [
-      'inline rounded-[5px] bg-foreground/[0.06] px-[0.35em] py-[0.12em] text-[0.85em] font-mono text-foreground/90 break-words [box-decoration-break:clone]',
+      'inline rounded-[5px] bg-foreground/[0.06] px-[0.35em] py-[0.12em] text-code font-mono text-foreground/90 break-words [box-decoration-break:clone]',
       normalizedClassName,
     ]
       .filter(Boolean)
@@ -1621,7 +1621,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ node, className, children, ...pro
             />
           )
         ) : (
-          <div className="m-0 overflow-x-auto text-[13px] leading-6">
+          <div className="m-0 overflow-x-auto text-code">
             <code
               className={`block px-4 py-3 font-mono text-foreground/90 ${
                 wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre w-max min-w-full'

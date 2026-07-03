@@ -203,12 +203,12 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
     <div
       className={`group relative -ml-[6px] flex h-[30px] w-[calc(100%+12px)] items-center gap-2 rounded-md ${
         isBatchMode ? 'pl-4' : 'pl-[38px]'
-      } pr-2.5 text-[14px] font-normal transition-colors ${
+      } pr-2.5 text-sm font-normal transition-colors ${
         isSelectionDisabled
           ? 'cursor-default text-foreground/30'
           : task.isSelected && !hasActiveSubagent
-          ? 'cursor-pointer bg-black/[0.06] text-foreground dark:bg-white/[0.07]'
-          : 'cursor-pointer text-foreground/80 hover:bg-black/[0.03] hover:text-foreground dark:hover:bg-white/[0.04]'
+          ? 'cursor-pointer bg-black/[0.06] font-medium text-foreground dark:bg-white/[0.07]'
+          : 'cursor-pointer text-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
       }`}
       onClick={handleRowClick}
       onMouseMove={() => setSuppressPinHover(false)}
@@ -270,7 +270,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
               handleRenameCancel();
             }
           }}
-          className="min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[14px] font-normal text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          className="min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-sm font-normal text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         />
       ) : (
         <>
@@ -295,7 +295,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
           )}
           {showRelativeTime && (
             <span
-              className="shrink-0 whitespace-nowrap text-[12px] font-normal text-foreground opacity-[0.28] transition-opacity group-hover:opacity-0"
+              className="shrink-0 whitespace-nowrap text-[12px] font-normal text-foreground/45 transition-opacity group-hover:opacity-0"
               title={relativeTime.full}
             >
               {relativeTime.compact}

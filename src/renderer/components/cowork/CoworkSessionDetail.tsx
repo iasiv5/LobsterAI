@@ -1,4 +1,5 @@
 import {
+  ArchiveBoxArrowDownIcon,
   ArrowDownIcon,
   DocumentArrowDownIcon,
   PhotoIcon,
@@ -3172,6 +3173,31 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [currentSession, getConversationControlAnalyticsParams, isExportingText, loadTextExportMessages]);
 
+  const handleExportDiagnostics = useCallback(async () => {
+    if (!currentSession?.id) return;
+    reportConversationNavigationAction({
+      actionType: 'export_diagnostics_submit',
+      params: getConversationControlAnalyticsParams(),
+    });
+
+    const result = await coworkService.exportSessionDiagnostics({ sessionId: currentSession.id });
+    const outcome = result.canceled ? 'cancelled' : result.success ? 'success' : 'failed';
+    reportConversationNavigationAction({
+      actionType: 'export_diagnostics_result',
+      params: {
+        ...getConversationControlAnalyticsParams(),
+        result: outcome,
+      },
+    });
+    if (result.canceled) return;
+
+    window.dispatchEvent(new CustomEvent('app:showToast', {
+      detail: result.success
+        ? i18nService.t('coworkExportDiagnosticsSuccess')
+        : result.error || i18nService.t('coworkExportDiagnosticsFailed'),
+    }));
+  }, [currentSession?.id, getConversationControlAnalyticsParams]);
+
   const handleShareClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!currentSession || isExportingImage) return;
@@ -4670,6 +4696,17 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkExportJSONDesc')}</div>
                 </div>
               </button>
+              <button
+                type="button"
+                onClick={() => { setShowExportOptions(false); void handleExportDiagnostics(); }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-left text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              >
+                <ArchiveBoxArrowDownIcon className="h-5 w-5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <div>
+                  <div className="font-medium">{i18nService.t('coworkExportDiagnostics')}</div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('coworkExportDiagnosticsDesc')}</div>
+                </div>
+              </button>
             </div>
           </div>
         </div>
@@ -4865,11 +4902,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 {railTooltipSummary}
               </div>
             )}
-            <div
-              className="mt-2 flex items-center gap-1.5 text-[12px] text-neutral-400 dark:text-neutral-500"
-            >
-              LobsterAI
-            </div>
           </div>,
           document.body
         )}

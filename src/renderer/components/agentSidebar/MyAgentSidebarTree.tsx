@@ -389,7 +389,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       {hasPinnedAgents && (
         <div className="space-y-0.5">
           <div className="sticky top-0 z-30 flex h-10 items-center bg-surface-raised px-1.5">
-            <h2 className="min-w-0 truncate text-[14px] font-normal text-foreground opacity-[0.28]">
+            <h2 className="min-w-0 truncate text-sm font-normal text-secondary">
               {i18nService.t('myAgentSidebarPinned')}
             </h2>
           </div>

@@ -56,6 +56,32 @@ export type ShortcutConfig = Record<ShortcutAction, string> & {
   [key: string]: string | undefined;
 };
 
+export const FontPreferences = {
+  UiFontSizeDefault: 14,
+  UiFontSizeMin: 11,
+  UiFontSizeMax: 16,
+  CodeFontSizeDefault: 12,
+  CodeFontSizeMin: 8,
+  CodeFontSizeMax: 24,
+} as const;
+
+export const normalizeFontPreference = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number => {
+  const numericValue = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number.parseFloat(value)
+      : Number.NaN;
+  if (!Number.isFinite(numericValue)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, Math.round(numericValue)));
+};
+
 // 配置类型定义
 export interface AppConfig {
   // API 配置
@@ -77,6 +103,10 @@ export interface AppConfig {
   providerModelMigrationVersions?: Record<string, number>;
   // 主题配置
   theme: 'light' | 'dark' | 'system';
+  // UI 字号配置
+  uiFontSize?: number;
+  // 代码字体大小配置
+  codeFontSize?: number;
   // 语言配置
   language: 'zh' | 'en';
   // 是否使用系统代理
@@ -134,6 +164,8 @@ export const defaultConfig: AppConfig = {
   },
   providers: buildDefaultProviders(),
   theme: 'system',
+  uiFontSize: FontPreferences.UiFontSizeDefault,
+  codeFontSize: FontPreferences.CodeFontSizeDefault,
   language: 'zh',
   useSystemProxy: false,
   sqliteAutoBackupEnabled: false,

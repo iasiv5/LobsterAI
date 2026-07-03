@@ -36,7 +36,7 @@ const QuickActionBar: React.FC<QuickActionBarProps> = ({ actions, onActionSelect
             key={action.id}
             type="button"
             onClick={() => onActionSelect(action.id)}
-            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-[13px] font-normal leading-5 text-secondary transition-all duration-200 ease-out hover:bg-surface-raised hover:border-primary/30 hover:text-foreground"
+            className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-[length:var(--lobster-text-sidebarCompact)] font-normal leading-5 text-secondary transition-all duration-200 ease-out hover:bg-surface-raised hover:border-primary/30 hover:text-foreground"
           >
             {IconComponent && (
               <IconComponent className="h-3.5 w-3.5 text-secondary" />

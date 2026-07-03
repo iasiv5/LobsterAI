@@ -417,6 +417,8 @@ contextBridge.exposeInMainWorld('electron', {
       defaultFileName?: string;
       fileExtension?: string;
     }) => ipcRenderer.invoke('cowork:session:exportText', options),
+    exportSessionDiagnostics: (options: { sessionId: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.ExportSessionDiagnostics, options),
 
     // Subagent tracking
     getSubTaskHistory: (options: {

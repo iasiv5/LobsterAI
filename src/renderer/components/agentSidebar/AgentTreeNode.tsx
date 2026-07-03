@@ -275,7 +275,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
         <button
           type="button"
           onClick={handleAgentClick}
-          className="flex h-full w-full items-center gap-2 rounded-md py-0 pl-3.5 pr-12 text-left text-[14px] font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+          className="flex h-full w-full items-center gap-2 rounded-md py-0 pl-3.5 pr-12 text-left text-sm font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
           role="treeitem"
           aria-level={1}
           aria-expanded={agent.isExpanded}
@@ -283,7 +283,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
           <span className="flex h-4 w-4 shrink-0 items-center justify-center leading-none text-foreground">
             <AgentAvatar agent={agent} />
           </span>
-          <span className="min-w-0 flex-1 truncate opacity-[0.76]">
+          <span className="min-w-0 flex-1 truncate">
             {agentName}
           </span>
         </button>
@@ -436,7 +436,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
               )}
 
               {!agent.isLoadingTasks && !agent.hasLoadError && agent.tasks.length === 0 && (
-                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[13px] text-foreground opacity-[0.28]">
+                <div className="-ml-[6px] flex h-7 w-[calc(100%+12px)] items-center pl-[38px] pr-2.5 text-[length:var(--lobster-text-sidebarCompact)] text-secondary">
                   {i18nService.t('myAgentSidebarNoTasks')}
                 </div>
               )}
