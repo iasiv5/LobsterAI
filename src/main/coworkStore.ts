@@ -1289,7 +1289,18 @@ export class CoworkStore {
     const setClauses: string[] = [];
     const values: (string | number | null)[] = [];
 
-    if (options.touchUpdatedAt ?? true) {
+    // updated_at drives session list ordering, so by default it only moves on
+    // a real status transition (run start/finish). Runtime adapters re-assert
+    // 'running' on every stream event; those no-op writes must not reorder.
+    // Callers can still force or suppress the touch via options.
+    let touchUpdatedAt = options.touchUpdatedAt;
+    if (touchUpdatedAt === undefined && updates.status !== undefined) {
+      const current = this.db
+        .prepare('SELECT status FROM cowork_sessions WHERE id = ?')
+        .get(id) as { status: string } | undefined;
+      touchUpdatedAt = !current || current.status !== updates.status;
+    }
+    if (touchUpdatedAt) {
       setClauses.push('updated_at = ?');
       values.push(Date.now());
     }
@@ -1759,7 +1770,11 @@ export class CoworkStore {
         sequence,
       );
 
-    this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+    // updated_at drives session list ordering: only user messages may move it,
+    // otherwise concurrent streaming runs keep reordering the list.
+    if (message.type === 'user') {
+      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+    }
 
     return {
       id,
@@ -1820,7 +1835,9 @@ export class CoworkStore {
           targetSequence,
         );
 
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+      if (message.type === 'user') {
+        this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+      }
     })();
 
     return {
@@ -1890,7 +1907,7 @@ export class CoworkStore {
         )
         .get(sessionId) as { max_seq: number } | undefined;
       let nextSeq = (seqRow?.max_seq ?? 0) + 1;
-      const insertedTimestamps: number[] = [];
+      let lastUserMessageAt: number | null = null;
 
       for (const entry of authoritative) {
         const id = uuidv4();
@@ -1904,7 +1921,9 @@ export class CoworkStore {
         const messageTimestamp = normalizeMessageTimestamp(entry.timestamp)
           ?? existingTimestamp
           ?? now;
-        insertedTimestamps.push(messageTimestamp);
+        if (entry.role === 'user') {
+          lastUserMessageAt = Math.max(lastUserMessageAt ?? 0, messageTimestamp);
+        }
         this.db
           .prepare(
             `
@@ -1923,10 +1942,14 @@ export class CoworkStore {
           );
       }
 
-      const updatedAt = insertedTimestamps.length > 0
-        ? insertedTimestamps[insertedTimestamps.length - 1]
-        : now;
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(updatedAt, sessionId);
+      // Reconciliation runs repeatedly for channel-synced sessions: assistant
+      // output must not reorder the session list, and updated_at never moves
+      // backwards. Only a newer user message may advance it.
+      if (lastUserMessageAt != null) {
+        this.db
+          .prepare('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?')
+          .run(lastUserMessageAt, sessionId);
+      }
     })();
   }
 
@@ -1935,7 +1958,6 @@ export class CoworkStore {
     messageId: string,
     updates: { content?: string; metadata?: CoworkMessageMetadata },
   ): void {
-    const now = Date.now();
     const setClauses: string[] = [];
     const values: (string | number | null)[] = [];
 
@@ -1952,7 +1974,9 @@ export class CoworkStore {
 
     values.push(messageId);
     values.push(sessionId);
-    const result = this.db
+    // Intentionally leaves session updated_at untouched: this runs for every
+    // streaming delta and would make concurrent runs fight over list order.
+    this.db
       .prepare(
         `
       UPDATE cowork_messages
@@ -1961,9 +1985,6 @@ export class CoworkStore {
     `,
       )
       .run(...values);
-    if (result.changes > 0) {
-      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
-    }
   }
 
   // Config operations

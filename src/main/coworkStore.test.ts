@@ -413,7 +413,7 @@ test('main agent lists legacy sessions with null agent id', () => {
 
 test('replaceConversationMessages preserves existing timestamps and uses gateway timestamps', () => {
   const sid = 'sess-replace-timestamps';
-  insertSession(sid);
+  insertSession(sid, 'main', 'test', 500);
 
   insertMessage('msg-user', sid, 'user', 'old user', '{}', 1, 1000);
   insertMessage('msg-assistant', sid, 'assistant', 'old assistant', '{}', 2, 2000);
@@ -435,6 +435,29 @@ test('replaceConversationMessages preserves existing timestamps and uses gateway
     { type: 'user', content: 'new user', timestamp: 3000 },
   ]);
   expect(session?.updatedAt).toBe(3000);
+});
+
+test('replaceConversationMessages never moves the session updated time backwards', () => {
+  const sid = 'sess-replace-backwards';
+  insertSession(sid, 'main', 'test', 5000);
+
+  store.replaceConversationMessages(sid, [
+    { role: 'user', text: 'old prompt', timestamp: 3000 },
+    { role: 'assistant', text: 'old reply', timestamp: 3500 },
+  ]);
+
+  expect(store.getSession(sid)?.updatedAt).toBe(5000);
+});
+
+test('replaceConversationMessages ignores assistant-only entries for the updated time', () => {
+  const sid = 'sess-replace-assistant-only';
+  insertSession(sid, 'main', 'test', 2000);
+
+  store.replaceConversationMessages(sid, [
+    { role: 'assistant', text: 'streamed reply', timestamp: 9000 },
+  ]);
+
+  expect(store.getSession(sid)?.updatedAt).toBe(2000);
 });
 
 test('getSession returns all messages when ALL have corrupt metadata', () => {
@@ -494,23 +517,37 @@ test('no console.warn when all metadata is valid or null', () => {
   warnSpy.mockRestore();
 });
 
-test('updateMessage refreshes the session updated time', () => {
+test('updateMessage preserves the session updated time', () => {
   const sid = 'sess-update-time';
   insertSession(sid);
   insertMessage('msg-edit', sid, 'assistant', 'draft', null, 1);
   db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(1000, sid);
   db.prepare('UPDATE cowork_messages SET created_at = ? WHERE id = ?').run(1000, 'msg-edit');
 
-  const beforeUpdate = Date.now();
-
   store.updateMessage(sid, 'msg-edit', { content: 'final' });
 
   const session = store.getSession(sid);
-  expect(session?.updatedAt).toBeGreaterThanOrEqual(beforeUpdate);
+  expect(session?.updatedAt).toBe(1000);
   expect(session?.messages[0]?.content).toBe('final');
 });
 
-test('updateSession refreshes the session updated time by default', () => {
+test('addMessage refreshes the session updated time only for user messages', () => {
+  const sid = 'sess-add-message-time';
+  insertSession(sid);
+  db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(1000, sid);
+
+  store.addMessage(sid, { type: 'assistant', content: 'streamed reply' });
+  expect(store.getSession(sid)?.updatedAt).toBe(1000);
+
+  store.addMessage(sid, { type: 'tool_use', content: 'tool call' });
+  expect(store.getSession(sid)?.updatedAt).toBe(1000);
+
+  const beforeUserMessage = Date.now();
+  store.addMessage(sid, { type: 'user', content: 'follow up' });
+  expect(store.getSession(sid)?.updatedAt).toBeGreaterThanOrEqual(beforeUserMessage);
+});
+
+test('updateSession refreshes the session updated time on a status transition', () => {
   const sid = 'sess-update-session-time';
   insertSession(sid);
   db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(1000, sid);
@@ -522,6 +559,30 @@ test('updateSession refreshes the session updated time by default', () => {
   const session = store.getSession(sid);
   expect(session?.status).toBe('completed');
   expect(session?.updatedAt).toBeGreaterThanOrEqual(beforeUpdate);
+});
+
+test('updateSession keeps the session updated time when status is unchanged', () => {
+  const sid = 'sess-status-noop';
+  insertSession(sid);
+  db.prepare("UPDATE cowork_sessions SET status = 'running', updated_at = ? WHERE id = ?").run(1000, sid);
+
+  store.updateSession(sid, { status: 'running' });
+
+  const session = store.getSession(sid);
+  expect(session?.status).toBe('running');
+  expect(session?.updatedAt).toBe(1000);
+});
+
+test('updateSession leaves the session updated time by default for non-status updates', () => {
+  const sid = 'sess-title-default';
+  insertSession(sid);
+  db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(1000, sid);
+
+  store.updateSession(sid, { title: 'Renamed without touch' });
+
+  const session = store.getSession(sid);
+  expect(session?.title).toBe('Renamed without touch');
+  expect(session?.updatedAt).toBe(1000);
 });
 
 test('updateSession can patch model override without refreshing the session updated time', () => {

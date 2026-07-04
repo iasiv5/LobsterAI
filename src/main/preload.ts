@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
-import { AgentIpcChannel } from '../shared/agent/constants';
+import { AgentIpcChannel, AgentLegacyIdentityCleanupStatus } from '../shared/agent/constants';
 import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -305,6 +305,13 @@ contextBridge.exposeInMainWorld('electron', {
     ) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.Update, id, updates);
       return result?.success ? result.agent : null;
+    },
+    cleanupLegacyIdentityBlock: async (id: string) => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.CleanupLegacyIdentityBlock, id);
+      return result?.result ?? {
+        status: AgentLegacyIdentityCleanupStatus.Failed,
+        error: result?.error || 'Failed to clean legacy identity block',
+      };
     },
     delete: async (id: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.Delete, id);

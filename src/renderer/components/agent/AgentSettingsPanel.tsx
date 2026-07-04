@@ -1,4 +1,5 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
+import { AgentLegacyIdentityCleanupStatus } from '@shared/agent';
 import type { Platform } from '@shared/platform';
 import { PlatformRegistry } from '@shared/platform';
 import { ProviderName } from '@shared/providers';
@@ -400,6 +401,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
           });
           window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('agentSaveFailed') }));
           return;
+        }
+      }
+      if (changedFields.includes('identity')) {
+        const cleanupResult = await agentService.cleanupLegacyIdentityBlock(agentId);
+        if (cleanupResult.status === AgentLegacyIdentityCleanupStatus.Failed) {
+          console.warn('[AgentSettingsPanel] failed to clean legacy AGENTS.md identity block:', cleanupResult.error);
         }
       }
       // Persist IM bindings if changed
