@@ -466,17 +466,23 @@ const coworkSlice = createSlice({
     updateSessionStatus(state, action: PayloadAction<{ sessionId: string; status: CoworkSessionStatus }>) {
       const { sessionId, status } = action.payload;
 
-      // Update in sessions list
+      // updatedAt drives session list ordering and only moves on a real
+      // transition: stream handlers re-dispatch 'running' on every event, and
+      // those no-op writes must not make concurrent runs fight over the top.
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
       if (sessionIndex !== -1) {
+        if (state.sessions[sessionIndex].status !== status) {
+          state.sessions[sessionIndex].updatedAt = Date.now();
+        }
         state.sessions[sessionIndex].status = status;
-        state.sessions[sessionIndex].updatedAt = Date.now();
       }
 
       // Update current session if applicable
       if (state.currentSession?.id === sessionId) {
+        if (state.currentSession.status !== status) {
+          state.currentSession.updatedAt = Date.now();
+        }
         state.currentSession.status = status;
-        state.currentSession.updatedAt = Date.now();
         // Streaming state is tied to the currently opened session only
         state.isStreaming = status === CoworkSessionStatusValue.Running;
       }
@@ -568,15 +574,18 @@ const coworkSlice = createSlice({
             state.currentSession.messages.push(message);
           }
           applyPendingMediaStatusUpdates(state, sessionId, message);
-          state.currentSession.updatedAt = message.timestamp;
+          if (message.type === 'user') {
+            state.currentSession.updatedAt = message.timestamp;
+          }
           state.currentSession.totalMessages += 1;
         }
       }
       upsertRailIndexItem(state, sessionId, message);
 
-      // Update session in list
+      // List ordering follows user activity: streamed assistant/tool messages
+      // must not move updatedAt or concurrent runs keep swapping positions.
       const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
+      if (sessionIndex !== -1 && message.type === 'user') {
         state.sessions[sessionIndex].updatedAt = message.timestamp;
       }
 
@@ -597,9 +606,10 @@ const coworkSlice = createSlice({
       }
     },
 
+    // Runs on every streaming delta, so it intentionally leaves session
+    // updatedAt untouched to keep the list order stable during runs.
     updateMessageContent(state, action: PayloadAction<{ sessionId: string; messageId: string; content: string; metadata?: Record<string, unknown> }>) {
       const { sessionId, messageId, content, metadata } = action.payload;
-      const updatedAt = Date.now();
 
       if (state.currentSession?.id === sessionId) {
         const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
@@ -618,21 +628,15 @@ const coworkSlice = createSlice({
             };
           }
           upsertRailIndexItem(state, sessionId, state.currentSession.messages[messageIndex]);
-          state.currentSession.updatedAt = updatedAt;
         }
-      }
-
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = updatedAt;
       }
 
       markSessionUnread(state, sessionId);
     },
 
+    // High-frequency media polling updates; must not move session updatedAt.
     updateToolUseMediaStatus(state, action: PayloadAction<{ sessionId: string; toolCallId: string; details: Record<string, unknown> }>) {
       const { sessionId, toolCallId, details } = action.payload;
-      const updatedAt = Date.now();
       const retainedDetails = retainMediaStatusUpdate(state, sessionId, toolCallId, details);
 
       if (state.currentSession?.id === sessionId) {
@@ -641,13 +645,7 @@ const coworkSlice = createSlice({
         ));
         if (message) {
           mergeMediaStatusDetailsIntoMessage(message, retainedDetails);
-          state.currentSession.updatedAt = updatedAt;
         }
-      }
-
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        state.sessions[sessionIndex].updatedAt = updatedAt;
       }
     },
 

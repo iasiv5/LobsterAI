@@ -350,6 +350,7 @@ interface McpMarketplaceData {
   servers: McpMarketplaceServer[];
 }
 
+import type { AgentLegacyIdentityCleanupResult } from '@shared/agent';
 import type { Platform } from '@shared/platform';
 
 import type { Agent, PresetAgent } from './agent';
@@ -569,6 +570,7 @@ interface IElectronAPI {
         pinned?: boolean;
       },
     ) => Promise<Agent>;
+    cleanupLegacyIdentityBlock: (id: string) => Promise<AgentLegacyIdentityCleanupResult>;
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
