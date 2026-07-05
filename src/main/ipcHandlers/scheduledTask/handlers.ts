@@ -8,8 +8,15 @@ import {
 } from '../../../scheduledTask/constants';
 import type { CronJobService } from '../../../scheduledTask/cronJobService';
 import { OpenClawEnginePhase } from '../../../shared/openclawEngine/constants';
-import { PlatformRegistry } from '../../../shared/platform';
+import {
+  imConversationDisplayName,
+  parseImConversationId,
+  PlatformRegistry,
+} from '../../../shared/platform';
 import { listScheduledTaskChannels } from './helpers';
+
+/** Matches auto-generated channel session titles, e.g. "[TG] group:123". */
+const AUTO_CHANNEL_TITLE_RE = /^\[[^\]]*\]\s/;
 
 export interface ScheduledTaskHandlerDeps {
   getCronJobService: () => CronJobService;
@@ -42,6 +49,8 @@ export interface ScheduledTaskHandlerDeps {
       coworkSessionId: string,
     ) => Promise<void>;
   } | null;
+  /** Resolve a Cowork session title for conversation display names. */
+  getCoworkSessionTitle: (sessionId: string) => string | null;
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
     getEngineStatusSnapshot: () => { phase: OpenClawEnginePhase };
@@ -124,7 +133,7 @@ async function ensureScheduledTaskGatewayClient(
 }
 
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
-  const { getCronJobService, getIMGatewayManager, getOpenClawRuntimeAdapter } = deps;
+  const { getCronJobService, getIMGatewayManager, getOpenClawRuntimeAdapter, getCoworkSessionTitle } = deps;
 
   ipcMain.handle(ScheduledTaskIpc.List, async () => {
     try {
@@ -332,12 +341,22 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
         const imStore = getIMGatewayManager()?.getIMStore();
         if (!imStore) return { success: true, conversations: [] };
         const mappings = imStore.listSessionMappings(platform, filterAccountId ?? accountId);
-        const conversations = mappings.map(m => ({
-          conversationId: m.imConversationId,
-          platform: m.platform,
-          coworkSessionId: m.coworkSessionId,
-          lastActiveAt: m.lastActiveAt,
-        }));
+        const conversations = mappings.map(m => {
+          const parsed = parseImConversationId(m.imConversationId);
+          const sessionTitle = getCoworkSessionTitle(m.coworkSessionId)?.trim();
+          // Channel-synced sessions get auto titles like "[TG] group:123"; only a
+          // title the user renamed (no "[...] " prefix) beats the parsed peer id.
+          const customTitle =
+            sessionTitle && !AUTO_CHANNEL_TITLE_RE.test(sessionTitle) ? sessionTitle : undefined;
+          return {
+            conversationId: m.imConversationId,
+            platform: m.platform,
+            coworkSessionId: m.coworkSessionId,
+            lastActiveAt: m.lastActiveAt,
+            ...(parsed.peerKind ? { peerKind: parsed.peerKind } : {}),
+            displayName: customTitle ?? imConversationDisplayName(m.imConversationId),
+          };
+        });
         return { success: true, conversations };
       } catch (error) {
         return {

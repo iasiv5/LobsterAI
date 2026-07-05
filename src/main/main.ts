@@ -7888,6 +7888,8 @@ if (!gotTheLock) {
         ),
     }),
     getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getCoworkSessionTitle: (sessionId: string) =>
+      getCoworkStore().getSession(sessionId, 0)?.title ?? null,
   });
 
   registerNimQrLoginHandlers({

@@ -82,7 +82,9 @@ export function listScheduledTaskChannels(): Array<{
           const accountId = nimAccountId ?? (i.instanceId ?? '').slice(0, 8);
           return {
             accountId,
-            instanceName: i.instanceName || (accountId ?? (i.instanceId ?? '').slice(0, 8)),
+            // Leave unnamed instances empty; the renderer falls back to an
+            // ordinal label instead of exposing an account id fragment.
+            instanceName: (i.instanceName ?? '').trim(),
             filterAccountId: accountId || undefined,
           };
         })

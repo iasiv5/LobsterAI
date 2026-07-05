@@ -4,11 +4,18 @@ import type {
   Schedule,
   ScheduleCron,
   ScheduledTask,
+  ScheduledTaskChannelOption,
+  ScheduledTaskConversationOption,
   ScheduledTaskDelivery,
   ScheduledTaskPayload,
   TaskLastStatus,
 } from '../../../scheduledTask/types';
-import { PlatformRegistry } from '../../../shared/platform';
+import {
+  imConversationDisplayName,
+  ImPeerKind,
+  parseImConversationId,
+  PlatformRegistry,
+} from '../../../shared/platform';
 import { i18nService } from '../../services/i18n';
 
 const WEEKDAY_KEYS = [
@@ -313,6 +320,101 @@ function resolveChannelDisplayName(channel: string): string {
   return channel;
 }
 
+/** Localized label for a conversation peer kind ('direct' → 私聊/DM). */
+function conversationPeerKindLabel(peerKind: string | undefined): string {
+  switch (peerKind) {
+    case ImPeerKind.Direct:
+      return i18nService.t('scheduledTasksConvKindDirect');
+    case ImPeerKind.Group:
+      return i18nService.t('scheduledTasksConvKindGroup');
+    case ImPeerKind.Channel:
+      return i18nService.t('scheduledTasksConvKindChannel');
+    default:
+      return '';
+  }
+}
+
+/** Dropdown label for a conversation option, e.g. "私聊 · 张三" instead of raw IDs. */
+export function formatConversationOptionLabel(option: ScheduledTaskConversationOption): string {
+  const name = option.displayName?.trim() || imConversationDisplayName(option.conversationId);
+  const kind = conversationPeerKindLabel(
+    option.peerKind ?? parseImConversationId(option.conversationId).peerKind,
+  );
+  return kind ? `${kind} · ${name}` : name;
+}
+
+/** Friendly rendering of a saved delivery target (bare peer id or full conversation id). */
+export function formatDeliveryTarget(to: string): string {
+  const kind = conversationPeerKindLabel(parseImConversationId(to).peerKind);
+  const name = imConversationDisplayName(to);
+  return kind ? `${kind} · ${name}` : name;
+}
+
+/**
+ * Default notify target for a bot instance: the most recent direct (DM)
+ * conversation, falling back to the most recent conversation of any kind.
+ * The input list is already sorted by recency (listSessionMappings orders by
+ * last_active_at DESC).
+ */
+export function pickDefaultConversation(
+  conversations: readonly ScheduledTaskConversationOption[],
+): ScheduledTaskConversationOption | undefined {
+  if (conversations.length === 0) return undefined;
+  const direct = conversations.find(
+    conv =>
+      (conv.peerKind ?? parseImConversationId(conv.conversationId).peerKind) === ImPeerKind.Direct,
+  );
+  return direct ?? conversations[0];
+}
+
+/**
+ * Whether a conversation option refers to a saved delivery target. Saved targets
+ * are normalized to the bare peer id at create time (see
+ * applyAnnounceDeliveryNormalization), so options also match by their peer id
+ * or trailing segment.
+ */
+export function conversationOptionMatchesValue(
+  channel: string,
+  optionConversationId: string,
+  selectedValue: string,
+): boolean {
+  const optionId = optionConversationId.trim();
+  const value = selectedValue.trim();
+  if (!optionId || !value) return false;
+  if (optionId === value) return true;
+  if (parseImConversationId(optionId).peerId === value) return true;
+  if (optionId.endsWith(`:${value}`)) return true;
+
+  const platform = PlatformRegistry.platformOfChannel(channel);
+  if (platform === 'nim' && optionId.endsWith(`|${value}`)) return true;
+
+  return false;
+}
+
+/**
+ * Display label for a channel option. Multi-instance platforms get a
+ * "平台 · 实例名" suffix only when more than one instance of that platform is
+ * present; unnamed instances fall back to an ordinal instead of an account id.
+ */
+export function formatChannelOptionLabel(
+  option: ScheduledTaskChannelOption,
+  allOptions: readonly ScheduledTaskChannelOption[],
+): string {
+  const platform = PlatformRegistry.platformOfChannel(option.value);
+  const platformLabel = platform
+    ? i18nService.t(platform) || PlatformRegistry.get(platform).label
+    : option.label || option.value;
+  if (!option.accountId) return platformLabel;
+
+  const siblings = allOptions.filter(o => o.value === option.value && o.accountId);
+  if (siblings.length <= 1) return platformLabel;
+
+  const ordinal = siblings.findIndex(o => o.accountId === option.accountId) + 1;
+  const instanceName =
+    option.label.trim() || `${i18nService.t('scheduledTasksFormInstanceFallback')} ${ordinal}`;
+  return `${platformLabel} · ${instanceName}`;
+}
+
 export function formatDeliveryLabel(delivery: ScheduledTaskDelivery): string {
   if (delivery.mode === 'none' && !delivery.channel) {
     return i18nService.t('scheduledTasksFormDeliveryModeNone');
@@ -320,7 +422,7 @@ export function formatDeliveryLabel(delivery: ScheduledTaskDelivery): string {
 
   if (delivery.mode === 'none' && delivery.channel) {
     const channelName = resolveChannelDisplayName(delivery.channel);
-    const toLabel = delivery.to ? ` -> ${delivery.to}` : '';
+    const toLabel = delivery.to ? ` · ${formatDeliveryTarget(delivery.to)}` : '';
     return `${channelName}${toLabel}`;
   }
 
@@ -331,7 +433,7 @@ export function formatDeliveryLabel(delivery: ScheduledTaskDelivery): string {
   }
 
   const channelName = delivery.channel ? resolveChannelDisplayName(delivery.channel) : 'last';
-  const toLabel = delivery.to ? ` -> ${delivery.to}` : '';
+  const toLabel = delivery.to ? ` · ${formatDeliveryTarget(delivery.to)}` : '';
   return `${i18nService.t('scheduledTasksFormDeliveryModeAnnounce')} · ${channelName}${toLabel}`;
 }
 
