@@ -45,6 +45,7 @@ import {
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
+import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
 import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
@@ -369,6 +370,18 @@ const MANAGED_MEMORY_POLICY_PROMPT = [
   '- "Mental notes" do not survive session restarts. Files do.',
 ].join('\n');
 
+const MANAGED_HEARTBEAT_POLICY_PROMPT = [
+  '## Heartbeat Policy',
+  '',
+  'This policy supersedes any earlier heartbeat guidance in this file (including "Be Proactive!" style advice).',
+  '',
+  '- Anything in `HEARTBEAT.md` triggers periodic model calls that cost the user money. Keep the file empty or comments-only unless the user explicitly asked for ongoing monitoring.',
+  '- Add a watch item only when the user explicitly asks you to keep watching something. Never invent routine checks (inbox/calendar/weather rotations) on your own.',
+  '- Remove each item as soon as it is done or cancelled.',
+  '- Prefer cron/scheduled tasks for anything with an exact time or schedule.',
+  '- On a heartbeat poll with nothing that needs attention, reply `HEARTBEAT_OK`; do not go looking for work.',
+].join('\n');
+
 const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
   '# AGENTS.md - Your Workspace',
   '',
@@ -413,8 +426,9 @@ const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
   '',
   '## Heartbeats',
   '',
-  '- Use `HEARTBEAT.md` for proactive background checks and reminders.',
-  '- Prefer cron for exact schedules and heartbeat for periodic checks.',
+  '- Add an item to `HEARTBEAT.md` only when the user explicitly asks for ongoing monitoring; anything in that file triggers periodic model calls that cost the user money.',
+  '- Prefer cron/scheduled tasks for anything with an exact time or schedule.',
+  '- Remove each item as soon as it is done or cancelled. With no items, keep the file empty or comments-only so heartbeats skip without model calls.',
 ].join('\n');
 
 const stripTemplateFrontMatter = (content: string): string => {
@@ -450,7 +464,10 @@ const readBundledOpenClawAgentsTemplate = (): string => {
       const content = fs.readFileSync(templatePath, 'utf8');
       const trimmed = stripTemplateFrontMatter(content);
       if (trimmed) {
-        return trimmed;
+        // The bundled template tells the model to invent periodic checks and
+        // write them into HEARTBEAT.md; strip that section so new workspaces
+        // are not seeded with guidance that contradicts the heartbeat policy.
+        return stripProactiveHeartbeatSection(trimmed);
       }
     } catch {
       // Ignore missing/unreadable bundled templates and fall back below.
@@ -1857,6 +1874,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             target: 'none',
             lightContext: true,
             isolatedSession: true,
+            skipWhenBusy: true,
           },
           ...(Object.keys(agentModelDefaults).length > 0
             ? { models: agentModelDefaults }
@@ -3089,6 +3107,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       sections.push(MANAGED_BROWSER_POLICY_PROMPT);
       sections.push(MANAGED_EXEC_SAFETY_PROMPT);
       sections.push(MANAGED_MEMORY_POLICY_PROMPT);
+      sections.push(MANAGED_HEARTBEAT_POLICY_PROMPT);
       sections.push(buildManagedSkillCreationPrompt(resolveSkillCreationPath()));
 
       // Keep scheduled-task policy after skills so native channel sessions
@@ -3299,12 +3318,27 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     const stateDir = this.engineManager.getStateDir();
     const userContent = readBootstrapFile(mainWorkspaceDir, 'USER.md');
 
+    try {
+      if (repairHeartbeatFile(mainWorkspaceDir)) {
+        console.log('[OpenClawConfigSync] Repaired legacy HEARTBEAT.md in main workspace');
+      }
+    } catch (error) {
+      console.warn(
+        '[OpenClawConfigSync] Failed to repair HEARTBEAT.md in main workspace:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
     for (const agent of agents) {
       if (agent.id === 'main' || !agent.enabled) continue;
 
       const agentWorkspace = path.join(stateDir, `workspace-${agent.id}`);
       try {
         ensureDir(agentWorkspace);
+
+        if (repairHeartbeatFile(agentWorkspace)) {
+          console.log(`[OpenClawConfigSync] Repaired legacy HEARTBEAT.md for agent ${agent.id}`);
+        }
 
         // Sync SOUL.md — agent's system prompt
         const soulPath = path.join(agentWorkspace, 'SOUL.md');
