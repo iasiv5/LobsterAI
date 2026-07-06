@@ -1676,6 +1676,10 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkMemoryEditingId, setCoworkMemoryEditingId] = useState<string | null>(null);
   const [coworkMemoryDraftText, setCoworkMemoryDraftText] = useState<string>('');
   const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
+  const [coworkMemoryRawMode, setCoworkMemoryRawMode] = useState<boolean>(false);
+  const [coworkMemoryRawText, setCoworkMemoryRawText] = useState<string>('');
+  const [coworkMemoryRawSaving, setCoworkMemoryRawSaving] = useState<boolean>(false);
+  const [coworkMemoryExpandedIds, setCoworkMemoryExpandedIds] = useState<Set<string>>(new Set());
   const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(null);
   const [showOpenClawRepairConfirm, setShowOpenClawRepairConfirm] = useState<boolean>(false);
   const [isRepairingOpenClaw, setIsRepairingOpenClaw] = useState<boolean>(false);
@@ -2997,6 +3001,46 @@ const Settings: React.FC<SettingsProps> = ({
   const handleOpenCoworkMemoryModal = () => {
     resetCoworkMemoryEditor();
     setShowMemoryModal(true);
+  };
+
+  const handleEnterCoworkMemoryRawMode = async () => {
+    setError(null);
+    const content = await coworkService.readMemoryFileRaw();
+    if (content === null) {
+      setError(i18nService.t('coworkMemoryRawLoadFailed'));
+      return;
+    }
+    setCoworkMemoryRawText(content);
+    setCoworkMemoryRawMode(true);
+  };
+
+  const handleSaveCoworkMemoryRaw = async () => {
+    if (coworkMemoryRawSaving) return;
+    setError(null);
+    setCoworkMemoryRawSaving(true);
+    try {
+      const result = await coworkService.writeMemoryFileRaw(coworkMemoryRawText);
+      if (!result.success) {
+        setError(result.error || i18nService.t('coworkMemoryRawSaveFailed'));
+        return;
+      }
+      setCoworkMemoryRawMode(false);
+      await loadCoworkMemoryData();
+    } finally {
+      setCoworkMemoryRawSaving(false);
+    }
+  };
+
+  const toggleCoworkMemoryExpandedId = (id: string) => {
+    setCoworkMemoryExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
 
   // Toggle provider enabled status
@@ -4803,10 +4847,19 @@ const Settings: React.FC<SettingsProps> = ({
           { key: 'entries' as const, titleKey: 'coworkMemoryTabEntries' },
           { key: 'embedding' as const, titleKey: 'coworkMemoryTabEmbedding' },
         ];
+        const coworkMemoryGroups: Array<{ section?: string; entries: CoworkUserMemoryEntry[] }> = [];
+        for (const entry of coworkMemoryEntries) {
+          const lastGroup = coworkMemoryGroups[coworkMemoryGroups.length - 1];
+          if (lastGroup && (lastGroup.section ?? '') === (entry.section ?? '')) {
+            lastGroup.entries.push(entry);
+          } else {
+            coworkMemoryGroups.push({ section: entry.section, entries: [entry] });
+          }
+        }
         return (
           <div className="flex flex-col h-full space-y-4">
             <div
-              className="flex flex-wrap gap-2 border-b border-border pb-3 shrink-0"
+              className="flex gap-6 border-b border-border shrink-0"
               role="tablist"
               aria-label={i18nService.t('coworkMemoryTitle')}
             >
@@ -4817,10 +4870,10 @@ const Settings: React.FC<SettingsProps> = ({
                   role="tab"
                   aria-selected={memoryTab === tab.key}
                   onClick={() => setMemoryTab(tab.key)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  className={`-mb-px border-b-2 px-0.5 pb-2.5 text-sm font-medium transition-colors ${
                     memoryTab === tab.key
-                      ? 'bg-primary-muted text-primary'
-                      : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-secondary hover:text-foreground'
                   }`}
                 >
                   {i18nService.t(tab.titleKey)}
@@ -4830,7 +4883,7 @@ const Settings: React.FC<SettingsProps> = ({
             <div className="flex-1 min-h-0 overflow-y-auto">
               {memoryTab === 'entries' && (
                 <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div className="space-y-1">
                       <div className="text-sm font-medium text-foreground">
                         {i18nService.t('coworkMemoryCrudTitle')}
@@ -4839,72 +4892,169 @@ const Settings: React.FC<SettingsProps> = ({
                         {i18nService.t('coworkMemoryManageHint')}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleOpenCoworkMemoryModal}
-                      className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
-                    >
-                      <PlusCircleIcon className="h-4 w-4 mr-1.5" />
-                      {i18nService.t('coworkMemoryCrudCreate')}
-                    </button>
-                  </div>
-
-                  {coworkMemoryStats && (
-                    <div className="text-xs text-secondary">
-                      {`${i18nService.t('coworkMemoryTotalLabel')}: ${coworkMemoryStats.total}`}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => { void handleEnterCoworkMemoryRawMode(); }}
+                          disabled={coworkMemoryListLoading}
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg border border-border text-sm text-foreground hover:bg-surface-raised disabled:opacity-60 transition-colors"
+                        >
+                          {i18nService.t('coworkMemoryRawButton')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenCoworkMemoryModal}
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
+                        >
+                          <PlusCircleIcon className="h-4 w-4 mr-1.5" />
+                          {i18nService.t('coworkMemoryCrudCreate')}
+                        </button>
                     </div>
-                  )}
-
-                  <input
-                    type="text"
-                    value={coworkMemoryQuery}
-                    onChange={(event) => setCoworkMemoryQuery(event.target.value)}
-                    placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
-                    className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
-                  />
-
-                  <div className="rounded-lg border border-border">
-                    {coworkMemoryListLoading ? (
-                      <div className="px-3 py-3 text-xs text-secondary">
-                        {i18nService.t('loading')}
-                      </div>
-                    ) : coworkMemoryEntries.length === 0 ? (
-                      <div className="px-3 py-3 text-xs text-secondary">
-                        {i18nService.t('coworkMemoryEmpty')}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border">
-                        {coworkMemoryEntries.map((entry) => (
-                          <div key={entry.id} className="px-3 py-3 text-xs hover:bg-surface-raised transition-colors">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-foreground break-words">
-                                  {entry.text}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleEditCoworkMemoryEntry(entry)}
-                                  className="rounded border px-2 py-1 border-border text-foreground hover:bg-surface-raised transition-colors"
-                                >
-                                  {i18nService.t('edit')}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { void handleDeleteCoworkMemoryEntry(entry); }}
-                                  className="rounded border px-2 py-1 text-red-500 border-border hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
-                                  disabled={coworkMemoryListLoading}
-                                >
-                                  {i18nService.t('delete')}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
+
+                    <>
+                      {coworkMemoryStats && (
+                        <div className="text-xs text-secondary">
+                          {`${i18nService.t('coworkMemoryTotalLabel')}: ${coworkMemoryStats.total}`}
+                        </div>
+                      )}
+
+                      <input
+                        type="text"
+                        value={coworkMemoryQuery}
+                        onChange={(event) => setCoworkMemoryQuery(event.target.value)}
+                        placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
+                        className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
+                      />
+
+                      <div className="rounded-lg border border-border">
+                        {coworkMemoryListLoading ? (
+                          <div className="px-3 py-3 text-xs text-secondary">
+                            {i18nService.t('loading')}
+                          </div>
+                        ) : coworkMemoryEntries.length === 0 ? (
+                          <div className="px-3 py-3 text-xs text-secondary">
+                            {i18nService.t('coworkMemoryEmpty')}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-border">
+                            {coworkMemoryGroups.map((group, groupIndex) => (
+                              <React.Fragment key={group.section ?? `ungrouped-${groupIndex}`}>
+                                {group.section && (
+                                  <div className="flex items-baseline gap-1.5 px-3 pb-1.5 pt-3 text-[11px] font-medium text-secondary">
+                                    <span className="truncate">{group.section}</span>
+                                    <span className="font-normal opacity-70">{group.entries.length}</span>
+                                  </div>
+                                )}
+                                {group.entries.map((entry) => {
+                                  const isLongMemoryText =
+                                    entry.text.split('\n').length > 3 || entry.text.length > 240;
+                                  const isMemoryTextExpanded = coworkMemoryExpandedIds.has(entry.id);
+                                  return (
+                                    <div key={entry.id} className="group px-3 py-3 text-xs transition-colors hover:bg-surface-raised/60">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                          <div
+                                            className={`text-foreground break-words whitespace-pre-wrap leading-relaxed ${
+                                              isLongMemoryText && !isMemoryTextExpanded ? 'line-clamp-3' : ''
+                                            }`}
+                                          >
+                                            {entry.text}
+                                          </div>
+                                          {isLongMemoryText && (
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleCoworkMemoryExpandedId(entry.id)}
+                                              className="mt-1.5 text-[11px] text-primary hover:underline"
+                                            >
+                                              {i18nService.t(isMemoryTextExpanded ? 'coworkMemoryCollapse' : 'coworkMemoryExpand')}
+                                            </button>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleEditCoworkMemoryEntry(entry)}
+                                            title={i18nService.t('edit')}
+                                            aria-label={i18nService.t('edit')}
+                                            className="rounded-md p-1.5 text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                                          >
+                                            <EditIcon className="h-4 w-4" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => { void handleDeleteCoworkMemoryEntry(entry); }}
+                                            title={i18nService.t('delete')}
+                                            aria-label={i18nService.t('delete')}
+                                            className="rounded-md p-1.5 text-secondary hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
+                                            disabled={coworkMemoryListLoading}
+                                          >
+                                            <TrashIcon className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+
+                  {coworkMemoryRawMode && (
+                    <Modal
+                      isOpen
+                      onClose={() => setCoworkMemoryRawMode(false)}
+                      overlayClassName="fixed inset-0 z-[60] flex items-center justify-center bg-black/10 dark:bg-black/50 p-6"
+                      className="flex h-[min(720px,calc(100vh-48px))] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-surface bg-surface shadow-[0_12px_40px_rgba(0,0,0,0.16)]"
+                    >
+                      <div className="flex shrink-0 items-start justify-between gap-3 px-5 py-4">
+                        <div className="min-w-0">
+                          <h2 className="text-lg font-semibold text-foreground">
+                            {i18nService.t('coworkMemoryRawButton')}
+                          </h2>
+                          <p className="mt-0.5 text-sm text-secondary">
+                            {i18nService.t('coworkMemoryRawHint')}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCoworkMemoryRawMode(false)}
+                          title={i18nService.t('close')}
+                          aria-label={i18nService.t('close')}
+                          className="p-2 rounded-lg hover:bg-surface-raised transition-colors"
+                        >
+                          <XMarkIcon className="h-5 w-5 text-secondary" />
+                        </button>
+                      </div>
+                      <textarea
+                        value={coworkMemoryRawText}
+                        onChange={(event) => setCoworkMemoryRawText(event.target.value)}
+                        spellCheck={false}
+                        autoFocus
+                        className="min-h-0 w-full flex-1 resize-none bg-transparent px-5 pt-1 pb-4 text-xs font-mono leading-relaxed text-foreground focus:outline-none"
+                      />
+                      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-5 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setCoworkMemoryRawMode(false)}
+                          className="px-3.5 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-lg border border-border transition-colors"
+                        >
+                          {i18nService.t('cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void handleSaveCoworkMemoryRaw(); }}
+                          disabled={coworkMemoryRawSaving}
+                          className="px-3.5 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                        >
+                          {i18nService.t('save')}
+                        </button>
+                      </div>
+                    </Modal>
+                  )}
                 </div>
               )}
 
@@ -5540,22 +5690,22 @@ const Settings: React.FC<SettingsProps> = ({
               onClick={resetCoworkMemoryEditor}
             >
               <div
-                className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-md"
+                className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-lg"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="px-5 pt-5 pb-4 border-b border-border">
+                <div className="flex items-center gap-2.5 px-5 pt-5 pb-3">
                   <h3 className="text-base font-semibold text-foreground">
                     {coworkMemoryEditingId ? i18nService.t('coworkMemoryCrudUpdate') : i18nService.t('coworkMemoryCrudCreate')}
                   </h3>
+                  {coworkMemoryEditingId && (
+                    <span className="inline-flex items-center rounded-md bg-primary-muted px-2 py-0.5 text-[11px] text-primary">
+                      {i18nService.t('coworkMemoryEditingTag')}
+                    </span>
+                  )}
                 </div>
 
-                <div className="px-5 py-4 space-y-4">
-                  {coworkMemoryEditingId && (
-                    <div className="rounded-lg border px-2 py-1 text-xs border-border text-secondary">
-                      {i18nService.t('coworkMemoryEditingTag')}
-                    </div>
-                  )}
-                  <label className="block text-xs font-medium text-secondary mb-1">
+                <div className="px-5 pb-1">
+                  <label className="block text-xs font-medium text-secondary mb-1.5">
                     {i18nService.t('coworkMemoryCrudContentLabel')}<span className="text-red-500 dark:text-red-400 ml-0.5">*</span>
                   </label>
                   <textarea
@@ -5563,15 +5713,18 @@ const Settings: React.FC<SettingsProps> = ({
                     onChange={(event) => setCoworkMemoryDraftText(event.target.value)}
                     placeholder={i18nService.t('coworkMemoryCrudTextPlaceholder')}
                     autoFocus
-                    className="min-h-[200px] w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface text-foreground focus:border-primary focus:ring-1 focus:ring-primary/30"
+                    className="min-h-[220px] w-full resize-y rounded-lg border px-3.5 py-3 text-sm leading-relaxed border-border bg-surface text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
                   />
+                  <div className="mt-1.5 text-[11px] leading-relaxed text-secondary">
+                    {i18nService.t('coworkMemoryCrudMultilineHint')}
+                  </div>
                 </div>
 
-                <div className="flex justify-end space-x-2 px-5 pb-5">
+                <div className="flex justify-end space-x-2 px-5 py-4">
                   <button
                     type="button"
                     onClick={resetCoworkMemoryEditor}
-                    className="px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-xl border border-border transition-colors"
+                    className="px-3.5 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-lg border border-border transition-colors"
                   >
                     {i18nService.t('cancel')}
                   </button>
@@ -5579,7 +5732,7 @@ const Settings: React.FC<SettingsProps> = ({
                     type="button"
                     onClick={() => { void handleSaveCoworkMemoryEntry(); }}
                     disabled={!coworkMemoryDraftText.trim() || coworkMemoryListLoading}
-                    className="px-3 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-xl disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                    className="px-3.5 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
                   >
                     {coworkMemoryEditingId ? i18nService.t('save') : i18nService.t('coworkMemoryCrudCreate')}
                   </button>

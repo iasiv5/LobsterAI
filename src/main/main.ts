@@ -274,10 +274,12 @@ import {
   migrateSqliteToMemoryMd,
   readBootstrapFile,
   readMemoryEntries,
+  readMemoryFileRaw,
   resolveMemoryFilePath,
   searchMemoryEntries,
   updateMemoryEntry,
   writeBootstrapFile,
+  writeMemoryFileRaw,
 } from './libs/openclawMemoryFile';
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
@@ -7602,6 +7604,36 @@ if (!gotTheLock) {
       }
     },
   );
+  ipcMain.handle(CoworkIpcChannel.MemoryReadRaw, async () => {
+    try {
+      const filePath = resolveMemoryFilePath(
+        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
+      );
+      return { success: true, content: readMemoryFileRaw(filePath) };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read memory file',
+      };
+    }
+  });
+  ipcMain.handle(CoworkIpcChannel.MemoryWriteRaw, async (_event, input: { content: string }) => {
+    try {
+      if (typeof input?.content !== 'string') {
+        return { success: false, error: 'Memory content is required' };
+      }
+      const filePath = resolveMemoryFilePath(
+        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
+      );
+      writeMemoryFileRaw(filePath, input.content);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to write memory file',
+      };
+    }
+  });
   ipcMain.handle('cowork:memory:getStats', async () => {
     try {
       const filePath = resolveMemoryFilePath(

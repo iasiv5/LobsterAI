@@ -367,6 +367,13 @@ const MANAGED_MEMORY_POLICY_PROMPT = [
   '- Only say "记住了" / "I\'ll remember that" AFTER the write tool call succeeds.',
   '- Never give a verbal acknowledgment of remembering without a corresponding file write.',
   '- "Mental notes" do not survive session restarts. Files do.',
+  '',
+  '**MEMORY.md format.** Keep each memory readable as one self-contained block:',
+  '',
+  '- One memory = one top-level bullet. Put related details on indented child',
+  '  bullets inside the same block, never as separate top-level bullets.',
+  '- Group related memories under `## <topic>` headings.',
+  '- Do not split a single fact across multiple top-level bullets.',
 ].join('\n');
 
 const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [

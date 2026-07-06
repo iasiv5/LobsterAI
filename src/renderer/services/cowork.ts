@@ -1387,6 +1387,21 @@ class CoworkService {
     return result.stats;
   }
 
+  async readMemoryFileRaw(): Promise<string | null> {
+    const api = window.electron?.cowork?.readMemoryFileRaw;
+    if (!api) return null;
+    const result = await api();
+    if (!result?.success) return null;
+    return result.content ?? '';
+  }
+
+  async writeMemoryFileRaw(content: string): Promise<{ success: boolean; error?: string }> {
+    const api = window.electron?.cowork?.writeMemoryFileRaw;
+    if (!api) return { success: false, error: 'Memory raw API unavailable' };
+    const result = await api({ content });
+    return result ?? { success: false };
+  }
+
   async readBootstrapFile(filename: string): Promise<string> {
     const api = window.electron?.cowork?.readBootstrapFile;
     if (!api) return '';
