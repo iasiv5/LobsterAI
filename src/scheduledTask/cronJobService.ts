@@ -294,15 +294,13 @@ function toGatewayDelivery(delivery?: ScheduledTaskDelivery): GatewayDelivery | 
     return undefined;
   }
   if (delivery.mode === DeliveryMode.None) {
-    // Preserve channel/to even with mode='none' so IM notification target round-trips
-    // through the gateway for the edit form to display.
-    const result: GatewayDelivery = {
-      mode: DeliveryMode.None,
-      ...(delivery.channel ? { channel: delivery.channel } : {}),
-      ...(delivery.to ? { to: delivery.to } : {}),
-    } as GatewayDelivery;
+    // mode='none' means no notification; send a clean { mode: 'none' } patch.
+    // The gateway patch-merges delivery and cannot clear a previously-set
+    // channel/to, but mapGatewayJob strips any residual target on the way back
+    // so the UI never surfaces a notification target for none-mode tasks.
+    const result: GatewayDelivery = { mode: DeliveryMode.None };
     console.log(
-      '[CronJobService][toGatewayDelivery] mode=none with preserved channel/to:',
+      '[CronJobService][toGatewayDelivery] mode=none, cleared channel/to:',
       JSON.stringify(result),
     );
     return result;
@@ -365,15 +363,20 @@ export function mapGatewayTaskState(
   };
 }
 
-export function mapGatewayJob(job: GatewayJob): ScheduledTask {
-  const delivery = job.delivery ?? { mode: DeliveryMode.None };
-
-  // Infer delivery channel/to from sessionKey when the gateway job has no
-  // explicit delivery target (common for agent-initiated cron.add tasks).
+/**
+ * Maps a non-`none` gateway delivery onto the UI model, inferring channel/to
+ * from `sessionKey` when the gateway job has no explicit delivery target
+ * (common for agent-initiated cron.add tasks). Callers must handle
+ * `mode === 'none'` separately so stale gateway-retained targets are stripped.
+ */
+function mapGatewayDeliveryTarget(
+  delivery: GatewayDelivery,
+  sessionKey: string | null | undefined,
+): ScheduledTaskDelivery {
   let inferredChannel: string | undefined;
   let inferredTo: string | undefined;
-  if (!delivery.channel && job.sessionKey) {
-    const parsed = parseChannelSessionKey(job.sessionKey);
+  if (!delivery.channel && sessionKey) {
+    const parsed = parseChannelSessionKey(sessionKey);
     if (parsed) {
       const channelName = PlatformRegistry.channelOf(parsed.platform);
       if (channelName) {
@@ -382,6 +385,31 @@ export function mapGatewayJob(job: GatewayJob): ScheduledTask {
       }
     }
   }
+
+  return {
+    mode: delivery.mode,
+    ...(delivery.channel || inferredChannel
+      ? { channel: delivery.channel ?? inferredChannel }
+      : {}),
+    ...(delivery.to || inferredTo ? { to: delivery.to ?? inferredTo } : {}),
+    ...(delivery.accountId ? { accountId: delivery.accountId } : {}),
+    ...(typeof delivery.bestEffort === 'boolean' ? { bestEffort: delivery.bestEffort } : {}),
+  };
+}
+
+export function mapGatewayJob(job: GatewayJob): ScheduledTask {
+  const delivery = job.delivery ?? { mode: DeliveryMode.None };
+
+  // mode='none' means no notification. The gateway patch-merges delivery on
+  // cron.update and cannot clear a previously-set channel/to, so a job that was
+  // switched to "不通知" still carries the stale target on subsequent reads.
+  // Strip any residual channel/to/accountId here so update/list/get/refresh
+  // all surface a clean { mode: 'none' } to the UI. This is the single
+  // chokepoint for gateway→UI job mapping, so it covers every read path.
+  const mappedDelivery: ScheduledTaskDelivery =
+    delivery.mode === DeliveryMode.None
+      ? { mode: DeliveryMode.None }
+      : mapGatewayDeliveryTarget(delivery, job.sessionKey);
 
   return {
     id: job.id,
@@ -402,15 +430,7 @@ export function mapGatewayJob(job: GatewayJob): ScheduledTask {
               : {}),
             ...(job.payload.model ? { model: job.payload.model } : {}),
           },
-    delivery: {
-      mode: delivery.mode,
-      ...(delivery.channel || inferredChannel
-        ? { channel: delivery.channel ?? inferredChannel }
-        : {}),
-      ...(delivery.to || inferredTo ? { to: delivery.to ?? inferredTo } : {}),
-      ...(delivery.accountId ? { accountId: delivery.accountId } : {}),
-      ...(typeof delivery.bestEffort === 'boolean' ? { bestEffort: delivery.bestEffort } : {}),
-    },
+    delivery: mappedDelivery,
     agentId: job.agentId ?? null,
     sessionKey: job.sessionKey ?? null,
     state: mapGatewayTaskState(job.state, delivery.mode),

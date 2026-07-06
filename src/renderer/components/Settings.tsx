@@ -2186,6 +2186,16 @@ const Settings: React.FC<SettingsProps> = ({
       delete next[key];
       return next;
     });
+    // If the deleted provider was active, switch to first visible BEFORE the
+    // await below. Otherwise the intermediate render triggered while awaiting
+    // would still have activeProvider pointing at the just-deleted key, and the
+    // model settings render accesses providers[activeProvider].* without guards,
+    // crashing the whole view (white screen).
+    if (activeProvider === key) {
+      const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
+      const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
+      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? providerKeys[0]);
+    }
     // Persist the deletion immediately so it survives window close
     const updatedProviders = { ...currentConfig.providers };
     delete updatedProviders[key];
@@ -2202,12 +2212,6 @@ const Settings: React.FC<SettingsProps> = ({
       }
     } catch (deleteError) {
       console.warn('[Settings] failed to persist custom provider deletion:', deleteError);
-    }
-    // If the deleted provider was active, switch to first visible
-    if (activeProvider === key) {
-      const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
-      const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
-      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? providerKeys[0]);
     }
   };
 
