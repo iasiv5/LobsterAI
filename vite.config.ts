@@ -6,7 +6,9 @@ import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 
 // https://vitejs.dev/config/
-const devPort = 5175;
+// PORT lets tooling (e.g. browser preview) assign a free port; electron:dev
+// pins 5175 via the --port CLI flag, which overrides server.port anyway.
+const devPort = Number(process.env.PORT ?? '') || 5175;
 const katexVersion = process.env.npm_package_dependencies_katex?.replace(/^[~^]/, '') || '0.16.0';
 const pdfJsAssetRoot = path.resolve(__dirname, 'node_modules/pdfjs-dist');
 const pdfJsPublicPath = '/pdfjs/';

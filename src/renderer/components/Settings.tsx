@@ -72,7 +72,7 @@ import {
   shouldUseMaxCompletionTokensForOpenAI,
   shouldUseOpenAIResponsesForProvider,
 } from './settings/modelProviderUtils';
-import ModelSettingsSection, { ModelEditorDialog } from './settings/ModelSettingsSection';
+import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } from './settings/ModelSettingsSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -5167,8 +5167,6 @@ const Settings: React.FC<SettingsProps> = ({
             testResult={testResult}
             isTestResultModalOpen={isTestResultModalOpen}
             setIsTestResultModalOpen={setIsTestResultModalOpen}
-            pendingDeleteProvider={pendingDeleteProvider}
-            setPendingDeleteProvider={setPendingDeleteProvider}
             importInputRef={importInputRef}
             handleImportProvidersClick={handleImportProvidersClick}
             handleExportProviders={handleExportProviders}
@@ -5177,7 +5175,6 @@ const Settings: React.FC<SettingsProps> = ({
             toggleProviderEnabled={toggleProviderEnabled}
             handleAddCustomProvider={handleAddCustomProvider}
             handleDeleteCustomProvider={handleDeleteCustomProvider}
-            confirmDeleteCustomProvider={confirmDeleteCustomProvider}
             handleProviderConfigChange={handleProviderConfigChange}
             setProviders={setProviders}
             handleMiniMaxDeviceLogin={handleMiniMaxDeviceLogin}
@@ -5581,6 +5578,13 @@ const Settings: React.FC<SettingsProps> = ({
           handleSaveNewModel={handleSaveNewModel}
           handleCancelModelEdit={handleCancelModelEdit}
           handleModelDialogKeyDown={handleModelDialogKeyDown}
+        />
+
+        <DeleteProviderConfirmDialog
+          pendingDeleteProvider={pendingDeleteProvider}
+          providers={providers}
+          onCancel={() => setPendingDeleteProvider(null)}
+          onConfirm={confirmDeleteCustomProvider}
         />
 
           {showOpenClawRepairConfirm && (

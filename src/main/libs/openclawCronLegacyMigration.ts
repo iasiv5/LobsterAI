@@ -34,14 +34,19 @@ function resolveLegacyCronStatePath(stateDir: string): string {
   return path.join(stateDir, 'cron', 'jobs-state.json');
 }
 
-function legacyCronRunLogsExist(stateDir: string): boolean {
+function listLegacyCronRunLogPaths(stateDir: string): string[] {
   const runsDir = path.join(stateDir, 'cron', 'runs');
   try {
     return fs.readdirSync(runsDir, { withFileTypes: true })
-      .some((entry) => entry.isFile() && entry.name.endsWith('.jsonl'));
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map((entry) => path.join(runsDir, entry.name));
   } catch {
-    return false;
+    return [];
   }
+}
+
+function legacyCronRunLogsExist(stateDir: string): boolean {
+  return listLegacyCronRunLogPaths(stateDir).length > 0;
 }
 
 export function hasLegacyCronStorage(stateDir: string): boolean {
@@ -50,6 +55,43 @@ export function hasLegacyCronStorage(stateDir: string): boolean {
     fs.existsSync(resolveLegacyCronStatePath(stateDir)) ||
     legacyCronRunLogsExist(stateDir)
   );
+}
+
+const LEGACY_CRON_ARCHIVE_SUFFIX = '.migrated';
+
+function resolveLegacyCronArchivePath(filePath: string): string {
+  const preferred = `${filePath}${LEGACY_CRON_ARCHIVE_SUFFIX}`;
+  if (!fs.existsSync(preferred)) {
+    return preferred;
+  }
+  return `${preferred}-${Date.now()}`;
+}
+
+// The pinned OpenClaw runtime keeps cron jobs in its shared SQLite state
+// (the configured cron.store path only acts as the store key); the legacy
+// JSON/JSONL files are read solely by the doctor migration. Rename them after
+// a successful doctor run so hasLegacyCronStorage() stops re-triggering the
+// doctor on every startup.
+export function archiveLegacyCronStorage(stateDir: string): string[] {
+  const candidates = [
+    resolveLegacyCronStorePath(stateDir),
+    resolveLegacyCronStatePath(stateDir),
+    ...listLegacyCronRunLogPaths(stateDir),
+  ];
+  const archived: string[] = [];
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+      const archivePath = resolveLegacyCronArchivePath(filePath);
+      fs.renameSync(filePath, archivePath);
+      archived.push(archivePath);
+    } catch (error) {
+      console.warn(`[OpenClaw] Failed to archive legacy cron file: ${filePath}`, error);
+    }
+  }
+  return archived;
 }
 
 function tailLog(text: string): string {
@@ -159,7 +201,15 @@ export async function migrateLegacyCronStorageWithDoctor(params: {
     });
 
     if (result.code === 0) {
-      console.log('[OpenClaw] Legacy cron doctor migration completed.');
+      const archived = archiveLegacyCronStorage(params.stateDir);
+      if (archived.length > 0) {
+        console.log(
+          '[OpenClaw] Legacy cron doctor migration completed; archived: '
+          + archived.map((filePath) => path.basename(filePath)).join(', '),
+        );
+      } else {
+        console.log('[OpenClaw] Legacy cron doctor migration completed.');
+      }
       return { status: 'migrated', code: result.code };
     }
 
