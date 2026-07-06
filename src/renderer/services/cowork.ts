@@ -39,6 +39,7 @@ import {
   setRemoteManaged,
   setSessions,
   setStreaming,
+  updateCurrentSessionModelOverride,
   updateMessageContent,
   updateSessionGoal,
   updateSessionPinned,
@@ -330,6 +331,13 @@ class CoworkService {
       }
     });
     this.streamListenerCleanups.push(errorCleanup);
+
+    const sessionModelOverrideCleanup = cowork.onSessionModelOverrideChanged?.((data) => {
+      store.dispatch(updateCurrentSessionModelOverride(data));
+    });
+    if (sessionModelOverrideCleanup) {
+      this.streamListenerCleanups.push(sessionModelOverrideCleanup);
+    }
 
     // Sessions changed listener (new channel sessions discovered by polling,
     // or reconcileWithHistory replaced messages for a channel session)

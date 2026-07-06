@@ -7388,13 +7388,17 @@ if (!gotTheLock) {
         patch.model = normalizeOpenClawModelRef(patch.model);
       }
       const runtime = getCoworkEngineRouter();
-      await runtime.patchSession(sessionId, patch);
+      const patchResult = await runtime.patchSession(sessionId, patch);
 
       if (patch.model !== undefined) {
+        const modelOverride =
+          patchResult && typeof patchResult.modelOverride === 'string'
+            ? patchResult.modelOverride
+            : patch.model ?? '';
         getCoworkStore().updateSession(
           sessionId,
           {
-            modelOverride: patch.model ?? '',
+            modelOverride,
           },
           { touchUpdatedAt: false },
         );

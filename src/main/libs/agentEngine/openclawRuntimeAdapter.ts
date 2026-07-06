@@ -12,6 +12,7 @@ import {
 } from '../../../common/coworkSystemMessages';
 import { buildGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import { CoworkIpcChannel } from '../../../shared/cowork/constants';
 import {
   type CoworkGoal,
   normalizeCoworkGoal,
@@ -34,7 +35,7 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../../shared/kit/constants';
-import type { CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
+import type { Agent, CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
 import type { SubagentMessageStore } from '../../subagentMessageStore';
@@ -110,6 +111,7 @@ import type {
   CoworkMediaSelection,
   CoworkRuntime,
   CoworkRuntimeEvents,
+  CoworkSessionPatchResult,
   CoworkStartOptions,
   PermissionResult,
 } from './types';
@@ -380,6 +382,23 @@ type SessionModelPatchState = {
   confirmedAt: number;
   source: SessionModelPatchSource;
   sessionKey: string;
+};
+
+type ChannelSessionModelSyncSource =
+  | 'sessions-list'
+  | 'history'
+  | 'session-status'
+  | 'patchSession';
+
+type ChannelSessionModelState = {
+  modelRef: string | null;
+  explicitOverride: boolean;
+  source: ChannelSessionModelSyncSource;
+};
+
+type OpenClawSessionPatchGatewayResult = {
+  entry?: unknown;
+  resolved?: unknown;
 };
 
 type GatewayRpcHealth = {
@@ -909,6 +928,158 @@ type ChannelHistorySyncEntry = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+};
+
+const MODEL_SNAPSHOT_CUSTOM_TYPE = 'model-snapshot';
+const SESSION_STATUS_TOOL_NAME = 'session_status';
+
+const hasOwn = (record: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
+const readNonEmptyString = (record: Record<string, unknown>, key: string): string | null => {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+};
+
+const buildModelRef = (provider: string | null | undefined, model: string | null | undefined): string | null => {
+  const normalizedModel = model?.trim();
+  if (!normalizedModel) return null;
+  const normalizedProvider = provider?.trim();
+  if (!normalizedProvider || normalizedModel.includes('/')) return normalizedModel;
+  return `${normalizedProvider}/${normalizedModel}`;
+};
+
+const readModelRefFromRecord = (
+  record: Record<string, unknown>,
+  options: { modelKeys: readonly string[]; providerKeys?: readonly string[] },
+): string | null => {
+  const model = options.modelKeys
+    .map((key) => readNonEmptyString(record, key))
+    .find((value): value is string => Boolean(value));
+  if (!model) return null;
+  const provider = (options.providerKeys ?? [])
+    .map((key) => readNonEmptyString(record, key))
+    .find((value): value is string => Boolean(value));
+  return buildModelRef(provider, model);
+};
+
+const readExplicitModelOverrideState = (
+  record: Record<string, unknown>,
+  source: ChannelSessionModelSyncSource,
+): ChannelSessionModelState | null => {
+  if (!hasOwn(record, 'modelOverride')) return null;
+  const value = record.modelOverride;
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
+    return { modelRef: null, explicitOverride: true, source };
+  }
+  if (typeof value !== 'string') return null;
+  const provider = readNonEmptyString(record, 'providerOverride')
+    ?? readNonEmptyString(record, 'modelProvider')
+    ?? readNonEmptyString(record, 'provider')
+    ?? readNonEmptyString(record, 'providerId');
+  return {
+    modelRef: buildModelRef(provider, value),
+    explicitOverride: true,
+    source,
+  };
+};
+
+const extractChannelSessionModelStateFromRow = (row: Record<string, unknown>): ChannelSessionModelState | null => {
+  const explicit = readExplicitModelOverrideState(row, 'sessions-list');
+  if (explicit) return explicit;
+  const effectiveModelRef = readModelRefFromRecord(row, {
+    providerKeys: ['modelProvider', 'provider', 'providerId'],
+    modelKeys: ['model', 'modelId'],
+  });
+  return effectiveModelRef
+    ? { modelRef: effectiveModelRef, explicitOverride: false, source: 'sessions-list' }
+    : null;
+};
+
+const unwrapGatewayHistoryMessageRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!isRecord(value)) return null;
+  return isRecord(value.message) ? value.message : value;
+};
+
+const extractModelSnapshotState = (value: unknown): ChannelSessionModelState | null => {
+  if (!isRecord(value) || value.type !== 'custom' || value.customType !== MODEL_SNAPSHOT_CUSTOM_TYPE) {
+    return null;
+  }
+  const data = isRecord(value.data) ? value.data : null;
+  if (!data) return null;
+  const modelRef = readModelRefFromRecord(data, {
+    providerKeys: ['provider', 'modelProvider', 'providerId'],
+    modelKeys: ['modelId', 'model'],
+  });
+  return modelRef
+    ? { modelRef, explicitOverride: false, source: 'history' }
+    : null;
+};
+
+const extractSessionStatusModelState = (value: unknown): ChannelSessionModelState | null => {
+  const message = unwrapGatewayHistoryMessageRecord(value);
+  if (!message) return null;
+  const role = typeof message.role === 'string' ? message.role.trim() : '';
+  const toolName = typeof message.toolName === 'string' ? message.toolName.trim() : '';
+  if (role !== 'toolResult' || toolName !== SESSION_STATUS_TOOL_NAME) return null;
+
+  let details: Record<string, unknown> | null = null;
+  if (isRecord(message.details)) {
+    details = message.details;
+  } else if (isRecord(value) && isRecord(value.details)) {
+    details = value.details;
+  }
+  if (!details) return null;
+
+  const explicit = readExplicitModelOverrideState(details, 'session-status');
+  if (explicit) return explicit;
+  if (details.changedModel !== true) return null;
+  const modelRef = readModelRefFromRecord(details, {
+    providerKeys: ['modelProvider', 'provider', 'providerId'],
+    modelKeys: ['model', 'modelId'],
+  });
+  return modelRef
+    ? { modelRef, explicitOverride: true, source: 'session-status' }
+    : null;
+};
+
+const extractChannelSessionModelStateFromHistory = (messages: unknown[]): ChannelSessionModelState | null => {
+  let latest: ChannelSessionModelState | null = null;
+  for (const message of messages) {
+    const sessionStatus = extractSessionStatusModelState(message);
+    if (sessionStatus) {
+      latest = sessionStatus;
+      continue;
+    }
+    const snapshot = extractModelSnapshotState(message);
+    if (snapshot) {
+      latest = snapshot;
+    }
+  }
+  return latest;
+};
+
+const extractModelOverrideFromPatchResult = (
+  response: unknown,
+  fallbackModel: string | null | undefined,
+): string | null | undefined => {
+  if (isRecord(response)) {
+    const entry = isRecord(response.entry) ? response.entry : null;
+    if (entry) {
+      const explicit = readExplicitModelOverrideState(entry, 'patchSession');
+      if (explicit) return explicit.modelRef;
+    }
+    const resolved = isRecord(response.resolved) ? response.resolved : null;
+    if (resolved) {
+      const resolvedModelRef = readModelRefFromRecord(resolved, {
+        providerKeys: ['modelProvider', 'provider', 'providerId'],
+        modelKeys: ['model', 'modelId'],
+      });
+      if (resolvedModelRef) return resolvedModelRef;
+    }
+  }
+  if (fallbackModel === null || fallbackModel === undefined) return fallbackModel;
+  return fallbackModel.trim() || null;
 };
 
 export const resolveToolEventIsError = (data: unknown): boolean => {
@@ -2471,7 +2642,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     source: string;
     reason: string;
     timeoutMs?: number;
-  }): Promise<void> {
+  }): Promise<OpenClawSessionPatchGatewayResult | undefined> {
     const { sessionId, sessionKey, patch, source, reason } = options;
     const timeoutMs = options.timeoutMs ?? OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS;
     const patchKeys = Object.entries(patch)
@@ -2491,9 +2662,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       `Timeout ${timeoutMs}ms.`,
     );
 
+    let response: OpenClawSessionPatchGatewayResult | undefined;
     try {
       const client = this.requireGatewayClient();
-      await client.request('sessions.patch', {
+      response = await client.request<OpenClawSessionPatchGatewayResult>('sessions.patch', {
         key: sessionKey,
         ...patch,
       }, { timeoutMs });
@@ -2531,6 +2703,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     } else {
       console.debug(message, ...details);
     }
+    return response;
   }
 
   private resetGatewayRpcHealth(): void {
@@ -3060,6 +3233,123 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.options.normalizeModelRef?.(normalized) ?? normalized;
   }
 
+  private resolveAgentDefaultModelRef(session: CoworkSession): string {
+    const agent = this.store.getAgent(session.agentId || 'main') as Agent | null;
+    const rawModel = agent?.model?.trim() ?? '';
+    return rawModel ? this.normalizeModelRef(rawModel) : '';
+  }
+
+  private notifySessionModelOverrideChanged(sessionId: string, modelOverride: string): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(CoworkIpcChannel.SessionModelOverrideChanged, {
+          sessionId,
+          modelOverride,
+        });
+      }
+    }
+  }
+
+  private syncChannelSessionModelOverride(options: {
+    coworkSessionId: string;
+    openClawSessionKey: string;
+    state: ChannelSessionModelState | null;
+  }): boolean {
+    const { coworkSessionId, openClawSessionKey, state } = options;
+    if (!state) return false;
+    const session = this.store.getSession(coworkSessionId);
+    if (!session) return false;
+
+    const normalizedModelRef = state.modelRef ? this.normalizeModelRef(state.modelRef) : '';
+    const agentDefaultModel = this.resolveAgentDefaultModelRef(session);
+    const nextModelOverride =
+      normalizedModelRef && (state.explicitOverride || normalizedModelRef !== agentDefaultModel)
+        ? normalizedModelRef
+        : '';
+
+    if ((session.modelOverride || '') === nextModelOverride) {
+      if (nextModelOverride) {
+        this.rememberSessionModelPatch(
+          coworkSessionId,
+          openClawSessionKey,
+          nextModelOverride,
+          SessionModelPatchSource.SessionOverride,
+        );
+      }
+      return false;
+    }
+
+    this.store.updateSession(
+      coworkSessionId,
+      { modelOverride: nextModelOverride },
+      { touchUpdatedAt: false },
+    );
+    if (nextModelOverride) {
+      this.rememberSessionModelPatch(
+        coworkSessionId,
+        openClawSessionKey,
+        nextModelOverride,
+        SessionModelPatchSource.SessionOverride,
+      );
+    } else {
+      this.sessionModelPatchStateBySession.delete(coworkSessionId);
+    }
+    console.log(
+      '[ChannelSync] synced channel session model override.',
+      `Session ${coworkSessionId}.`,
+      `OpenClaw key ${openClawSessionKey}.`,
+      `Source ${state.source}.`,
+      `Model ${nextModelOverride || 'agent/default'}.`,
+    );
+    this.notifySessionModelOverrideChanged(coworkSessionId, nextModelOverride);
+    return true;
+  }
+
+  private syncChannelSessionRunStatus(options: {
+    coworkSessionId: string;
+    openClawSessionKey: string;
+    row: Record<string, unknown>;
+  }): boolean {
+    const { coworkSessionId, openClawSessionKey, row } = options;
+    const session = this.store.getSession(coworkSessionId);
+    if (!session) return false;
+
+    const hasActiveRun =
+      row.hasActiveRun === true
+        ? true
+        : row.hasActiveRun === false
+          ? false
+          : null;
+    const rawStatus = typeof row.status === 'string' ? row.status.trim().toLowerCase() : '';
+    let nextStatus: CoworkSessionStatus | null = null;
+
+    if (hasActiveRun === true || rawStatus === 'running') {
+      nextStatus = 'running';
+    } else if (rawStatus === 'failed' || rawStatus === 'killed' || rawStatus === 'timeout' || rawStatus === 'error') {
+      nextStatus = 'error';
+    } else if (rawStatus === 'done' || rawStatus === 'completed') {
+      nextStatus = 'completed';
+    } else if (hasActiveRun === false && session.status === 'running') {
+      nextStatus = 'completed';
+    }
+
+    if (!nextStatus || session.status === nextStatus) return false;
+    if (nextStatus !== 'running' && this.activeTurns.has(coworkSessionId)) {
+      return false;
+    }
+
+    this.store.updateSession(coworkSessionId, { status: nextStatus });
+    console.log(
+      '[ChannelSync] synced channel session run status.',
+      `Session ${coworkSessionId}.`,
+      `OpenClaw key ${openClawSessionKey}.`,
+      `Status ${session.status} -> ${nextStatus}.`,
+      `Active run ${hasActiveRun === null ? 'unknown' : String(hasActiveRun)}.`,
+    );
+    this.emitSessionStatus(coworkSessionId, nextStatus);
+    return true;
+  }
+
   setChannelSessionSync(sync: OpenClawChannelSessionSync): void {
     this.channelSessionSync = sync;
   }
@@ -3455,6 +3745,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         channelCount++;
         // Use resolveOrCreateSession so new channel sessions are auto-created
         const sessionId = this.channelSessionSync.resolveOrCreateSession(key);
+        if (sessionId && isRecord(row)) {
+          this.syncChannelSessionRunStatus({
+            coworkSessionId: sessionId,
+            openClawSessionKey: key,
+            row: row as Record<string, unknown>,
+          });
+          this.syncChannelSessionModelOverride({
+            coworkSessionId: sessionId,
+            openClawSessionKey: key,
+            state: extractChannelSessionModelStateFromRow(row as Record<string, unknown>),
+          });
+        }
         if (sessionId && isRecord(row) && Object.prototype.hasOwnProperty.call(row, 'goal')) {
           this.emitGoalUpdateIfChanged(sessionId, normalizeCoworkGoal((row as Record<string, unknown>).goal));
         }
@@ -3659,7 +3961,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return goal;
   }
 
-  async patchSession(sessionId: string, patch: OpenClawSessionPatch): Promise<void> {
+  async patchSession(sessionId: string, patch: OpenClawSessionPatch): Promise<CoworkSessionPatchResult> {
     const session = this.store.getSession(sessionId);
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
@@ -3692,9 +3994,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         : {}),
     };
 
-    const sendPatch = async (): Promise<void> => {
+    const sendPatch = async (): Promise<OpenClawSessionPatchGatewayResult | undefined> => {
       try {
-        await this.requestSessionPatchWithProfile({
+        const response = await this.requestSessionPatchWithProfile({
           sessionId,
           sessionKey: targetSessionKey,
           patch: normalizedPatch,
@@ -3703,6 +4005,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS,
         });
         this.markGatewayRpcSuccess();
+        return response;
       } catch (error) {
         this.recordGatewayRpcFailure('sessions.patch', error);
         throw error;
@@ -3710,21 +4013,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     };
 
     if (normalizedPatch.model !== undefined) {
-      await this.enqueueSessionModelPatch(sessionId, sendPatch);
-      if (typeof normalizedPatch.model === 'string' && normalizedPatch.model) {
+      let response: OpenClawSessionPatchGatewayResult | undefined;
+      await this.enqueueSessionModelPatch(sessionId, async () => {
+        response = await sendPatch();
+      });
+      const modelOverride = extractModelOverrideFromPatchResult(
+        response,
+        typeof normalizedPatch.model === 'string' ? normalizedPatch.model : null,
+      );
+      if (typeof modelOverride === 'string' && modelOverride) {
         this.rememberSessionModelPatch(
           sessionId,
           targetSessionKey,
-          normalizedPatch.model,
+          modelOverride,
           SessionModelPatchSource.SessionOverride,
         );
       } else {
         this.sessionModelPatchStateBySession.delete(sessionId);
       }
-      return;
+      return { modelOverride: modelOverride ?? '' };
     }
 
     await sendPatch();
+    return {};
   }
 
   stopSession(sessionId: string): void {
@@ -8281,6 +8592,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
       // Platform flags for text normalization (shared by auth + local)
       const platformFlags: PlatformFlags = { isDiscord, isQQ, isPopo, isFeishu };
+
+      if (isChannel) {
+        this.syncChannelSessionModelOverride({
+          coworkSessionId: sessionId,
+          openClawSessionKey: sessionKey,
+          state: extractChannelSessionModelStateFromHistory(history.messages),
+        });
+      }
 
       // Extract authoritative user/assistant entries from gateway history
       const authoritativeEntries: ReconciledConversationEntry[] = [];

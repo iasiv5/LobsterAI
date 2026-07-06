@@ -2381,7 +2381,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       {showAddMenu && (
         <div
           ref={addMenuRef}
-          className="absolute bottom-full left-0 z-50 mb-2 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface py-1 shadow-popover"
+          className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
           onMouseEnter={cancelCloseSkillsPopover}
           onMouseLeave={scheduleCloseSkillsPopover}

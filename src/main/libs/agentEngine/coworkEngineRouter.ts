@@ -9,6 +9,7 @@ import type {
   CoworkForkCompactionSummary,
   CoworkRuntime,
   CoworkRuntimeEvents,
+  CoworkSessionPatchResult,
   CoworkStartOptions,
   PermissionResult,
 } from './types';
@@ -83,13 +84,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return this.runtime.runGoalCommand(sessionId, command);
   }
 
-  async patchSession(sessionId: string, patch: OpenClawSessionPatch): Promise<void> {
+  async patchSession(sessionId: string, patch: OpenClawSessionPatch): Promise<CoworkSessionPatchResult | void> {
     const engine = this.safeResolveEngine();
     this.sessionEngine.set(sessionId, engine);
     if (!this.runtime.patchSession) {
       throw new Error(`Session patch is not supported by engine: ${engine}`);
     }
-    await this.runtime.patchSession(sessionId, patch);
+    return this.runtime.patchSession(sessionId, patch);
   }
 
   async getContextUsage(sessionId: string): Promise<CoworkContextUsage | null> {

@@ -1354,6 +1354,208 @@ test('patchSession keeps managed-key fallback for normal Cowork sessions', async
   });
 });
 
+test('pollChannelSessions syncs channel row model into the local session override', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [{
+            key: sessionKey,
+            modelProvider: 'lobsterai-server',
+            model: 'kimi-k2.6-YoudaoInner',
+          }],
+        };
+      }
+      return { messages: [] };
+    },
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.fullySyncedSessions.add(session.id);
+  adapter.sessionIdBySessionKey.set(sessionKey, session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toEqual([
+    {
+      sessionId: session.id,
+      patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+      options: { touchUpdatedAt: false },
+    },
+  ]);
+});
+
+test('pollChannelSessions clears stale override when channel row matches the agent default model', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const defaultModel = 'lobsterai-server/deepseek-v4-flash-YoudaoInner';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    agentModel: defaultModel,
+    sessionId: 'session-1',
+  });
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        modelProvider: 'lobsterai-server',
+        model: 'deepseek-v4-flash-YoudaoInner',
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.fullySyncedSessions.add(session.id);
+  adapter.sessionIdBySessionKey.set(sessionKey, session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.modelOverride).toBe('');
+  expect(getUpdateSessionCalls()).toEqual([
+    {
+      sessionId: session.id,
+      patch: { modelOverride: '' },
+      options: { touchUpdatedAt: false },
+    },
+  ]);
+});
+
+test('pollChannelSessions marks a channel session running when sessions.list reports an active run', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'completed';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: true,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('running');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { status: 'running' },
+    options: undefined,
+  });
+  expect(statusEvents).toEqual([{ sessionId: session.id, status: 'running' }]);
+});
+
+test('pollChannelSessions completes a running channel session when the active run disappears', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('completed');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { status: 'completed' },
+    options: undefined,
+  });
+  expect(statusEvents).toEqual([{ sessionId: session.id, status: 'completed' }]);
+});
+
+test('pollChannelSessions does not complete a channel session while a local active turn exists', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+      }],
+    }),
+  };
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.knownChannelSessionIds.add(session.id);
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-active'));
+
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('running');
+  expect(getUpdateSessionCalls().some((call) =>
+    Object.prototype.hasOwnProperty.call(call.patch, 'status'),
+  )).toBe(false);
+  expect(statusEvents).toEqual([]);
+});
+
 function createRunTurnAdapter(options: {
   sessionModelOverride?: string;
   agentModel?: string;
@@ -1745,7 +1947,7 @@ test('continueSession aborts silently when the session is stopped during the mod
 
 function createReconcileStore(
   messages: Array<Record<string, unknown>>,
-  options: { sessionId?: string } = {},
+  options: { agentModel?: string; sessionId?: string } = {},
 ) {
   const session = {
     id: options.sessionId ?? 'session-1',
@@ -1765,13 +1967,25 @@ function createReconcileStore(
   let nextId = session.messages.length + 1;
   let replaceCallCount = 0;
   let lastReplaceArgs: { sessionId: string; authoritative: Array<Record<string, unknown>> } | null = null;
+  const updateSessionCalls: Array<{
+    sessionId: string;
+    patch: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
 
   return {
     session,
     getReplaceCallCount: () => replaceCallCount,
     getLastReplaceArgs: () => lastReplaceArgs,
+    getUpdateSessionCalls: () => updateSessionCalls,
     store: {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+      getAgent: () => ({
+        id: session.agentId,
+        name: 'Main',
+        source: 'custom',
+        model: options.agentModel ?? '',
+      }),
       addMessage: (sessionId: string, message: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
         const created = {
@@ -1783,8 +1997,9 @@ function createReconcileStore(
         session.messages.push(created);
         return created;
       },
-      updateSession: (sessionId: string, patch: Record<string, unknown>) => {
+      updateSession: (sessionId: string, patch: Record<string, unknown>, updateOptions?: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
+        updateSessionCalls.push({ sessionId, patch, options: updateOptions });
         Object.assign(session, patch);
       },
       updateMessage: (sessionId: string, messageId: string, patch: Record<string, unknown>) => {
@@ -2211,6 +2426,131 @@ test('reconcileWithHistory: missing assistant message — triggers replace', asy
     { role: 'user', text: 'Hello', timestamp: 1 },
     { role: 'assistant', text: 'Hi there' },
   ]);
+});
+
+test('reconcileWithHistory: syncs session_status model changes into the local session override', async () => {
+  const sessionKey = 'agent:main:openclaw-weixin:bot-1:direct:user-1';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '切成 kimi2.6', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: '切成 kimi2.6' },
+        {
+          role: 'toolResult',
+          toolName: 'session_status',
+          content: 'status',
+          details: {
+            ok: true,
+            changedModel: true,
+            model: 'kimi-k2.6-YoudaoInner',
+            modelProvider: 'lobsterai-server',
+            modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner',
+          },
+        },
+        { role: 'assistant', content: '已经切好了', model: 'qwen3.7-max-YoudaoInner' },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+    options: { touchUpdatedAt: false },
+  });
+});
+
+test('reconcileWithHistory: syncs model-snapshot entries without reading assistant text claims', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '你现在是什么模型', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        {
+          type: 'custom',
+          customType: 'model-snapshot',
+          data: {
+            provider: 'lobsterai-server',
+            modelId: 'kimi-k2.6-YoudaoInner',
+          },
+        },
+        { role: 'user', content: '你现在是什么模型' },
+        {
+          role: 'assistant',
+          content: '当前是 Kimi-K2.6',
+          model: 'kimi-k2.6-YoudaoInner',
+        },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/kimi-k2.6-YoudaoInner');
+  expect(getUpdateSessionCalls()).toContainEqual({
+    sessionId: session.id,
+    patch: { modelOverride: 'lobsterai-server/kimi-k2.6-YoudaoInner' },
+    options: { touchUpdatedAt: false },
+  });
+});
+
+test('reconcileWithHistory: assistant text and message model metadata do not overwrite session override', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '你现在是什么模型', timestamp: 1, metadata: {} },
+  ]);
+  session.modelOverride = 'lobsterai-server/qwen3.7-max-YoudaoInner';
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: '你现在是什么模型' },
+        {
+          role: 'assistant',
+          content: '当前是 Kimi-K2.6',
+          model: 'kimi-k2.6-YoudaoInner',
+        },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, sessionKey);
+
+  expect(session.modelOverride).toBe('lobsterai-server/qwen3.7-max-YoudaoInner');
+  expect(
+    getUpdateSessionCalls().some((call) =>
+      Object.prototype.hasOwnProperty.call(call.patch, 'modelOverride'),
+    ),
+  ).toBe(false);
+  expect(session.messages.some((message) => message.metadata?.model === 'kimi-k2.6-YoudaoInner')).toBe(true);
 });
 
 test('reconcileWithHistory: carries gateway timestamps into replacement entries', async () => {

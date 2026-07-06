@@ -127,6 +127,10 @@ export type CoworkContinueOptions = {
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
 };
 
+export interface CoworkSessionPatchResult {
+  modelOverride?: string;
+}
+
 export interface CoworkRuntime {
   on<U extends keyof CoworkRuntimeEvents>(
     event: U,
@@ -139,7 +143,7 @@ export interface CoworkRuntime {
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;
   continueSession(sessionId: string, prompt: string, options?: CoworkContinueOptions): Promise<void>;
   runGoalCommand?(sessionId: string, command: string): Promise<CoworkGoal | null>;
-  patchSession?(sessionId: string, patch: OpenClawSessionPatch): Promise<void>;
+  patchSession?(sessionId: string, patch: OpenClawSessionPatch): Promise<CoworkSessionPatchResult | void>;
   getContextUsage?(sessionId: string): Promise<CoworkContextUsage | null>;
   compactContext?(sessionId: string): Promise<{ compacted: boolean; reason?: string; usage?: CoworkContextUsage | null }>;
   getForkCompactionSummary?(sessionId: string, beforeCreatedAt?: number): Promise<CoworkForkCompactionSummary | null>;

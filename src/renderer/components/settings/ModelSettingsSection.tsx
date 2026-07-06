@@ -1,5 +1,5 @@
 import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { ArrowTopRightOnSquareIcon, CheckCircleIcon, KeyIcon, ShieldCheckIcon, SignalIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, CheckCircleIcon, ExclamationCircleIcon, KeyIcon, ShieldCheckIcon, SignalIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React from 'react';
 
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../../../shared/providers';
@@ -513,6 +513,45 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   const copilotSignedIn = copilotAuthStatus === 'authenticated'
     || copilotProvider?.authType === ProviderAuthType.OAuth;
 
+  // Guides users who click a toggle that cannot be enabled yet: highlights the
+  // missing auth requirement (API key input / login) instead of ignoring the click.
+  const [authAttention, setAuthAttention] = React.useState<{ provider: ProviderType; nonce: number } | null>(null);
+
+  const getProviderAuthRequirementHint = (providerKey: ProviderType, config: ProviderConfig): string => {
+    const requiresLogin = providerKey === ProviderName.Copilot
+      || (providerKey === ProviderName.Minimax && config.authType !== ProviderAuthType.ApiKey);
+    return requiresLogin ? i18nService.t('enableRequiresLogin') : i18nService.t('enableRequiresApiKey');
+  };
+
+  const requestProviderAuthAttention = (providerKey: ProviderType) => {
+    if (activeProvider !== providerKey) {
+      handleProviderChange(providerKey);
+    }
+    setAuthAttention(prev => ({ provider: providerKey, nonce: (prev?.nonce ?? 0) + 1 }));
+    window.setTimeout(() => {
+      const input = document.getElementById(`${providerKey}-apiKey`);
+      if (input instanceof HTMLInputElement) {
+        input.focus({ preventScroll: true });
+        input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }, 80);
+  };
+
+  const showAuthAttentionHint = authAttention?.provider === activeProvider
+    && !hasProviderAuthConfigured(activeProvider, providers[activeProvider]);
+  const authAttentionRingClass = showAuthAttentionHint
+    ? 'rounded-xl ring-2 ring-red-400/60 dark:ring-red-500/50'
+    : '';
+  const authAttentionHint = showAuthAttentionHint ? (
+    <p
+      key={`auth-attention-${authAttention?.nonce ?? 0}`}
+      className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-red-500 dark:text-red-400 animate-fade-in-down"
+    >
+      <ExclamationCircleIcon className="h-3.5 w-3.5 shrink-0" />
+      {getProviderAuthRequirementHint(activeProvider, providers[activeProvider])}
+    </p>
+  ) : null;
+
   return (
     <>
           <div className="flex h-full">
@@ -554,6 +593,9 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                 const hasValidAuth = hasProviderAuthConfigured(providerKey, config);
                 const effectiveEnabled = config.enabled && hasValidAuth;
                 const canToggleProvider = effectiveEnabled || hasValidAuth;
+                const attentionNonce = authAttention && authAttention.provider === providerKey && !canToggleProvider
+                  ? authAttention.nonce
+                  : null;
                 const displayLabel = isCustom
                   ? ((config as ProviderConfig).displayName || getCustomProviderDefaultName(provider))
                   : (ProviderRegistry.get(providerKey)?.label ?? getProviderDisplayName(provider));
@@ -605,15 +647,17 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                         </button>
                       )}
                       <div
-                        title={!canToggleProvider ? i18nService.t('configureApiKey') : undefined}
+                        key={attentionNonce === null ? undefined : `provider-toggle-attention-${attentionNonce}`}
+                        title={!canToggleProvider ? getProviderAuthRequirementHint(providerKey, config) : undefined}
                         className={`w-7 h-4 rounded-full flex items-center transition-colors ${
                           effectiveEnabled ? 'bg-primary' : 'bg-gray-400 dark:bg-gray-600'
                         } ${
                           canToggleProvider ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-                        }`}
+                        } ${attentionNonce === null ? '' : 'animate-shake'}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           if (!canToggleProvider) {
+                            requestProviderAuthAttention(providerKey);
                             return;
                           }
                           toggleProviderEnabled(providerKey);
@@ -746,7 +790,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                           </button>
                         )}
                       </div>
-                      <div className="relative">
+                      <div className={`relative ${authAttentionRingClass}`}>
                       <input
                         type={showApiKey ? 'text' : 'password'}
                         id="minimax-apiKey"
@@ -776,6 +820,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                         </button>
                       </div>
                       </div>
+                      {authAttentionHint}
                     </div>
                   )}
 
@@ -810,6 +855,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                       {/* Not logged in yet — show region selector + login button */}
                       {minimaxOAuthPhase.kind === 'idle' && !providers.minimax.oauthAccessToken && (
                         <div className="space-y-2">
+                          {authAttentionHint}
                           <div>
                             <label className="block text-xs font-medium text-foreground mb-1">
                               {i18nService.t('minimaxOAuthRegionLabel')}
@@ -1105,7 +1151,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                           </button>
                         )}
                       </div>
-                      <div className="relative">
+                      <div className={`relative ${authAttentionRingClass}`}>
                         <input
                           type={showApiKey ? 'text' : 'password'}
                           id={`${activeProvider}-apiKey`}
@@ -1135,6 +1181,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                           </button>
                         </div>
                       </div>
+                      {authAttentionHint}
                     </div>
                   )}
 
@@ -1155,7 +1202,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                           </button>
                         )}
                       </div>
-                      <div className="relative">
+                      <div className={`relative ${authAttentionRingClass}`}>
                         <input
                           type={showApiKey ? 'text' : 'password'}
                           id="qwen-apiKey"
@@ -1185,6 +1232,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                           </button>
                         </div>
                       </div>
+                      {authAttentionHint}
                     </div>
                   )}
                 </div>
@@ -1198,6 +1246,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
 
                   {(copilotAuthStatus === 'idle' || copilotAuthStatus === 'error') && !copilotSignedIn && (
                     <div className="space-y-2">
+                      {authAttentionHint}
                       <button
                         type="button"
                         onClick={handleCopilotSignIn}

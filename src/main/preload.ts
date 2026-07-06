@@ -564,6 +564,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:sessions:changed', handler);
       return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
     },
+    onSessionModelOverrideChanged: (
+      callback: (data: { sessionId: string; modelOverride: string }) => void,
+    ) => {
+      const handler = (_event: any, data: { sessionId: string; modelOverride: string }) => callback(data);
+      ipcRenderer.on(CoworkIpcChannel.SessionModelOverrideChanged, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.SessionModelOverrideChanged, handler);
+    },
     onOpenSessionFromNotification: (callback: (data: { sessionId: string }) => void) => {
       const handler = (_event: any, data: { sessionId: string }) => callback(data);
       ipcRenderer.on(CoworkIpcChannel.OpenSessionFromNotification, handler);

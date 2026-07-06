@@ -714,6 +714,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     networkError: '网络错误',
     apiKeyRequired: '需要设置API密钥',
     configureApiKey: '请在设置中配置您的API密钥',
+    enableRequiresApiKey: '开启前请先输入 API Key',
+    enableRequiresLogin: '开启前请先完成登录',
 
     // 初始化
     initializationError: '初始化应用程序失败。请检查您的配置。',
@@ -3395,6 +3397,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     networkError: 'Network error',
     apiKeyRequired: 'API Key Required',
     configureApiKey: 'Please configure your API key in settings',
+    enableRequiresApiKey: 'Enter an API key before enabling this provider',
+    enableRequiresLogin: 'Sign in before enabling this provider',
 
     // Initialization
     initializationError: 'Failed to initialize application. Please check your configuration.',
