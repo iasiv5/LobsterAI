@@ -38,7 +38,6 @@ import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
-import HomeRecentTasks from './HomeRecentTasks';
 import { reportPromptTemplateAction } from './promptAnalytics';
 import { buildCoworkContinuationSystemPrompt, buildCoworkSystemPrompt } from './skillSystemPrompt';
 
@@ -858,8 +857,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             <CreditsResetCampaignFloat />
           </div>
 
-          {/* Recent tasks - one-click resume for returning users */}
-          <HomeRecentTasks />
           <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />
         </div>
       </div>
