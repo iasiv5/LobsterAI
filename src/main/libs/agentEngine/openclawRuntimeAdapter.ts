@@ -6472,10 +6472,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.updateContextCompactionMessage(sessionId, turn, compactionStatus, Date.now());
     }
     if (turn && willRetry) {
-      turn.pendingRecoverableFollowup = true;
-      turn.pendingOpenClawRetry = true;
-      turn.lastRecoverableFinalAtMs = Date.now();
-      this.emitContextMaintenance(sessionId, true);
+      this.waitForRecoverableOpenClawRetry(sessionId, turn, turn.runId, {
+        reason: 'context compaction requested retry',
+        graceMs: OpenClawRuntimeAdapter.VISIBLE_FINAL_CONTINUATION_GRACE_MS,
+      });
     } else {
       this.emitContextMaintenance(sessionId, false);
     }

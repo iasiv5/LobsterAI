@@ -4161,6 +4161,51 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(adapter.activeTurns.has(session.id)).toBe(true);
 });
 
+test('compaction retry wait clears context maintenance when no follow-up arrives', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const maintenanceSpy = vi.fn();
+    const completeSpy = vi.fn();
+
+    session.status = 'running';
+    adapter.on('contextMaintenance', maintenanceSpy);
+    adapter.on('complete', completeSpy);
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction-timeout'));
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'start' },
+    }, 1);
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'end', completed: true, willRetry: true },
+    }, 2);
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, true);
+    expect(adapter.activeTurns.has(session.id)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await Promise.resolve();
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-compaction-timeout');
+    expect(session.status).toBe('completed');
+    expect(adapter.activeTurns.has(session.id)).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('chat error clears context maintenance after compaction starts', () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
