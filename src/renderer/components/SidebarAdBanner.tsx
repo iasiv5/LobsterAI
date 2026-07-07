@@ -1,3 +1,4 @@
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { getPortalInvitationUrl } from '../services/endpoints';
@@ -74,7 +75,9 @@ const SidebarAdBanner: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [banners.length, hiddenKey, storageKey]);
 
-  const banner = banners.length > 0 ? banners[currentIndex % banners.length] : null;
+  const currentBannerIndex = banners.length > 0 ? currentIndex % banners.length : 0;
+  const banner = banners.length > 0 ? banners[currentBannerIndex] : null;
+  const hasMultipleBanners = banners.length > 1;
 
   if (!banner || !storageKey || hiddenKey === undefined || hiddenKey === storageKey) {
     return null;
@@ -97,7 +100,7 @@ const SidebarAdBanner: React.FC = () => {
     : '16 / 5';
 
   return (
-    <div className="pb-1">
+    <div className="pb-3 pl-[18px] pr-2 pt-1">
       <div
         role="button"
         tabIndex={0}
@@ -108,8 +111,11 @@ const SidebarAdBanner: React.FC = () => {
             void openBanner();
           }
         }}
-        className="group relative block w-full overflow-hidden rounded-none transition-opacity hover:opacity-95"
-        style={{ aspectRatio: imageAspectRatio }}
+        className="group relative block w-full overflow-hidden rounded-[22px] bg-white transition-opacity hover:opacity-95"
+        style={{
+          aspectRatio: imageAspectRatio,
+          boxShadow: '0 4px 4px rgba(227, 227, 228, 0.5)',
+        }}
         aria-label={banner.activityDescription}
       >
         <img
@@ -118,14 +124,29 @@ const SidebarAdBanner: React.FC = () => {
           className="absolute inset-0 h-full w-full object-cover"
           aria-hidden="true"
         />
+        {hasMultipleBanners && (
+          <div
+            aria-hidden="true"
+            className="absolute left-3 top-3 z-20 flex w-2 flex-col items-center gap-1"
+          >
+            {banners.map((item, index) => (
+              <span
+                key={item.id}
+                className={`h-1.5 w-1.5 rounded-full border border-[#9B9BA1] ${
+                  index === currentBannerIndex ? 'bg-[#9B9BA1]' : 'bg-transparent'
+                }`}
+              />
+            ))}
+          </div>
+        )}
         <button
           type="button"
           aria-label={i18nService.t('close')}
           onClick={dismiss}
           onKeyDown={(event) => event.stopPropagation()}
-          className="absolute right-1 top-1 z-20 hidden h-5 w-5 items-center justify-center rounded-full bg-black/20 text-xs leading-none text-white transition-colors hover:bg-black/35 group-hover:flex group-focus-within:flex"
+          className="absolute right-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-[#D9D9DB]/80 text-white transition-colors hover:bg-[#CFCFD2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
         >
-          ×
+          <XMarkIcon className="h-4 w-4" />
         </button>
       </div>
     </div>
