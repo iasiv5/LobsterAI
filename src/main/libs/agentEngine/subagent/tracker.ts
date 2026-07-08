@@ -3,40 +3,9 @@ import crypto from 'node:crypto';
 import type { SubagentMessageStore } from '../../../subagentMessageStore';
 import type { SubagentRunStore, SubagentRunWithParent } from '../../../subagentRunStore';
 import {
-  extractGatewayMessageText,
-  shouldSuppressHeartbeatText,
-} from '../../openclawHistory';
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-};
-
-/**
- * Resolve tool input from a tool_use block, handling multiple field names and formats.
- * The gateway can return tool arguments as:
- *  - `input` (Anthropic format, object)
- *  - `args` (OpenClaw format, object)
- *  - `arguments` (OpenAI format, may be a JSON string)
- */
-const resolveToolInput = (block: Record<string, unknown>): Record<string, unknown> => {
-  if (isRecord(block.input)) return block.input;
-  if (isRecord(block.args)) return block.args;
-  if (isRecord(block.arguments)) return block.arguments;
-  // arguments may be a JSON string (OpenAI format)
-  if (typeof block.arguments === 'string') {
-    try {
-      const parsed = JSON.parse(block.arguments);
-      if (isRecord(parsed)) return parsed;
-    } catch { /* ignore parse errors */ }
-  }
-  if (typeof block.input === 'string') {
-    try {
-      const parsed = JSON.parse(block.input);
-      if (isRecord(parsed)) return parsed;
-    } catch { /* ignore parse errors */ }
-  }
-  return {};
-};
+  parseSubagentGatewayHistoryMessages,
+  type SubagentCoworkMessage,
+} from './historyParser';
 
 const resolveSpawnDisplayLabel = (...sources: Array<Record<string, unknown> | null | undefined>): string | null => {
   for (const source of sources) {
@@ -47,22 +16,6 @@ const resolveSpawnDisplayLabel = (...sources: Array<Record<string, unknown> | nu
   }
   return null;
 };
-
-/** Message format compatible with renderer CoworkMessage interface */
-export interface SubagentCoworkMessage {
-  id: string;
-  type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
-  content: string;
-  timestamp: number;
-  metadata?: {
-    toolName?: string;
-    toolInput?: Record<string, unknown>;
-    toolResult?: string;
-    toolUseId?: string | null;
-    isError?: boolean;
-    [key: string]: unknown;
-  };
-}
 
 export type GatewayClientLike = {
   request: <T = Record<string, unknown>>(
@@ -786,148 +739,7 @@ export class SubagentTracker {
 
       console.log('[SubagentTracker] fetchSubagentHistory: got', history.messages.length, 'raw messages for key:', sessionKey);
 
-      const messages: SubagentCoworkMessage[] = [];
-      let ts = Date.now() - history.messages.length * 1000; // synthetic timestamps
-
-      for (const raw of history.messages) {
-        if (!isRecord(raw)) continue;
-        const role = typeof raw.role === 'string' ? raw.role.trim().toLowerCase() : '';
-
-        // Handle standard user/assistant/system messages
-        if (role === 'user' || role === 'assistant' || role === 'system') {
-          const text = extractGatewayMessageText(raw).trim();
-
-          // For assistant messages with content array containing tool_use blocks
-          if (role === 'assistant' && Array.isArray(raw.content)) {
-            // Extract text parts first
-            if (text && !shouldSuppressHeartbeatText(role, text)) {
-              messages.push({
-                id: crypto.randomUUID(),
-                type: 'assistant',
-                content: text,
-                timestamp: ts++,
-              });
-            }
-            // Extract tool_use blocks
-            for (const block of raw.content as unknown[]) {
-              if (!isRecord(block)) continue;
-              const blockType = typeof block.type === 'string' ? block.type : '';
-              if (blockType === 'tool_use' || blockType === 'tool_call' || blockType === 'toolCall') {
-                const toolName = typeof block.name === 'string' ? block.name : 'tool';
-                const toolInput = resolveToolInput(block);
-                const toolUseId = typeof block.id === 'string' ? block.id : null;
-                messages.push({
-                  id: crypto.randomUUID(),
-                  type: 'tool_use',
-                  content: '',
-                  timestamp: ts++,
-                  metadata: { toolName, toolInput, toolUseId },
-                });
-              }
-            }
-          } else if (role === 'user' && Array.isArray(raw.content)) {
-            // User messages may contain tool_result blocks (Anthropic API format)
-            let hasToolResult = false;
-            for (const block of raw.content as unknown[]) {
-              if (!isRecord(block)) continue;
-              const blockType = typeof block.type === 'string' ? block.type : '';
-              if (blockType === 'tool_result') {
-                hasToolResult = true;
-                const resultText = typeof block.content === 'string'
-                  ? block.content
-                  : extractGatewayMessageText(block).trim();
-                const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : null;
-                const isError = block.is_error === true;
-                if (resultText) {
-                  messages.push({
-                    id: crypto.randomUUID(),
-                    type: 'tool_result',
-                    content: resultText,
-                    timestamp: ts++,
-                    metadata: { toolResult: resultText, toolUseId, isError: isError || undefined },
-                  });
-                }
-              }
-            }
-            // If there was also text content alongside tool results, emit it
-            if (text && !shouldSuppressHeartbeatText('user', text)) {
-              messages.push({
-                id: crypto.randomUUID(),
-                type: 'user',
-                content: text,
-                timestamp: ts++,
-              });
-            }
-            if (!hasToolResult && !text) {
-              console.log('[SubagentTracker] dropped user message with empty text, keys:', Object.keys(raw).join(','));
-            }
-          } else if (text && !shouldSuppressHeartbeatText(role as 'user' | 'assistant' | 'system', text)) {
-            const type = role === 'system' ? 'system' : role as 'user' | 'assistant';
-            messages.push({
-              id: crypto.randomUUID(),
-              type,
-              content: text,
-              timestamp: ts++,
-            });
-          } else if (!text) {
-            console.log('[SubagentTracker] dropped message with empty text, role:', role, 'keys:', Object.keys(raw).join(','));
-          }
-          continue;
-        }
-
-        // Handle tool result messages
-        if (role === 'tool_result' || role === 'toolresult' || role === 'tool' || role === 'function') {
-          const text = extractGatewayMessageText(raw).trim();
-          const toolName = typeof raw.toolName === 'string' ? raw.toolName
-            : typeof raw.tool_name === 'string' ? raw.tool_name
-              : typeof raw.name === 'string' ? raw.name : '';
-          const toolUseId = typeof raw.tool_use_id === 'string' ? raw.tool_use_id
-            : typeof raw.toolCallId === 'string' ? raw.toolCallId : null;
-          if (text) {
-            messages.push({
-              id: crypto.randomUUID(),
-              type: 'tool_result',
-              content: text,
-              timestamp: ts++,
-              metadata: { toolName: toolName || undefined, toolResult: text, toolUseId },
-            });
-          } else {
-            console.log('[SubagentTracker] dropped tool result with empty text, role:', role);
-          }
-          continue;
-        }
-
-        // Handle messages with content arrays that contain tool_use blocks (no role field)
-        if (!role && Array.isArray(raw.content)) {
-          for (const block of raw.content as unknown[]) {
-            if (!isRecord(block)) continue;
-            const blockType = typeof block.type === 'string' ? block.type : '';
-            if (blockType === 'tool_use' || blockType === 'tool_call' || blockType === 'toolCall') {
-              const toolName = typeof block.name === 'string' ? block.name : 'tool';
-              const toolInput = resolveToolInput(block);
-              const toolUseId = typeof block.id === 'string' ? block.id : null;
-              messages.push({
-                id: crypto.randomUUID(),
-                type: 'tool_use',
-                content: '',
-                timestamp: ts++,
-                metadata: { toolName, toolInput, toolUseId },
-              });
-            } else if (blockType === 'text' && typeof block.text === 'string' && block.text.trim()) {
-              messages.push({
-                id: crypto.randomUUID(),
-                type: 'assistant',
-                content: block.text.trim(),
-                timestamp: ts++,
-              });
-            }
-          }
-          continue;
-        }
-
-        // Log completely unhandled messages
-        console.log('[SubagentTracker] unhandled message, role:', role || '(empty)', 'keys:', Object.keys(raw).join(','));
-      }
+      const messages = parseSubagentGatewayHistoryMessages(history.messages);
 
       // Cache locally
       this.subagentMessages.set(runId, messages);

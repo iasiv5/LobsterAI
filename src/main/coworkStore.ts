@@ -466,6 +466,13 @@ export interface CoworkConversationReplacementEntry {
   timestamp?: number;
 }
 
+export interface CoworkMessageReplacementEntry {
+  type: CoworkMessageType;
+  content: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+}
+
 export interface CoworkSession {
   id: string;
   title: string;
@@ -1983,6 +1990,55 @@ export class CoworkStore {
       // Reconciliation runs repeatedly for channel-synced sessions: assistant
       // output must not reorder the session list, and updated_at never moves
       // backwards. Only a newer user message may advance it.
+      if (lastUserMessageAt != null) {
+        this.db
+          .prepare('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?')
+          .run(lastUserMessageAt, sessionId);
+      }
+    })();
+  }
+
+  replaceSessionMessages(
+    sessionId: string,
+    messages: CoworkMessageReplacementEntry[],
+  ): void {
+    const now = Date.now();
+
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          "DELETE FROM cowork_messages WHERE session_id = ? AND type IN ('user', 'assistant', 'tool_use', 'tool_result')",
+        )
+        .run(sessionId);
+
+      const insert = this.db.prepare(`
+        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const seqRow = this.db
+        .prepare(
+          'SELECT COALESCE(MAX(sequence), 0) as max_seq FROM cowork_messages WHERE session_id = ?',
+        )
+        .get(sessionId) as { max_seq: number } | undefined;
+      let sequence = (seqRow?.max_seq ?? 0) + 1;
+      let lastUserMessageAt: number | null = null;
+      for (const message of messages) {
+        const messageTimestamp = normalizeMessageTimestamp(message.timestamp) ?? now;
+        if (message.type === 'user') {
+          lastUserMessageAt = Math.max(lastUserMessageAt ?? 0, messageTimestamp);
+        }
+        insert.run(
+          uuidv4(),
+          sessionId,
+          message.type,
+          message.content,
+          message.metadata ? JSON.stringify(message.metadata) : null,
+          messageTimestamp,
+          sequence++,
+        );
+      }
+
       if (lastUserMessageAt != null) {
         this.db
           .prepare('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?')

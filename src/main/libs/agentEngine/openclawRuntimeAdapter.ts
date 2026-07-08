@@ -8891,7 +8891,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         return;
       }
 
-      this.store.replaceConversationMessages(
+      this.store.replaceSessionMessages(
         sessionId,
         plan.entriesToStore,
       );

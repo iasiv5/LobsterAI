@@ -1,24 +1,119 @@
 import type { CoworkMessage } from '../../../coworkStore';
-import {
-  extractGatewayHistoryEntries,
-  shouldSuppressHeartbeatText,
-} from '../../openclawHistory';
-import {
-  applyLocalTimestampsToEntries,
-  isSameReconciledEntry,
-  type ReconciledConversationEntry,
-} from '../openclawConversationReconciliation';
+import { shouldSuppressHeartbeatText } from '../../openclawHistory';
+import { parseSubagentGatewayHistoryMessages } from './historyParser';
 
 export type SubagentChildHistorySyncPlan = {
   changed: boolean;
   cursor: number;
-  entriesToStore: ReconciledConversationEntry[];
-  localEntries: Array<{
-    role: 'user' | 'assistant';
-    text: string;
-    timestamp?: number;
-    metadata?: Record<string, unknown>;
-  }>;
+  entriesToStore: SubagentChildHistoryEntry[];
+  localEntries: SubagentChildHistoryEntry[];
+};
+
+export type SubagentChildHistoryEntry = {
+  type: CoworkMessage['type'];
+  content: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+};
+
+const normalizeMetadata = (metadata: CoworkMessage['metadata']): Record<string, unknown> | undefined => (
+  metadata ? { ...metadata } : undefined
+);
+
+const sortForStableJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sortForStableJson);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortForStableJson((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
+};
+
+const stableJson = (value: unknown): string => JSON.stringify(sortForStableJson(value));
+
+const isSameHistoryMessage = (
+  left: SubagentChildHistoryEntry,
+  right: SubagentChildHistoryEntry,
+): boolean => (
+  left.type === right.type
+  && left.content === right.content
+  && stableJson(left.metadata ?? null) === stableJson(right.metadata ?? null)
+);
+
+const buildLocalEntries = (localMessages: CoworkMessage[]): {
+  entries: SubagentChildHistoryEntry[];
+  normalizedLocalUserContent: boolean;
+} => {
+  let normalizedLocalUserContent = false;
+  const entries = localMessages
+    .filter((message) => message.type !== 'system')
+    .map((message) => {
+      const content = message.type === 'user'
+        ? normalizeSubagentVisibleUserText(message.content)
+        : message.content;
+      if (message.type === 'user' && content !== message.content) {
+        normalizedLocalUserContent = true;
+      }
+      return {
+        type: message.type,
+        content,
+        timestamp: message.timestamp,
+        metadata: normalizeMetadata(message.metadata),
+      };
+    })
+    .filter((entry) => entry.type === 'tool_use' || entry.content.trim());
+
+  return { entries, normalizedLocalUserContent };
+};
+
+const toStoredEntry = (message: CoworkMessage): SubagentChildHistoryEntry | null => {
+  if (message.type !== 'tool_use' && !message.content.trim()) {
+    return null;
+  }
+
+  if (message.type === 'user') {
+    const content = normalizeSubagentVisibleUserText(message.content).trim();
+    if (!content || shouldSuppressHeartbeatText('user', content)) {
+      return null;
+    }
+    return {
+      type: 'user',
+      content,
+      timestamp: message.timestamp,
+      metadata: normalizeMetadata(message.metadata),
+    };
+  }
+
+  if (message.type === 'assistant') {
+    const content = message.content.trim();
+    if (!content || shouldSuppressHeartbeatText('assistant', content)) {
+      return null;
+    }
+    return {
+      type: 'assistant',
+      content,
+      timestamp: message.timestamp,
+      metadata: {
+        isStreaming: false,
+        isFinal: true,
+        ...(message.metadata ?? {}),
+      },
+    };
+  }
+
+  if (message.type === 'system') return null;
+
+  return {
+    type: message.type,
+    content: message.content,
+    timestamp: message.timestamp,
+    metadata: normalizeMetadata(message.metadata),
+  };
 };
 
 export const normalizeSubagentVisibleUserText = (text: string): string => {
@@ -46,68 +141,32 @@ export const buildSubagentChildHistorySyncPlan = (
   localMessages: CoworkMessage[],
   historyMessages: unknown[],
 ): SubagentChildHistorySyncPlan => {
-  let normalizedLocalUserContent = false;
-  const localEntries = localMessages
-    .filter((message) => message.type === 'user' || message.type === 'assistant')
-    .map((message) => {
-      const text = message.type === 'user'
-        ? normalizeSubagentVisibleUserText(message.content)
-        : message.content;
-      if (message.type === 'user' && text !== message.content) {
-        normalizedLocalUserContent = true;
-      }
-      return {
-        role: message.type as 'user' | 'assistant',
-        text,
-        timestamp: message.timestamp,
-        metadata: message.metadata,
-      };
-    })
-    .filter((entry) => entry.text.trim());
-  const localUsers = localEntries.filter((entry) => entry.role === 'user');
+  const { entries: localEntries, normalizedLocalUserContent } = buildLocalEntries(localMessages);
+  const localUsers = localEntries.filter((entry) => entry.type === 'user');
   let localUserIndex = 0;
-  const mergedEntries: ReconciledConversationEntry[] = [];
+  const mergedEntries: SubagentChildHistoryEntry[] = [];
 
-  for (const entry of extractGatewayHistoryEntries(historyMessages)) {
-    if (entry.role === 'user') {
+  for (const message of parseSubagentGatewayHistoryMessages(historyMessages)) {
+    if (message.type === 'user') {
       const localUser = localUsers[localUserIndex++];
       if (localUser) {
         mergedEntries.push(localUser);
         continue;
       }
-      const visibleText = normalizeSubagentVisibleUserText(entry.text).trim();
+      const visibleText = normalizeSubagentVisibleUserText(message.content).trim();
       if (visibleText && !shouldSuppressHeartbeatText('user', visibleText)) {
         mergedEntries.push({
-          role: 'user',
-          text: visibleText,
-          ...(entry.timestamp != null && { timestamp: entry.timestamp }),
+          type: 'user',
+          content: visibleText,
+          timestamp: message.timestamp,
+          metadata: normalizeMetadata(message.metadata),
         });
       }
       continue;
     }
 
-    if (entry.role !== 'assistant') continue;
-    const text = entry.text.trim();
-    if (!text || shouldSuppressHeartbeatText('assistant', text)) continue;
-    let metadata: Record<string, unknown> | undefined;
-    if (entry.usage || entry.model) {
-      metadata = {};
-      if (entry.usage) {
-        metadata.usage = {
-          ...(entry.usage.input != null && { inputTokens: entry.usage.input }),
-          ...(entry.usage.output != null && { outputTokens: entry.usage.output }),
-        };
-      }
-      if (entry.model) {
-        metadata.model = entry.model;
-      }
-    }
-    mergedEntries.push({
-      role: 'assistant',
-      text,
-      ...(metadata && { metadata }),
-      ...(entry.timestamp != null && { timestamp: entry.timestamp }),
-    });
+    const storedEntry = toStoredEntry(message);
+    if (storedEntry) mergedEntries.push(storedEntry);
   }
 
   for (; localUserIndex < localUsers.length; localUserIndex += 1) {
@@ -126,17 +185,13 @@ export const buildSubagentChildHistorySyncPlan = (
   const isInSync = !normalizedLocalUserContent
     && localEntries.length === mergedEntries.length
     && localEntries.every((entry, index) =>
-      entry.role === mergedEntries[index].role
-      && entry.text === mergedEntries[index].text
-      && isSameReconciledEntry(entry, mergedEntries[index]),
+      isSameHistoryMessage(entry, mergedEntries[index]),
     );
 
   return {
     changed: !isInSync,
     cursor: mergedEntries.length,
-    entriesToStore: isInSync
-      ? mergedEntries
-      : applyLocalTimestampsToEntries(mergedEntries, localEntries),
+    entriesToStore: mergedEntries,
     localEntries,
   };
 };
