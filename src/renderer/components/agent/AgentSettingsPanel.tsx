@@ -243,12 +243,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
 
       let nextSystemPrompt = a.systemPrompt;
       let nextIdentity = a.identity;
-      const nextUserInfo = await coworkService.readBootstrapFile('USER.md');
+      const nextUserInfo = await coworkService.readBootstrapFile('USER.md', { agentId });
       if (cancelled) return;
       if (isDefaultAgentId(agentId)) {
         const [mainIdentity, mainSoul] = await Promise.all([
-          coworkService.readBootstrapFile('IDENTITY.md'),
-          coworkService.readBootstrapFile('SOUL.md'),
+          coworkService.readBootstrapFile('IDENTITY.md', { agentId }),
+          coworkService.readBootstrapFile('SOUL.md', { agentId }),
         ]);
         if (cancelled) return;
         nextSystemPrompt = mainSoul;
@@ -395,12 +395,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
       }
       const bootstrapWrites = isMainAgent
         ? [
-            coworkService.writeBootstrapFile('IDENTITY.md', identity),
-            coworkService.writeBootstrapFile('SOUL.md', systemPrompt),
-            coworkService.writeBootstrapFile('USER.md', userInfo),
+            coworkService.writeBootstrapFile('IDENTITY.md', identity, { agentId }),
+            coworkService.writeBootstrapFile('SOUL.md', systemPrompt, { agentId }),
+            coworkService.writeBootstrapFile('USER.md', userInfo, { agentId }),
           ]
         : [
-            coworkService.writeBootstrapFile('USER.md', userInfo),
+            coworkService.writeBootstrapFile('USER.md', userInfo, { agentId }),
           ];
       if (bootstrapWrites.length > 0) {
         const bootstrapSaved = await Promise.all(bootstrapWrites);

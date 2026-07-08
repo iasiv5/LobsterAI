@@ -46,7 +46,7 @@ import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
-import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
+import { getMainAgentWorkspacePath } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
 const gwDiagTs = (): string => {
@@ -3319,7 +3319,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Sync workspace files (SOUL.md, IDENTITY.md, USER.md, AGENTS.md) for each non-main agent.
+   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
    * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
    * get their own workspace directories under the openclaw state directory.
    */
@@ -3328,8 +3328,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // Use the openclaw state directory as base, matching OpenClaw's own fallback
     // logic: {STATE_DIR}/workspace-{agentId}/
     const stateDir = this.engineManager.getStateDir();
-    const userContent = readBootstrapFile(mainWorkspaceDir, 'USER.md');
-
     try {
       if (repairHeartbeatFile(mainWorkspaceDir)) {
         console.log('[OpenClawConfigSync] Repaired legacy HEARTBEAT.md in main workspace');
@@ -3361,10 +3359,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
         const identityContent = (agent.identity || '').trim();
         this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
-
-        // Sync USER.md — shared user profile from the main Agent settings
-        const userPath = path.join(agentWorkspace, 'USER.md');
-        this.syncFileIfChanged(userPath, userContent);
 
         // Sync AGENTS.md for this agent (reuse same logic as main agent)
         this.syncAgentsMd(agentWorkspace, {

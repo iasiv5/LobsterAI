@@ -256,10 +256,6 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
       isDirty: false,
       template: null,
     });
-    void coworkService.readBootstrapFile('USER.md').then((content) => {
-      initialUserInfoRef.current = content;
-      setUserInfo(content);
-    });
     imService.loadConfig().then((cfg) => {
       if (cfg) setImConfig(cfg);
     });
@@ -372,20 +368,6 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
     });
     setCreating(true);
     try {
-      if (userInfo !== initialUserInfoRef.current) {
-        const userInfoSaved = await coworkService.writeBootstrapFile('USER.md', userInfo);
-        if (!userInfoSaved) {
-          reportAgentCreateAction('create_failed', {
-            changedFields,
-            errorCode: 'user_info_write_failed',
-            includeConfigDetails: true,
-            isDirty: changedFields.length > 0,
-            result: 'failed',
-          });
-          window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('agentCreateFailed') }));
-          return;
-        }
-      }
       const agent = await agentService.createAgent({
         name: name.trim(),
         description: description.trim(),
@@ -398,6 +380,13 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
         subagentAllowAgentIds,
       });
       if (agent) {
+        if (userInfo !== initialUserInfoRef.current) {
+          const userInfoSaved = await coworkService.writeBootstrapFile('USER.md', userInfo, { agentId: agent.id });
+          if (!userInfoSaved) {
+            console.warn(`[AgentCreateModal] failed to save USER.md for agent ${agent.id}`);
+            window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('agentSaveFailed') }));
+          }
+        }
         // Save IM bindings after agent is created
         if (boundKeys.size > 0 && imConfig) {
           const currentBindings = { ...(imConfig.settings?.platformAgentBindings || {}) };

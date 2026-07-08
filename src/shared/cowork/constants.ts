@@ -22,6 +22,8 @@ export const CoworkIpcChannel = {
   StreamGoal: 'cowork:stream:goal',
   MemoryReadRaw: 'cowork:memory:readRaw',
   MemoryWriteRaw: 'cowork:memory:writeRaw',
+  BootstrapRead: 'cowork:bootstrap:read',
+  BootstrapWrite: 'cowork:bootstrap:write',
 } as const;
 export type CoworkIpcChannel = typeof CoworkIpcChannel[keyof typeof CoworkIpcChannel];
 

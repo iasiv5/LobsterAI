@@ -954,10 +954,12 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; error?: string }>;
     readBootstrapFile: (
       filename: string,
+      options?: { agentId?: string },
     ) => Promise<{ success: boolean; content: string; error?: string }>;
     writeBootstrapFile: (
       filename: string,
       content: string,
+      options?: { agentId?: string },
     ) => Promise<{ success: boolean; error?: string }>;
     onStreamMessage: (
       callback: (data: { sessionId: string; message: CoworkMessage; beforeMessageId?: string }) => void,

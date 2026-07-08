@@ -537,6 +537,63 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(mainEntry.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
   });
 
+  test('does not copy main USER.md into non-main agent workspaces during sync', async () => {
+    const mainWorkspace = path.join(stateDir, 'workspace-main');
+    fs.mkdirSync(mainWorkspace, { recursive: true });
+    fs.writeFileSync(path.join(mainWorkspace, 'USER.md'), 'main user profile\n', 'utf8');
+
+    const sync = await createSync({
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: '',
+          workingDirectory: '',
+          icon: '',
+          skillIds: [],
+          subagentAllowAgentIds: [],
+          enabled: true,
+          pinned: false,
+          isDefault: true,
+          source: 'custom',
+          presetId: '',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: 'writer',
+          name: 'Writer',
+          description: '',
+          systemPrompt: 'writer soul',
+          identity: 'writer identity',
+          model: '',
+          workingDirectory: '',
+          icon: '',
+          skillIds: [],
+          subagentAllowAgentIds: [],
+          enabled: true,
+          pinned: false,
+          isDefault: false,
+          source: 'custom',
+          presetId: '',
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    });
+
+    const result = sync.sync('agent-user-md-isolation');
+    expect(result.ok).toBe(true);
+
+    const writerWorkspace = path.join(stateDir, 'workspace-writer');
+    expect(fs.readFileSync(path.join(writerWorkspace, 'SOUL.md'), 'utf8')).toBe('writer soul\n');
+    expect(fs.readFileSync(path.join(writerWorkspace, 'IDENTITY.md'), 'utf8')).toBe('writer identity\n');
+    expect(fs.existsSync(path.join(writerWorkspace, 'USER.md'))).toBe(false);
+  });
+
   test('merges all server models into existing lobsterai provider and updates image input', async () => {
     mockRuntimeState.proxyPort = 56646;
     mockRuntimeState.serverModels = [

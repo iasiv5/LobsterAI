@@ -497,9 +497,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.MemoryWriteRaw, input),
     getDreamingStatus: () => ipcRenderer.invoke('cowork:dreaming:status'),
     getDreamDiary: () => ipcRenderer.invoke('cowork:dreaming:diary'),
-    readBootstrapFile: (filename: string) => ipcRenderer.invoke('cowork:bootstrap:read', filename),
-    writeBootstrapFile: (filename: string, content: string) =>
-      ipcRenderer.invoke('cowork:bootstrap:write', filename, content),
+    readBootstrapFile: (filename: string, options?: { agentId?: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.BootstrapRead, filename, options),
+    writeBootstrapFile: (filename: string, content: string, options?: { agentId?: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.BootstrapWrite, filename, content, options),
     // Stream event listeners
     onStreamMessage: (callback: (data: { sessionId: string; message: any; beforeMessageId?: string }) => void) => {
       const handler = (_event: any, data: { sessionId: string; message: any; beforeMessageId?: string }) => callback(data);
