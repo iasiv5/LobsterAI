@@ -14,7 +14,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -87,12 +86,15 @@ const SortableAgentNode: React.FC<{
     transition,
     isDragging,
   } = useSortable({ id: agent.id, disabled });
+  const verticalTransform = transform
+    ? `translate3d(0, ${Math.round(transform.y)}px, 0)`
+    : undefined;
 
   return (
     <div
       ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(transform),
+        transform: verticalTransform,
         transition,
       }}
       className={`${disabled ? '' : 'cursor-grab active:cursor-grabbing'} ${isDragging ? 'relative z-50 opacity-80' : ''}`}

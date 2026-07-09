@@ -413,7 +413,6 @@ export const useAgentSidebarState = () => {
   }, [sessions]);
 
   const toggleAgentExpanded = useCallback((agentId: string) => {
-    setExpandedTaskListAgentIds((previous) => collapseAgentSidebarTaskList(previous, agentId));
     setExpandedAgentIds((previous) => {
       return previous.includes(agentId)
         ? previous.filter((id) => id !== agentId)
