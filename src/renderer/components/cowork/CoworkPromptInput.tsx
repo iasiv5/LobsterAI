@@ -11,6 +11,7 @@ import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
 import { AuthSubscriptionStatus } from '@shared/auth/constants';
 import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import {
@@ -390,6 +391,7 @@ interface CoworkPromptInputProps {
   contextUsageControl?: React.ReactNode;
   goal?: CoworkGoal | null;
   onGoalCommand?: (command: string) => boolean | void | Promise<boolean | void>;
+  goalStatusBarPortalTarget?: HTMLElement | null;
   canSteer?: boolean;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
@@ -422,6 +424,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       contextUsageControl,
       goal,
       onGoalCommand,
+      goalStatusBarPortalTarget,
       canSteer = false,
       remoteManaged = false,
     } = props;
@@ -3096,7 +3099,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   ) : null;
 
   const goalActionsDisabled = disabled || voiceInputLocksEditing || !onGoalCommand;
-  const sessionGoalStatusBar = goal && !goalInputActive ? (() => {
+  const shouldUseExternalGoalStatusBar = goalStatusBarPortalTarget !== undefined;
+  const sessionGoalStatusBarNode = goal && !goalInputActive ? (() => {
     const summary = getGoalSummary(goal);
     const detail = goal.lastStatusNote
       ? `${summary}: ${goal.objective} - ${goal.lastStatusNote}`
@@ -3107,12 +3111,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ? i18nService.t('coworkGoalPause')
       : i18nService.t('coworkGoalResume');
     return (
-      <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
+      <div className={shouldUseExternalGoalStatusBar ? '' : `${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
         <div
           role="status"
           title={detail}
           aria-label={detail}
-          className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-surface-raised/70 px-2.5 py-1.5 text-xs text-secondary"
+          className={`flex min-w-0 items-center gap-2 border border-border bg-surface-raised/60 px-2.5 py-1.5 text-xs text-secondary ${
+            shouldUseExternalGoalStatusBar
+              ? `${isCompact ? 'mx-3' : 'mx-5'} rounded-t-2xl rounded-b-none border-b-0`
+              : 'rounded-xl shadow-subtle'
+          }`}
         >
           <GoalIcon className={`h-4 w-4 shrink-0 ${
             goal.status === CoworkGoalStatus.Active
@@ -3163,6 +3171,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       </div>
     );
   })() : null;
+  const sessionGoalStatusBar = sessionGoalStatusBarNode
+    ? goalStatusBarPortalTarget
+      ? createPortal(sessionGoalStatusBarNode, goalStatusBarPortalTarget)
+      : shouldUseExternalGoalStatusBar ? null : sessionGoalStatusBarNode
+    : null;
 
   const planModeBadge = isPlanMode ? (
     <button

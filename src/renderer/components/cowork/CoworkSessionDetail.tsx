@@ -1683,6 +1683,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [isArtifactPanelExpanded, setIsArtifactPanelExpanded] = useState(false);
   const [isExpandedPromptInputHidden, setIsExpandedPromptInputHidden] = useState(false);
   const [isExpandedConversationPreviewOpen, setIsExpandedConversationPreviewOpen] = useState(false);
+  const [goalStatusBarPortalTarget, setGoalStatusBarPortalTarget] = useState<HTMLDivElement | null>(null);
   const previousArtifactPanelOpenRef = useRef(isPanelOpen);
   const fileListPreviewTabOpenBySessionRef = useRef<Record<string, boolean>>({});
   const browserPreviewTabOpenBySessionRef = useRef<Record<string, boolean>>({});
@@ -4261,6 +4262,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const artifactPanelOverlayBottom = artifactPanelIsOverlay && !isExpandedPromptInputHidden
     ? promptInputAreaHeight
     : 0;
+  const showExternalGoalStatusBar = Boolean(
+    currentSession.goal
+    && !remoteManaged
+    && !(isArtifactPanelExpanded && isExpandedPromptInputHidden)
+  );
   const artifactPanelInnerWidth = artifactPanelIsOverlay ? '100%' : artifactPanelFrameWidth;
   const shouldShowTurnNavigationRail = railItems.length > 1 && isScrollable;
   const shouldShowScrollToBottom = isScrollable && !shouldAutoScroll;
@@ -5123,6 +5129,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           </div>
         )}
         <div className={COWORK_DETAIL_CONTENT_CLASS}>
+          {showExternalGoalStatusBar && (
+            <div className="relative z-10 -mb-px">
+              <div ref={setGoalStatusBarPortalTarget} />
+            </div>
+          )}
           <CoworkPromptInput
             ref={promptInputRef}
             onSubmit={onContinue}
@@ -5143,6 +5154,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             sessionId={currentSession?.id}
             goal={!remoteManaged ? currentSession?.goal : null}
             onGoalCommand={!remoteManaged && currentSession?.id ? handleGoalCommand : undefined}
+            goalStatusBarPortalTarget={showExternalGoalStatusBar ? goalStatusBarPortalTarget : null}
             contextUsageControl={(
               <div className="flex min-w-0 items-center gap-2">
                 <div ref={compactConfirmRef} className="relative inline-flex flex-shrink-0">
