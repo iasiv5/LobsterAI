@@ -7,11 +7,11 @@
 
 import { DeliveryMode as ScheduledTaskDeliveryMode } from '../../scheduledTask/constants';
 import type { ScheduledTaskJobDelivery } from '../../scheduledTask/cronJobService';
-import { parseImConversationId, PlatformRegistry } from '../../shared/platform';
+import { ImPeerKind, parseImConversationId, PlatformRegistry } from '../../shared/platform';
 import type { CoworkSession, CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
 import type { IMStore } from '../im/imStore';
-import type { Platform } from '../im/types';
+import type { IMSessionMapping, Platform } from '../im/types';
 
 const LOBSTERAI_SESSION_PREFIX = 'lobsterai:';
 export const DEFAULT_MANAGED_AGENT_ID = 'main';
@@ -413,6 +413,43 @@ export class OpenClawChannelSessionSync {
     return this.imStore.getSessionMapping(parsed.conversationId, parsed.platform, agentId);
   }
 
+  private getAccountlessGroupMappingForDirectMirror(
+    parsed: { platform: Platform; conversationId: string },
+    agentId: string,
+  ): IMSessionMapping | null {
+    const incoming = parseImConversationId(parsed.conversationId);
+    if (incoming.peerKind !== ImPeerKind.Direct) return null;
+
+    const peer = incoming.peerId.trim().toLowerCase();
+    if (!peer) return null;
+
+    for (const mapping of this.imStore.listSessionMappings(parsed.platform)) {
+      if (mapping.agentId !== agentId) continue;
+
+      const mapped = parseImConversationId(mapping.imConversationId);
+      if (mapped.accountId) continue;
+      if (
+        mapped.peerKind !== ImPeerKind.Group &&
+        mapped.peerKind !== ImPeerKind.Channel
+      ) {
+        continue;
+      }
+      if (mapped.peerId.trim().toLowerCase() !== peer) continue;
+
+      console.debug(
+        '[ChannelSessionSync] reusing accountless group/channel mapping for direct-shaped delivery mirror:',
+        parsed.conversationId,
+        '->',
+        mapping.imConversationId,
+        'agentId=',
+        agentId,
+      );
+      return mapping;
+    }
+
+    return null;
+  }
+
   private createChannelSession(
     parsed: { platform: Platform; conversationId: string },
     agentId: string,
@@ -511,6 +548,10 @@ export class OpenClawChannelSessionSync {
         existingMapping = legacyMapping;
       }
     }
+    const mirroredGroupMapping = this.getAccountlessGroupMappingForDirectMirror(parsed, agentId);
+    if (mirroredGroupMapping) {
+      existingMapping = mirroredGroupMapping;
+    }
     console.log(
       '[ChannelSessionSync] existing mapping:',
       existingMapping
@@ -543,7 +584,7 @@ export class OpenClawChannelSessionSync {
           );
           console.log('[ChannelSessionSync] created new session for agent change:', newSession.id);
           this.imStore.updateSessionMappingTarget(
-            parsed.conversationId,
+            existingMapping.imConversationId,
             parsed.platform,
             newSession.id,
             currentAgentId,
@@ -562,7 +603,10 @@ export class OpenClawChannelSessionSync {
           existingMapping.coworkSessionId,
         );
         this.syncedSessionKeys.set(sessionKey, existingMapping.coworkSessionId);
-        if (existingMapping.openClawSessionKey !== sessionKey) {
+        if (
+          existingMapping.imConversationId === parsed.conversationId &&
+          existingMapping.openClawSessionKey !== sessionKey
+        ) {
           this.imStore.updateSessionOpenClawSessionKey(
             parsed.conversationId,
             parsed.platform,
@@ -571,7 +615,7 @@ export class OpenClawChannelSessionSync {
           );
         }
         this.imStore.updateSessionLastActive(
-          parsed.conversationId,
+          existingMapping.imConversationId,
           parsed.platform,
           existingMapping.agentId,
         );
@@ -579,7 +623,11 @@ export class OpenClawChannelSessionSync {
       }
       // Session was deleted, remove stale mapping
       console.log('[ChannelSessionSync] cowork session deleted, removing stale mapping');
-      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform, existingMapping.agentId);
+      this.imStore.deleteSessionMapping(
+        existingMapping.imConversationId,
+        parsed.platform,
+        existingMapping.agentId,
+      );
     }
 
     // 5. Create new Cowork session
@@ -636,12 +684,19 @@ export class OpenClawChannelSessionSync {
         existingMapping = legacyMapping;
       }
     }
+    const mirroredGroupMapping = this.getAccountlessGroupMappingForDirectMirror(parsed, agentId);
+    if (mirroredGroupMapping) {
+      existingMapping = mirroredGroupMapping;
+    }
     if (existingMapping) {
       const session = this.coworkStore.getSession(existingMapping.coworkSessionId);
       if (session) {
         this.updateLocalSessionCwdIfNeeded(session, existingMapping.agentId);
         this.syncedSessionKeys.set(sessionKey, existingMapping.coworkSessionId);
-        if (existingMapping.openClawSessionKey !== sessionKey) {
+        if (
+          existingMapping.imConversationId === parsed.conversationId &&
+          existingMapping.openClawSessionKey !== sessionKey
+        ) {
           this.imStore.updateSessionOpenClawSessionKey(
             parsed.conversationId,
             parsed.platform,
@@ -652,7 +707,11 @@ export class OpenClawChannelSessionSync {
         return existingMapping.coworkSessionId;
       }
       // Stale mapping, clean up
-      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform, existingMapping.agentId);
+      this.imStore.deleteSessionMapping(
+        existingMapping.imConversationId,
+        parsed.platform,
+        existingMapping.agentId,
+      );
     }
 
     return null;

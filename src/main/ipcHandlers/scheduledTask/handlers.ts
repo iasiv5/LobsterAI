@@ -53,11 +53,12 @@ function normalizeImAnnounceDeliveryTo(
   mappings: readonly ConversationMappingForList[],
 ): string {
   const parsed = parseImConversationId(rawTo);
-  if (parsed.peerKind === ImPeerKind.Direct) {
+  if (
+    parsed.peerKind === ImPeerKind.Direct ||
+    parsed.peerKind === ImPeerKind.Group ||
+    parsed.peerKind === ImPeerKind.Channel
+  ) {
     return parsed.peerId;
-  }
-  if (parsed.peerKind === ImPeerKind.Group || parsed.peerKind === ImPeerKind.Channel) {
-    return `${parsed.peerKind}:${parsed.peerId}`;
   }
 
   const peer = parsed.peerId.trim().toLowerCase();
@@ -65,12 +66,7 @@ function normalizeImAnnounceDeliveryTo(
     for (const mapping of mappings) {
       const mappingParsed = parseImConversationId(mapping.imConversationId);
       if (mappingParsed.peerId.trim().toLowerCase() !== peer) continue;
-      if (
-        mappingParsed.peerKind === ImPeerKind.Group ||
-        mappingParsed.peerKind === ImPeerKind.Channel
-      ) {
-        return `${mappingParsed.peerKind}:${mappingParsed.peerId}`;
-      }
+      return mappingParsed.peerId;
     }
   }
 
@@ -242,8 +238,9 @@ function applyLocalAnnounceDeliveryNormalization(
   }
 
   // Strip conversation-id prefixes (e.g. "acc:direct:ou_xxx" -> "ou_xxx").
-  // Preserve group/channel kind so OpenClaw mirrors delivery results into the
-  // canonical group/channel session instead of treating a bare group id as DM.
+  // Outbound delivery targets must stay channel-native ids. For Feishu groups
+  // this is the raw chat id (oc_xxx), not the OpenClaw session peer kind
+  // marker (group:oc_xxx).
   const rawTo: string = delivery.to;
   const parsedConversation = parseImConversationId(rawTo);
   delivery.to = normalizeImAnnounceDeliveryTo(rawTo, mappings);

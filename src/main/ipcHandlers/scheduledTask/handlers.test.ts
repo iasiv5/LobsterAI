@@ -260,7 +260,7 @@ describe('registerScheduledTaskHandlers', () => {
     expect(input.delivery).toEqual({
       mode: DeliveryMode.Announce,
       channel: 'feishu',
-      to: 'group:oc_zhangsan_group',
+      to: 'oc_zhangsan_group',
       accountId: 'feishu-bot-1',
     });
   });
@@ -337,12 +337,6 @@ describe('registerScheduledTaskHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(cronJobService.updateJob).toHaveBeenCalledWith('job-1', {
       sessionTarget: SessionTarget.Isolated,
-      delivery: {
-        mode: DeliveryMode.Announce,
-        channel: 'feishu',
-        to: 'group:oc_zhangsan_group',
-        accountId: 'feishu-bot-1',
-      },
       agentId: 'agent-feishu-bot-1',
     });
     expect(cronJobService.runJob).toHaveBeenCalledWith('job-1');
@@ -352,6 +346,13 @@ describe('registerScheduledTaskHandlers', () => {
   test('filters account-less group conversation options by the selected bot agent binding', async () => {
     const { deps } = makeDeps();
     const listSessionMappings = vi.fn(() => [
+      {
+        imConversationId: 'feishu-bot-1:direct:oc_zhangsan_group',
+        platform: 'feishu',
+        coworkSessionId: 'cw-poisoned-direct',
+        agentId: 'agent-feishu-bot-1',
+        lastActiveAt: '4',
+      },
       {
         imConversationId: 'group:oc_zhangsan_group',
         platform: 'feishu',

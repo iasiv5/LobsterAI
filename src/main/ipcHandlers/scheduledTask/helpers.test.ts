@@ -30,7 +30,7 @@ describe('resolveImDeliveryHintsFromSessions', () => {
     expect(hints).toEqual({ to: TRUE_CASE_PEER, accountId: 'weixin-bot-1' });
   });
 
-  test('preserves group delivery target kind when restoring session hints', () => {
+  test('keeps group delivery hints as channel-native ids', () => {
     const hints = resolveImDeliveryHintsFromSessions({
       sessions: [
         {
@@ -45,7 +45,7 @@ describe('resolveImDeliveryHintsFromSessions', () => {
     });
 
     expect(hints).toEqual({
-      to: 'group:oc_ZhangSan_Group',
+      to: 'oc_ZhangSan_Group',
       accountId: 'feishu-bot-1',
     });
   });
@@ -152,6 +152,10 @@ describe('resolveConversationAgentIdFromMappings', () => {
     expect(
       resolveConversationAgentIdFromMappings(
         [
+          {
+            imConversationId: 'feishu-bot-1:direct:oc_1',
+            agentId: 'main',
+          },
           { imConversationId: 'group:oc_1', agentId: 'main' },
           { imConversationId: 'group:oc_1', agentId: 'agent-feishu-bot-1' },
         ],
@@ -263,6 +267,39 @@ describe('filterConversationMappingsForSelectedAccount', () => {
     expect(result).toEqual([
       {
         imConversationId: 'group:oc_zhangsan_group',
+        agentId: 'agent-feishu-bot-1',
+      },
+      {
+        imConversationId: 'feishu-bot-1:direct:ou_lisi',
+        agentId: 'agent-feishu-bot-1',
+      },
+    ]);
+  });
+
+  test('drops direct-shaped delivery mirrors when a selected group mapping covers the same peer', () => {
+    const result = filterConversationMappingsForSelectedAccount(
+      [
+        {
+          imConversationId: 'feishu-bot-1:direct:oc_1',
+          agentId: 'agent-feishu-bot-1',
+        },
+        {
+          imConversationId: 'group:oc_1',
+          agentId: 'agent-feishu-bot-1',
+        },
+        {
+          imConversationId: 'feishu-bot-1:direct:ou_lisi',
+          agentId: 'agent-feishu-bot-1',
+        },
+      ],
+      'feishu',
+      'feishu-bot-1',
+      { 'feishu:feishu-bot-1': 'agent-feishu-bot-1' },
+    );
+
+    expect(result).toEqual([
+      {
+        imConversationId: 'group:oc_1',
         agentId: 'agent-feishu-bot-1',
       },
       {

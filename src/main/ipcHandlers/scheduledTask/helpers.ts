@@ -146,6 +146,15 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function isAccountlessGroupOrChannel(
+  parsed: ReturnType<typeof parseImConversationId>,
+): boolean {
+  return !parsed.accountId && (
+    parsed.peerKind === ImPeerKind.Group ||
+    parsed.peerKind === ImPeerKind.Channel
+  );
+}
+
 /**
  * Restores the channel-native delivery target from gateway session rows.
  *
@@ -187,12 +196,8 @@ export function resolveImDeliveryHintsFromSessions(params: {
     const to = asNonEmptyString(session.lastTo) ?? asNonEmptyString(context?.to);
     const toPeer = to ? parseImConversationId(to).peerId : '';
     if (!to || toPeer.toLowerCase() !== peerLower) continue;
-    const normalizedTo =
-      requestedPeer.peerKind === ImPeerKind.Group || requestedPeer.peerKind === ImPeerKind.Channel
-        ? `${requestedPeer.peerKind}:${toPeer}`
-        : to;
     candidates.push({
-      to: normalizedTo,
+      to,
       accountId: asNonEmptyString(session.lastAccountId) ?? asNonEmptyString(context?.accountId),
       updatedAt:
         typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt)
@@ -239,6 +244,17 @@ export function resolveConversationAgentIdFromMappings(
       preferredAccountId,
     )
     : null;
+
+  if (preferredAgentId) {
+    for (const mapping of mappings) {
+      const parsed = parseImConversationId(mapping.imConversationId);
+      if (parsed.peerId.trim().toLowerCase() !== peer) continue;
+      if (!isAccountlessGroupOrChannel(parsed)) continue;
+      const agentId = mapping.agentId?.trim();
+      if (agentId === preferredAgentId) return agentId;
+    }
+  }
+
   let firstMatch: string | null = null;
   for (const mapping of mappings) {
     const parsed = parseImConversationId(mapping.imConversationId);
@@ -248,8 +264,7 @@ export function resolveConversationAgentIdFromMappings(
     if (preferredAccountId && parsed.accountId === preferredAccountId) return agentId;
     if (
       preferredAgentId &&
-      !parsed.accountId &&
-      parsed.peerKind === 'group' &&
+      isAccountlessGroupOrChannel(parsed) &&
       agentId === preferredAgentId
     ) {
       return agentId;
@@ -310,11 +325,32 @@ export function filterConversationMappingsForSelectedAccount<
     selectedAccountId,
   );
 
-  return mappings.filter((mapping) => {
+  const filtered = mappings.filter((mapping) => {
     const parsed = parseImConversationId(mapping.imConversationId);
     if (parsed.accountId) return true;
-    if (parsed.peerKind !== 'group') return true;
+    if (
+      parsed.peerKind !== ImPeerKind.Group &&
+      parsed.peerKind !== ImPeerKind.Channel
+    ) {
+      return true;
+    }
     const mappingAgentId = mapping.agentId?.trim();
     return !mappingAgentId || mappingAgentId === selectedAgentId;
+  });
+
+  const accountlessGroupPeers = new Set(
+    filtered
+      .map((mapping) => parseImConversationId(mapping.imConversationId))
+      .filter(isAccountlessGroupOrChannel)
+      .map(parsed => parsed.peerId.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  if (accountlessGroupPeers.size === 0) return filtered;
+
+  return filtered.filter((mapping) => {
+    const parsed = parseImConversationId(mapping.imConversationId);
+    if (!parsed.accountId || parsed.peerKind !== ImPeerKind.Direct) return true;
+    return !accountlessGroupPeers.has(parsed.peerId.trim().toLowerCase());
   });
 }

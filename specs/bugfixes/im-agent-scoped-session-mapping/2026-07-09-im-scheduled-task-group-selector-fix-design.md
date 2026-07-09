@@ -63,7 +63,8 @@ agent:<agentId>:<channel>:channel:<peerId>
 2. 私聊 mapping 保持原逻辑。
 3. 对 `group:%` 这类不带账号前缀的群聊 mapping，读取当前 `settings.platformAgentBindings`，解析“选中 Bot 实例当前绑定的 Agent”。
 4. 只保留 `mapping.agentId` 等于该绑定 Agent 的群聊 mapping。
-5. 再执行现有 `dedupeConversationMappings()`，继续保留 PR #2298 对不同 Agent mapping 的保护语义。
+5. 如果历史 delivery mirror 已经留下 `accountId:direct:<chatId>` 这类与群聊同 peer 的伪私聊 mapping，且同 peer 已存在当前 Agent 的 accountless `group:<chatId>`/`channel:<peerId>` mapping，则候选列表隐藏该 direct 形态，避免同一个 IM 群聊同时显示为“群聊”和“私聊”。
+6. 再执行现有 `dedupeConversationMappings()`，继续保留 PR #2298 对不同 Agent mapping 的保护语义。
 
 当无法解析选中账号或绑定关系时，保留旧行为，避免误删历史会话选项。
 
@@ -74,11 +75,14 @@ agent:<agentId>:<channel>:channel:<peerId>
 1. 设置 `sessionTarget = isolated`。
 2. 将 `systemEvent` payload 转换为 `agentTurn` payload。
 3. 根据本地 `im_session_mappings` 和 `platformAgentBindings` 推导目标 `agentId`。
-4. 私聊 `delivery.to` 归一化为裸 peer id。
-5. 群聊/频道 `delivery.to` 必须保留 peer kind，归一化为 `group:<chatId>` 或 `channel:<peerId>`。
-6. 创建/编辑路径继续允许调用 gateway `sessions.list`，用于恢复大小写敏感 IM target 的原始 casing/account。
+4. `delivery.to` 归一化为平台原生 peer id，去掉 `direct:`、`group:`、`channel:` 以及账号前缀。
+5. 创建/编辑路径继续允许调用 gateway `sessions.list`，用于恢复大小写敏感 IM target 的原始 casing/account。
 
-`delivery.to` 不能把群聊剥成裸 `chatId`。否则 OpenClaw 可能 fallback 把消息发到正确群聊，但 delivery mirror 会被当成 `direct:<chatId>`，导致 LobsterAI 侧新建 `[飞书] oc_...` 私聊形态会话。
+OpenClaw canonical session key 中的 `group:<chatId>` 是会话键语义，不是飞书出站发送参数。飞书群聊发送的 `delivery.to` 必须保持原生 `chatId`（例如 `oc_...`），不能传 `group:oc_...`，否则飞书 API 会按 open_id 校验并返回 400。
+
+如果 OpenClaw delivery mirror 把裸群聊 id 记录成 `direct:<chatId>` 形态，LobsterAI 的 channel session sync 层只在存在同 Agent 的既有 accountless `group:<chatId>`/`channel:<peerId>` mapping 时复用该会话，并且不把 canonical `openClawSessionKey` 覆盖成 direct 形态。
+
+任务归属推导也要优先同 peer 的 accountless group/channel mapping。否则历史污染 direct mapping 若更新时间更新，可能先命中选中 Bot 的 `accountId:direct:<chatId>`，把任务重新绑定到错误 Agent。
 
 ### 3.3 旧任务迁移
 
@@ -90,7 +94,7 @@ agent:<agentId>:<channel>:channel:<peerId>
 4. 手动立即执行前先迁移该 job，再调用 `cron.run`。
 5. OpenClaw gateway 启动成功后后台扫描现有 cron jobs 并执行同一套迁移，不阻塞任务列表加载。
 
-旧任务若已经保存为裸 `oc_...`，迁移会根据本地 mapping 反推出 `group:oc_...`，避免自然运行或立即运行继续写入错误会话。
+旧任务若已经保存为裸 `oc_...`，迁移会保留该平台原生发送目标，并根据本地 mapping 修正 `agentId` 和 `sessionTarget`。旧任务若保存了 `group:oc_...` 这类会话键片段，则迁移会剥离为 `oc_...`，避免出站发送 400。
 
 ## 4. 日志策略
 
@@ -109,7 +113,9 @@ agent:<agentId>:<channel>:channel:<peerId>
 | Bot 实例未显式绑定 Agent | 按 OpenClaw/LobsterAI 默认逻辑视为 `main` Agent |
 | 私聊 mapping 带账号前缀 | 继续使用 `listSessionMappings(platform, accountId)` 过滤 |
 | 群聊 OpenClaw session key 不带 accountId | 不修改 key 规范，只用当前实例绑定关系过滤 UI 候选和修正 cron job |
-| 旧任务已经保存裸群聊 id | 迁移为 `group:<chatId>` |
+| 旧任务已经保存裸群聊 id | 保持平台原生 `chatId`，只修正 agent 归属和 sessionTarget |
+| 旧任务已经保存 `group:<chatId>` | 迁移为平台原生 `chatId`，避免出站发送 400 |
+| 历史 delivery mirror 留下 `accountId:direct:<chatId>` | 若同 peer 存在当前 Agent 的 accountless group/channel mapping，候选列表隐藏 direct 形态并按 group/channel 归属推导 |
 | 无通知定时任务 | `delivery.mode = none`，不进入 IM announce 归一化或旧任务迁移 |
 | 非 IM announce 任务 | 不进入 IM announce 归一化或旧任务迁移 |
 
@@ -120,5 +126,5 @@ agent:<agentId>:<channel>:channel:<peerId>
 3. `dedupeConversationMappings()` 不会把不同 Agent 的同群 mapping 全局折叠。
 4. OpenClaw 群聊 session key 不带 accountId 的规范被明确记录。
 5. 旧飞书群聊定时任务不重新编辑，点击“立即运行”后能同步到 LobsterAI 对应 agent 的群聊会话。
-6. OpenClaw 启动后的后台迁移完成后，旧任务自然到点执行也使用修正后的 agent 归属和 `group:<chatId>` target。
+6. OpenClaw 启动后的后台迁移完成后，旧任务自然到点执行也使用修正后的 agent 归属和平台原生 `chatId` target。
 7. 手动运行迁移路径不调用 gateway `sessions.list`。
