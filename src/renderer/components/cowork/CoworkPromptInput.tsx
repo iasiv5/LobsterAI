@@ -92,9 +92,9 @@ import {
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
 import DefaultAgentIcon from '../icons/DefaultAgentIcon';
+import EditIcon from '../icons/EditIcon';
 import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
-import PencilIcon from '../icons/PencilIcon';
 import PlanModeIcon from '../icons/PlanModeIcon';
 import PromptAddIcon from '../icons/PromptAddIcon';
 import SkillIcon from '../icons/SkillIcon';
@@ -3123,7 +3123,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             title={i18nService.t('edit')}
             aria-label={i18nService.t('edit')}
           >
-            <PencilIcon className="h-3.5 w-3.5" />
+            <EditIcon className="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
@@ -3202,7 +3202,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               title={i18nService.t('coworkGoalEdit')}
               aria-label={i18nService.t('coworkGoalEdit')}
             >
-              <PencilIcon className="h-3.5 w-3.5" />
+              <EditIcon className="h-3.5 w-3.5" />
             </button>
             {canTogglePause && (
               <button
