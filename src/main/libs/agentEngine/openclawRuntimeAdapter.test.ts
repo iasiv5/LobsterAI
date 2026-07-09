@@ -1742,6 +1742,23 @@ test('normal conversation does not receive plan mode instructions', async () => 
   expect(chatSendRequests[0].params.message).not.toContain('[Plan Mode recovery instruction]');
 });
 
+test('continueSession strips NUL characters from the persisted message and chat.send payload', async () => {
+  const nul = String.fromCharCode(0);
+  const { adapter, requests, session } = createRunTurnAdapter();
+
+  await adapter.continueSession('session-1', `请分析${nul}这段${nul}${nul}文本`);
+
+  const chatSendRequests = requests.filter((request) => request.method === 'chat.send');
+  expect(chatSendRequests).toHaveLength(1);
+  const outbound = chatSendRequests[0].params.message as string;
+  expect(outbound).not.toContain(nul);
+  expect(outbound).toContain('请分析这段文本');
+
+  const userMessages = session.messages.filter((message) => message.type === 'user');
+  expect(userMessages).toHaveLength(1);
+  expect(userMessages[0].content).toBe('请分析这段文本');
+});
+
 test('continueSession patches a session override before chat.send even when the model cache matches', async () => {
   const model = 'lobsterai-server/qwen3.6-plus-YoudaoInner';
   const { adapter, requests } = createRunTurnAdapter({

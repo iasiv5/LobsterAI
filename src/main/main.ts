@@ -71,6 +71,7 @@ import {
   CoworkSteerRejectReason,
   CoworkSteerStatus,
 } from '../shared/cowork/steer';
+import { stripNullChars } from '../shared/cowork/text';
 import {
   DataMigrationIpc,
   type DataMigrationLastRestoreResult,
@@ -6304,8 +6305,11 @@ if (!gotTheLock) {
           };
         }
 
+        // Strip NUL before this handler persists the message itself; the
+        // runtime adapter sanitizes again at the outbound boundary.
+        const prompt = stripNullChars(options.prompt);
         const fallbackTitle = buildSessionTitleFromInput(
-          options.prompt,
+          prompt,
           t('coworkDefaultSessionTitle'),
         );
         const title = options.title?.trim() || fallbackTitle;
@@ -6362,7 +6366,7 @@ if (!gotTheLock) {
         }
         const imageAttachmentPreviews = buildCoworkImageAttachmentPreviews(options.imageAttachments);
         const messageMetadata = buildCoworkUserSelectionMetadata({
-          prompt: options.prompt,
+          prompt,
           skillIds: options.activeSkillIds,
           kitIds: options.kitIds,
           kitReferences: options.kitReferences,
@@ -6372,7 +6376,7 @@ if (!gotTheLock) {
         });
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
-          content: options.prompt,
+          content: prompt,
           metadata: messageMetadata,
         });
 
@@ -6385,7 +6389,7 @@ if (!gotTheLock) {
           `Elapsed ${Date.now() - ipcStartedAtMs}ms.`,
         );
         runtime
-          .startSession(session.id, options.prompt, {
+          .startSession(session.id, prompt, {
             skipInitialUserMessage: true,
             systemPrompt,
             skillIds: runtimeSkillIds,

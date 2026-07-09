@@ -36,6 +36,7 @@ import {
   type CoworkSteerResponse,
   CoworkSteerStatus,
 } from '../../../shared/cowork/steer';
+import { stripNullChars } from '../../../shared/cowork/text';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -3899,7 +3900,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async startSession(sessionId: string, prompt: string, options: CoworkStartOptions = {}): Promise<void> {
-    await this.runTurn(sessionId, prompt, {
+    await this.runTurn(sessionId, stripNullChars(prompt), {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
       messageSkillIds: options.messageSkillIds,
@@ -3917,7 +3918,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async continueSession(sessionId: string, prompt: string, options: CoworkContinueOptions = {}): Promise<void> {
-    await this.runTurn(sessionId, prompt, {
+    await this.runTurn(sessionId, stripNullChars(prompt), {
       skipInitialUserMessage: options.skipInitialUserMessage ?? false,
       systemPrompt: options.systemPrompt,
       skillIds: options.skillIds,
@@ -3937,7 +3938,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     text: string,
     clientSteerId: string,
   ): Promise<CoworkSteerResponse> {
-    const trimmedText = text.trim();
+    const trimmedText = stripNullChars(text).trim();
     if (!trimmedText) {
       return {
         success: false,
@@ -4598,7 +4599,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     firstResponseTiming.promptBuildStartedAtMs = Date.now();
-    const outboundMessage = await this.buildOutboundPrompt(
+    // Strip NUL at the final outbound boundary so bridge content rebuilt from
+    // already-poisoned local history cannot trigger the gateway rejection.
+    const outboundMessage = stripNullChars(await this.buildOutboundPrompt(
       sessionId,
       effectivePrompt,
       outboundSystemPrompt,
@@ -4606,7 +4609,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       options.mediaReferences,
       options.selectedTextSnippets,
       firstResponseTiming,
-    );
+    ));
     if (this.cancelTurnStartupIfStopped(sessionId, 'outbound prompt built')) {
       return;
     }

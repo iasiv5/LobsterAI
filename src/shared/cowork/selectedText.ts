@@ -1,3 +1,5 @@
+import { stripNullChars } from './text';
+
 export const CoworkSelectedTextSource = {
   AssistantMessage: 'assistant',
   ArtifactMarkdown: 'artifact_markdown',
@@ -52,7 +54,7 @@ const normalizeOptionalOffset = (value: unknown): number | undefined => (
 
 const normalizeOptionalText = (value: unknown, maxLength = 512): string | undefined => {
   if (typeof value !== 'string') return undefined;
-  const text = value.trim();
+  const text = stripNullChars(value).trim();
   if (!text) return undefined;
   return text.slice(0, maxLength);
 };
@@ -60,7 +62,7 @@ const normalizeOptionalText = (value: unknown, maxLength = 512): string | undefi
 const normalizeSnippet = (value: unknown): CoworkSelectedTextSnippet | null => {
   if (!isRecord(value)) return null;
   const id = typeof value.id === 'string' ? value.id.trim() : '';
-  const text = typeof value.text === 'string' ? value.text.trim() : '';
+  const text = typeof value.text === 'string' ? stripNullChars(value.text).trim() : '';
   const sourceMessageId = typeof value.sourceMessageId === 'string'
     ? value.sourceMessageId.trim()
     : '';
