@@ -164,6 +164,42 @@ const summarizePromptShape = (prompt: string): string => {
   return `chars=${prompt.length}, lines=${lines.length}, blankLines=${blankLines}, orderedListLines=${orderedListLines}`;
 };
 
+const SteerQueueStatusIcon: React.FC<React.SVGProps<SVGSVGElement>> = ({ className, ...props }) => (
+  <svg
+    className={className}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.45"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...props}
+  >
+    <path d="M3.75 3.5v6.7c0 .86.7 1.55 1.55 1.55h6.45" />
+    <path d="m10.15 10.1 1.65 1.65-1.65 1.65" />
+    <path d="M5.75 5.6h4" />
+    <path d="M5.75 7.9h3" />
+  </svg>
+);
+
+const SteerQueueIcon: React.FC<React.SVGProps<SVGSVGElement>> = ({ className, ...props }) => (
+  <svg
+    className={className}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...props}
+  >
+    <path d="M3.5 3.5v3.25c0 1.52 1.23 2.75 2.75 2.75h6" />
+    <path d="m10.25 7.75 1.75 1.75-1.75 1.75" />
+  </svg>
+);
+
 const getModelAnalyticsSource = (model: Model, selectorGroup: ModelSelectorChangeMeta['group']): string => {
   if (model.isServerModel || model.providerKey === ProviderName.LobsteraiServer || selectorGroup === ModelSelectorGroup.Server) {
     return 'package';
@@ -3059,7 +3095,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       >
         {isRejected
           ? <ExclamationTriangleIcon className="h-4 w-4 shrink-0 text-warning" />
-          : <ArrowTurnDownRightIcon className="h-4 w-4 shrink-0" />}
+          : <SteerQueueStatusIcon className="h-4 w-4 shrink-0" />}
         <span className={`shrink-0 font-medium ${isRejected ? 'text-warning' : 'text-foreground'}`}>
           {isRejected ? i18nService.t('coworkSteerRejected') : i18nService.t('coworkSteerQueued')}
         </span>
@@ -3076,7 +3112,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               title={i18nService.t('coworkSteerInterruptTooltip')}
               aria-label={i18nService.t('coworkSteerInterruptTooltip')}
             >
-              <ArrowTurnDownRightIcon className="h-3.5 w-3.5" />
+              <SteerQueueIcon className="h-3.5 w-3.5" />
               <span>{i18nService.t('coworkSteer')}</span>
             </button>
           )}
