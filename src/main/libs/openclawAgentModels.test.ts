@@ -170,6 +170,34 @@ describe('buildAgentEntry', () => {
     expect(identity.emoji).toBeUndefined();
   });
 
+  test('emits display name both as top-level name and identity name', () => {
+    const result = buildAgentEntry({
+      id: 'writer',
+      name: '写作助手',
+      description: '',
+      systemPrompt: '',
+      identity: '',
+      model: '',
+      workingDirectory: '',
+      icon: '',
+      skillIds: [],
+      enabled: true,
+      isDefault: false,
+      source: 'custom',
+      presetId: '',
+      createdAt: 0,
+      updatedAt: 0,
+    }, 'anthropic/claude-sonnet-4');
+
+    expect(result).toMatchObject({
+      id: 'writer',
+      name: '写作助手',
+      identity: {
+        name: '写作助手',
+      },
+    });
+  });
+
   test('emits subagent allowAgents for configured agent delegation', () => {
     const result = buildAgentEntry({
       id: 'main',

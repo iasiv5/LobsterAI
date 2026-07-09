@@ -223,6 +223,7 @@ export function buildAgentEntry(
   return {
     id: agent.id,
     ...(agent.isDefault ? { default: true } : {}),
+    ...(agent.name ? { name: agent.name } : {}),
     ...(agent.name || legacyIcon ? {
       identity: {
         ...(agent.name ? { name: agent.name } : {}),

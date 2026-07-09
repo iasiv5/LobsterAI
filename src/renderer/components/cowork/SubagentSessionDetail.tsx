@@ -1,8 +1,11 @@
 import { ArrowLeftIcon } from '@heroicons/react/20/solid';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
+import type { RootState } from '../../store';
 import type { CoworkMessage, SubagentSessionSummary } from '../../types/cowork';
+import { getSubagentDisplayName } from '../../utils/subagentDisplay';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ConversationTurnsView from './ConversationTurnsView';
@@ -24,6 +27,7 @@ const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent,
   const [status, setStatus] = useState<'running' | 'done' | 'error'>(subagent.status);
   const contentRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(0);
+  const agents = useSelector((state: RootState) => state.agent.agents);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -76,7 +80,9 @@ const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent,
   }, [fetchHistory, fetchStatus, status]);
 
   // Use agent name as title to avoid duplicating the task content shown in conversation
-  const displayTitle = subagent.agentId ?? subagent.label ?? 'Subagent';
+  const displayTitle = useMemo(() => {
+    return getSubagentDisplayName(subagent, agents);
+  }, [agents, subagent]);
 
   // When messages are empty but task exists, synthesize a user message so
   // the view shows the initial prompt instead of "暂无对话记录"

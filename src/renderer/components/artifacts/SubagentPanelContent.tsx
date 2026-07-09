@@ -1,8 +1,11 @@
 import { ArrowLeftIcon } from '@heroicons/react/20/solid';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 import { i18nService } from '@/services/i18n';
+import type { RootState } from '@/store';
 import type { CoworkMessage, SubagentSessionSummary } from '@/types/cowork';
+import { getSubagentDisplayInitial, getSubagentDisplayName } from '@/utils/subagentDisplay';
 
 import ConversationTurnsView from '../cowork/ConversationTurnsView';
 
@@ -28,17 +31,6 @@ const formatDuration = (createdAt: number, endedAt: number | null): string => {
   return `${days}d`;
 };
 
-const getSubagentDisplayName = (subagent: SubagentSessionSummary): string => (
-  subagent.label?.trim()
-    || subagent.agentId?.trim()
-    || i18nService.t('subagentUnnamed')
-);
-
-const getSubagentInitial = (subagent: SubagentSessionSummary): string => {
-  const displayName = getSubagentDisplayName(subagent).trim();
-  return displayName.slice(0, 1).toUpperCase() || 'S';
-};
-
 const getSubagentStatusLabel = (status: SubagentSessionSummary['status']): string => {
   if (status === 'done') return i18nService.t('subagentCompleted');
   if (status === 'error') return i18nService.t('subagentError');
@@ -59,9 +51,10 @@ const SubagentStatusDot: React.FC<{ status: SubagentSessionSummary['status'] }> 
 
 const SubagentPanelRow: React.FC<{
   subagent: SubagentSessionSummary;
+  agents: RootState['agent']['agents'];
   onSelectSubagent: (subagent: SubagentSessionSummary) => void;
-}> = ({ subagent, onSelectSubagent }) => {
-  const displayName = getSubagentDisplayName(subagent);
+}> = ({ subagent, agents, onSelectSubagent }) => {
+  const displayName = getSubagentDisplayName(subagent, agents);
   const duration = formatDuration(
     subagent.createdAt,
     subagent.status === 'running' ? null : subagent.endedAt,
@@ -74,7 +67,7 @@ const SubagentPanelRow: React.FC<{
       className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface"
     >
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-        {getSubagentInitial(subagent)}
+        {getSubagentDisplayInitial(subagent, agents)}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
@@ -96,8 +89,9 @@ const SubagentPanelRow: React.FC<{
 
 const SubagentDetailContent: React.FC<{
   subagent: SubagentSessionSummary;
+  agents: RootState['agent']['agents'];
   onBack: () => void;
-}> = ({ subagent, onBack }) => {
+}> = ({ subagent, agents, onBack }) => {
   const [messages, setMessages] = useState<CoworkMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<SubagentSessionSummary['status']>(subagent.status);
@@ -171,7 +165,7 @@ const SubagentDetailContent: React.FC<{
     }] as CoworkMessage[];
   }, [messages, subagent.createdAt, subagent.task]);
 
-  const displayName = getSubagentDisplayName(subagent);
+  const displayName = getSubagentDisplayName(subagent, agents);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -185,7 +179,7 @@ const SubagentDetailContent: React.FC<{
           <ArrowLeftIcon className="h-4 w-4" />
         </button>
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-          {getSubagentInitial(subagent)}
+          {getSubagentDisplayInitial(subagent, agents)}
         </span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-foreground">{displayName}</div>
@@ -219,8 +213,9 @@ const SubagentDetailContent: React.FC<{
 const SubagentSection: React.FC<{
   title: string;
   subagents: SubagentSessionSummary[];
+  agents: RootState['agent']['agents'];
   onSelectSubagent: (subagent: SubagentSessionSummary) => void;
-}> = ({ title, subagents, onSelectSubagent }) => {
+}> = ({ title, subagents, agents, onSelectSubagent }) => {
   if (subagents.length === 0) return null;
 
   return (
@@ -235,6 +230,7 @@ const SubagentSection: React.FC<{
           <SubagentPanelRow
             key={subagent.id}
             subagent={subagent}
+            agents={agents}
             onSelectSubagent={onSelectSubagent}
           />
         ))}
@@ -250,6 +246,7 @@ const SubagentPanelContent: React.FC<SubagentPanelContentProps> = ({
   onBackToList,
   onSelectSubagent,
 }) => {
+  const agents = useSelector((state: RootState) => state.agent.agents);
   const grouped = useMemo(() => ({
     running: subagents.filter(subagent => subagent.status === 'running'),
     done: subagents.filter(subagent => subagent.status === 'done'),
@@ -260,6 +257,7 @@ const SubagentPanelContent: React.FC<SubagentPanelContentProps> = ({
     return (
       <SubagentDetailContent
         subagent={selectedSubagent}
+        agents={agents}
         onBack={onBackToList ?? (() => undefined)}
       />
     );
@@ -292,16 +290,19 @@ const SubagentPanelContent: React.FC<SubagentPanelContentProps> = ({
         <SubagentSection
           title={i18nService.t('subagentPanelRunning')}
           subagents={grouped.running}
+          agents={agents}
           onSelectSubagent={onSelectSubagent}
         />
         <SubagentSection
           title={i18nService.t('subagentPanelCompleted')}
           subagents={grouped.done}
+          agents={agents}
           onSelectSubagent={onSelectSubagent}
         />
         <SubagentSection
           title={i18nService.t('subagentPanelFailed')}
           subagents={grouped.error}
+          agents={agents}
           onSelectSubagent={onSelectSubagent}
         />
       </div>
