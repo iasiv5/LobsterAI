@@ -6,16 +6,21 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
   type MemoryIndexMigrationRunner,
-  migrateMainFtsOnlyMemoryIndex,
-  resolveMainMemoryIndexMigrationNeed,
+  migrateAllFtsOnlyMemoryIndexes,
+  resolveFtsOnlyMemoryIndexMigrationNeed,
 } from './openclawMemoryIndexMigration';
 
 let tmpDir = '';
 let stateDir = '';
 let runtimeRoot = '';
 let configPath = '';
-let dbPath = '';
 let electronNodeRuntimePath = '';
+
+type TestAgentEntry = {
+  id: string;
+  default?: boolean;
+  memorySearch?: Record<string, unknown>;
+};
 
 function mkdirp(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
@@ -26,11 +31,10 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function writeConfig(memorySearch: Record<string, unknown>, agentMemorySearch?: Record<string, unknown>): void {
-  const mainAgent: Record<string, unknown> = { id: 'main', default: true };
-  if (agentMemorySearch) {
-    mainAgent.memorySearch = agentMemorySearch;
-  }
+function writeConfig(
+  memorySearch: Record<string, unknown>,
+  agents: TestAgentEntry[] = [{ id: 'main', default: true }],
+): void {
   writeFile(
     configPath,
     `${JSON.stringify({
@@ -40,15 +44,19 @@ function writeConfig(memorySearch: Record<string, unknown>, agentMemorySearch?: 
           workspace: path.join(stateDir, 'workspace-main'),
           memorySearch,
         },
-        list: [mainAgent],
+        list: agents,
       },
     }, null, 2)}\n`,
   );
 }
 
-function writeIndexMeta(meta: Record<string, unknown> | null): void {
-  mkdirp(path.dirname(dbPath));
-  const db = new Database(dbPath);
+function defaultIndexPath(agentId: string): string {
+  return path.join(stateDir, 'memory', `${agentId}.sqlite`);
+}
+
+function writeIndexMetaAtPath(filePath: string, meta: Record<string, unknown> | null): void {
+  mkdirp(path.dirname(filePath));
+  const db = new Database(filePath);
   try {
     db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     if (meta) {
@@ -61,22 +69,57 @@ function writeIndexMeta(meta: Record<string, unknown> | null): void {
   }
 }
 
-function writeEmptySqlite(): void {
-  mkdirp(path.dirname(dbPath));
-  const db = new Database(dbPath);
+function writeIndexMeta(agentId: string, meta: Record<string, unknown> | null): void {
+  writeIndexMetaAtPath(defaultIndexPath(agentId), meta);
+}
+
+function writeEmptySqlite(agentId: string): void {
+  const filePath = defaultIndexPath(agentId);
+  mkdirp(path.dirname(filePath));
+  const db = new Database(filePath);
   db.close();
 }
 
-function ftsOnlyMemorySearch(): Record<string, unknown> {
+function currentIndexMeta(): Record<string, unknown> {
+  return {
+    model: 'fts-only',
+    provider: 'none',
+    ftsTokenizer: 'trigram',
+  };
+}
+
+function oldIndexMeta(): Record<string, unknown> {
+  return {
+    model: 'gemini-embedding-001',
+    provider: 'gemini',
+    ftsTokenizer: 'unicode61',
+  };
+}
+
+function ftsOnlyMemorySearch(storePath?: string): Record<string, unknown> {
   return {
     enabled: true,
     provider: 'none',
     fallback: 'none',
     store: {
+      ...(storePath ? { path: storePath } : {}),
       fts: { tokenizer: 'trigram' },
       vector: { enabled: false },
     },
   };
+}
+
+function successfulRunner(updatedIndexPaths: string[]): ReturnType<typeof vi.fn<MemoryIndexMigrationRunner>> {
+  return vi.fn<MemoryIndexMigrationRunner>().mockImplementation(async () => {
+    for (const indexPath of updatedIndexPaths) {
+      writeIndexMetaAtPath(indexPath, currentIndexMeta());
+    }
+    return {
+      code: 0,
+      stdout: 'updated',
+      stderr: '',
+    };
+  });
 }
 
 describe('openclawMemoryIndexMigration', () => {
@@ -85,7 +128,6 @@ describe('openclawMemoryIndexMigration', () => {
     stateDir = path.join(tmpDir, 'openclaw', 'state');
     runtimeRoot = path.join(tmpDir, 'runtime');
     configPath = path.join(stateDir, 'openclaw.json');
-    dbPath = path.join(stateDir, 'memory', 'main.sqlite');
     electronNodeRuntimePath = process.execPath;
     mkdirp(runtimeRoot);
     writeFile(path.join(runtimeRoot, 'openclaw.mjs'), 'console.log("openclaw");\n');
@@ -105,14 +147,10 @@ describe('openclawMemoryIndexMigration', () => {
       model: 'gemini-embedding-001',
       store: { fts: { tokenizer: 'trigram' } },
     });
-    writeIndexMeta({
-      model: 'gemini-embedding-001',
-      provider: 'gemini',
-      ftsTokenizer: 'trigram',
-    });
+    writeIndexMeta('main', oldIndexMeta());
     const runner = vi.fn<MemoryIndexMigrationRunner>();
 
-    const result = await migrateMainFtsOnlyMemoryIndex({
+    const result = await migrateAllFtsOnlyMemoryIndexes({
       stateDir,
       configPath,
       runtimeRoot,
@@ -125,35 +163,36 @@ describe('openclawMemoryIndexMigration', () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  test('skips when main agent overrides defaults with an embedding provider', async () => {
-    writeConfig(ftsOnlyMemorySearch(), {
-      enabled: true,
-      provider: 'gemini',
-      model: 'gemini-embedding-001',
-      store: { fts: { tokenizer: 'trigram' } },
-    });
-    writeIndexMeta({
-      model: 'gemini-embedding-001',
-      provider: 'gemini',
-      ftsTokenizer: 'trigram',
-    });
+  test('skips all-agent reindex when an agent overrides defaults with an embedding provider', () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      {
+        id: 'custom-agent',
+        memorySearch: {
+          provider: 'gemini',
+          model: 'gemini-embedding-001',
+        },
+      },
+    ]);
+    writeIndexMeta('main', currentIndexMeta());
+    writeIndexMeta('custom-agent', oldIndexMeta());
 
-    expect(resolveMainMemoryIndexMigrationNeed({ configPath, stateDir })).toEqual({
+    expect(resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir })).toEqual({
       shouldMigrate: false,
       reason: 'not-fts-only-config',
     });
   });
 
-  test('skips when FTS-only index metadata is current', async () => {
-    writeConfig(ftsOnlyMemorySearch());
-    writeIndexMeta({
-      model: 'fts-only',
-      provider: 'none',
-      ftsTokenizer: 'trigram',
-    });
+  test('skips when every configured index metadata is current', async () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'custom-agent' },
+    ]);
+    writeIndexMeta('main', currentIndexMeta());
+    writeIndexMeta('custom-agent', currentIndexMeta());
     const runner = vi.fn<MemoryIndexMigrationRunner>();
 
-    const result = await migrateMainFtsOnlyMemoryIndex({
+    const result = await migrateAllFtsOnlyMemoryIndexes({
       stateDir,
       configPath,
       runtimeRoot,
@@ -166,20 +205,22 @@ describe('openclawMemoryIndexMigration', () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  test('runs official forced reindex when old embedding metadata exists under FTS-only config', async () => {
-    writeConfig(ftsOnlyMemorySearch());
-    writeIndexMeta({
-      model: 'gemini-embedding-001',
-      provider: 'gemini',
-      ftsTokenizer: 'unicode61',
-    });
-    const runner = vi.fn<MemoryIndexMigrationRunner>().mockResolvedValue({
-      code: 0,
-      stdout: 'updated',
-      stderr: '',
+  test('runs one official all-agent reindex when only a custom agent has old metadata', async () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'custom-agent' },
+    ]);
+    writeIndexMeta('main', currentIndexMeta());
+    writeIndexMeta('custom-agent', oldIndexMeta());
+    const runner = successfulRunner([defaultIndexPath('custom-agent')]);
+
+    const need = resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir });
+    expect(need).toMatchObject({
+      shouldMigrate: true,
+      targets: [{ agentId: 'custom-agent', dbPath: defaultIndexPath('custom-agent') }],
     });
 
-    const result = await migrateMainFtsOnlyMemoryIndex({
+    const result = await migrateAllFtsOnlyMemoryIndexes({
       stateDir,
       configPath,
       runtimeRoot,
@@ -197,8 +238,6 @@ describe('openclawMemoryIndexMigration', () => {
       'memory',
       'index',
       '--force',
-      '--agent',
-      'main',
     ]);
     expect(options.cwd).toBe(runtimeRoot);
     expect(options.timeoutMs).toBeGreaterThan(0);
@@ -209,39 +248,119 @@ describe('openclawMemoryIndexMigration', () => {
     expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
   });
 
-  test('runs forced reindex when metadata is missing', async () => {
-    writeConfig(ftsOnlyMemorySearch());
-    writeIndexMeta(null);
+  test('collects every stale configured agent before running one reindex', async () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'custom-one' },
+      { id: 'custom-two' },
+    ]);
+    writeIndexMeta('main', oldIndexMeta());
+    writeIndexMeta('custom-one', oldIndexMeta());
+    writeIndexMeta('custom-two', currentIndexMeta());
+    const runner = successfulRunner([
+      defaultIndexPath('main'),
+      defaultIndexPath('custom-one'),
+    ]);
 
-    expect(resolveMainMemoryIndexMigrationNeed({ configPath, stateDir })).toMatchObject({
+    const need = resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir });
+    expect(need.shouldMigrate).toBe(true);
+    if (need.shouldMigrate) {
+      expect(need.targets.map((target) => target.agentId)).toEqual(['main', 'custom-one']);
+    }
+
+    const result = await migrateAllFtsOnlyMemoryIndexes({
+      stateDir,
+      configPath,
+      runtimeRoot,
+      electronNodeRuntimePath,
+      env: {},
+      runner,
+    });
+
+    expect(result.status).toBe('migrated');
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  test('detects missing metadata and a missing sqlite meta table', () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'custom-agent' },
+    ]);
+    writeIndexMeta('main', null);
+    writeEmptySqlite('custom-agent');
+
+    const need = resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir });
+    expect(need.shouldMigrate).toBe(true);
+    if (need.shouldMigrate) {
+      expect(need.targets.map((target) => target.agentId)).toEqual(['main', 'custom-agent']);
+      expect(need.targets.every((target) => target.reason === 'index metadata is missing')).toBe(true);
+    }
+  });
+
+  test('ignores orphan indexes until the agent is configured again', async () => {
+    writeConfig(ftsOnlyMemorySearch());
+    writeIndexMeta('main', currentIndexMeta());
+    writeIndexMeta('deleted-agent', oldIndexMeta());
+    const runner = vi.fn<MemoryIndexMigrationRunner>();
+
+    const result = await migrateAllFtsOnlyMemoryIndexes({
+      stateDir,
+      configPath,
+      runtimeRoot,
+      electronNodeRuntimePath,
+      env: {},
+      runner,
+    });
+
+    expect(result).toEqual({ status: 'skipped', reason: 'index-meta-current' });
+    expect(runner).not.toHaveBeenCalled();
+
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'deleted-agent' },
+    ]);
+    const reenabledNeed = resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir });
+    expect(reenabledNeed).toMatchObject({
       shouldMigrate: true,
-      dbPath,
-      reason: 'index metadata is missing',
+      targets: [{ agentId: 'deleted-agent', dbPath: defaultIndexPath('deleted-agent') }],
     });
   });
 
-  test('runs forced reindex when sqlite meta table is missing', async () => {
-    writeConfig(ftsOnlyMemorySearch());
-    writeEmptySqlite();
+  test('skips when no configured agent has an index database', () => {
+    writeConfig(ftsOnlyMemorySearch(), [
+      { id: 'main', default: true },
+      { id: 'custom-agent' },
+    ]);
 
-    expect(resolveMainMemoryIndexMigrationNeed({ configPath, stateDir })).toMatchObject({
+    expect(resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir })).toEqual({
+      shouldMigrate: false,
+      reason: 'no-index-db',
+    });
+  });
+
+  test('resolves the configured index path separately for each agent', () => {
+    const storePath = path.join(stateDir, 'custom-memory', '{agentId}.sqlite');
+    writeConfig(ftsOnlyMemorySearch(storePath), [
+      { id: 'main', default: true },
+      { id: 'custom-agent' },
+    ]);
+    const customIndexPath = path.join(stateDir, 'custom-memory', 'custom-agent.sqlite');
+    writeIndexMetaAtPath(customIndexPath, oldIndexMeta());
+
+    const need = resolveFtsOnlyMemoryIndexMigrationNeed({ configPath, stateDir });
+    expect(need).toMatchObject({
       shouldMigrate: true,
-      dbPath,
-      reason: 'index metadata is missing',
+      targets: [{ agentId: 'custom-agent', dbPath: customIndexPath }],
     });
   });
 
   test('skips when bundled OpenClaw CLI is missing', async () => {
     fs.rmSync(path.join(runtimeRoot, 'openclaw.mjs'), { force: true });
     writeConfig(ftsOnlyMemorySearch());
-    writeIndexMeta({
-      model: 'gemini-embedding-001',
-      provider: 'gemini',
-      ftsTokenizer: 'unicode61',
-    });
+    writeIndexMeta('main', oldIndexMeta());
     const runner = vi.fn<MemoryIndexMigrationRunner>();
 
-    const result = await migrateMainFtsOnlyMemoryIndex({
+    const result = await migrateAllFtsOnlyMemoryIndexes({
       stateDir,
       configPath,
       runtimeRoot,
@@ -254,20 +373,16 @@ describe('openclawMemoryIndexMigration', () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  test('returns failed when forced reindex exits non-zero', async () => {
+  test('returns failed when all-agent reindex exits non-zero', async () => {
     writeConfig(ftsOnlyMemorySearch());
-    writeIndexMeta({
-      model: 'gemini-embedding-001',
-      provider: 'gemini',
-      ftsTokenizer: 'unicode61',
-    });
+    writeIndexMeta('main', oldIndexMeta());
     const runner = vi.fn<MemoryIndexMigrationRunner>().mockResolvedValue({
       code: 2,
       stdout: '',
       stderr: 'failed',
     });
 
-    const result = await migrateMainFtsOnlyMemoryIndex({
+    const result = await migrateAllFtsOnlyMemoryIndexes({
       stateDir,
       configPath,
       runtimeRoot,
@@ -277,5 +392,30 @@ describe('openclawMemoryIndexMigration', () => {
     });
 
     expect(result).toEqual({ status: 'failed', code: 2 });
+  });
+
+  test('returns failed when successful CLI exit leaves a stale target index', async () => {
+    writeConfig(ftsOnlyMemorySearch());
+    writeIndexMeta('main', oldIndexMeta());
+    const runner = vi.fn<MemoryIndexMigrationRunner>().mockResolvedValue({
+      code: 0,
+      stdout: 'updated',
+      stderr: '',
+    });
+
+    const result = await migrateAllFtsOnlyMemoryIndexes({
+      stateDir,
+      configPath,
+      runtimeRoot,
+      electronNodeRuntimePath,
+      env: {},
+      runner,
+    });
+
+    expect(result).toEqual({
+      status: 'failed',
+      code: 0,
+      error: 'post-reindex verification failed for agents ["main"]',
+    });
   });
 });

@@ -19,7 +19,7 @@ import {
 import { getCodexHomeDir } from './openaiCodexAuth';
 import { migrateLegacyCronStorageWithDoctor } from './openclawCronLegacyMigration';
 import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
-import { migrateMainFtsOnlyMemoryIndex } from './openclawMemoryIndexMigration';
+import { migrateAllFtsOnlyMemoryIndexes } from './openclawMemoryIndexMigration';
 import { ensureOpenClawWorkerShims } from './openclawWorkerShims';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 
@@ -600,7 +600,7 @@ export class OpenClawEngineManager extends EventEmitter {
       env,
     });
 
-    await migrateMainFtsOnlyMemoryIndex({
+    await migrateAllFtsOnlyMemoryIndexes({
       stateDir: this.stateDir,
       configPath: this.configPath,
       runtimeRoot: runtime.root,

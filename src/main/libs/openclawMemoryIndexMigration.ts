@@ -7,7 +7,7 @@ import path from 'path';
 const MEMORY_INDEX_REBUILD_TIMEOUT_MS = 180_000;
 const LOG_TAIL_LIMIT = 4_000;
 const MEMORY_INDEX_META_KEY = 'memory_index_meta_v1';
-const MAIN_AGENT_ID = 'main';
+const DEFAULT_AGENT_ID = 'main';
 
 export type MemoryIndexMigrationRunResult = {
   code: number | null;
@@ -49,9 +49,16 @@ type MemoryIndexMeta = {
   ftsTokenizer?: string;
 };
 
+export type MemoryIndexMigrationTarget = {
+  agentId: string;
+  dbPath: string;
+  expectedTokenizer?: string;
+  reason: string;
+};
+
 export type MemoryIndexMigrationNeed =
   | { shouldMigrate: false; reason: MemoryIndexMigrationSkippedReason }
-  | { shouldMigrate: true; dbPath: string; reason: string };
+  | { shouldMigrate: true; targets: MemoryIndexMigrationTarget[]; reason: string };
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -66,27 +73,45 @@ function readJsonFile(filePath: string): JsonRecord | null {
   }
 }
 
-function findAgentEntry(config: JsonRecord, agentId: string): JsonRecord | null {
+function resolveConfiguredAgentEntries(config: JsonRecord): JsonRecord[] {
   const agents = isRecord(config.agents) ? config.agents : null;
   const list = Array.isArray(agents?.list) ? agents.list : [];
-  for (const entry of list) {
-    if (!isRecord(entry)) {
-      continue;
-    }
-    if (entry.id === agentId) {
-      return entry;
-    }
-  }
-  return null;
+  const entries = list.filter((entry): entry is JsonRecord => (
+    isRecord(entry) && typeof entry.id === 'string' && Boolean(entry.id.trim())
+  ));
+  return entries.length > 0 ? entries : [{ id: DEFAULT_AGENT_ID }];
 }
 
-function resolveMainMemorySearchConfig(config: JsonRecord): JsonRecord | null {
+function resolveDefaultMemorySearchConfig(config: JsonRecord): JsonRecord | null {
   const agents = isRecord(config.agents) ? config.agents : null;
   const defaults = isRecord(agents?.defaults) ? agents.defaults : null;
-  const defaultMemorySearch = isRecord(defaults?.memorySearch) ? defaults.memorySearch : null;
-  const mainAgent = findAgentEntry(config, MAIN_AGENT_ID);
-  const mainMemorySearch = isRecord(mainAgent?.memorySearch) ? mainAgent.memorySearch : null;
-  return mainMemorySearch ?? defaultMemorySearch;
+  return isRecord(defaults?.memorySearch) ? defaults.memorySearch : null;
+}
+
+function mergeMemorySearchConfig(
+  defaults: JsonRecord | null,
+  agentEntry: JsonRecord,
+): JsonRecord | null {
+  const overrides = isRecord(agentEntry.memorySearch) ? agentEntry.memorySearch : null;
+  if (!overrides) {
+    return defaults;
+  }
+  const defaultStore = isRecord(defaults?.store) ? defaults.store : {};
+  const overrideStore = isRecord(overrides.store) ? overrides.store : {};
+  const defaultFts = isRecord(defaultStore.fts) ? defaultStore.fts : {};
+  const overrideFts = isRecord(overrideStore.fts) ? overrideStore.fts : {};
+  const defaultVector = isRecord(defaultStore.vector) ? defaultStore.vector : {};
+  const overrideVector = isRecord(overrideStore.vector) ? overrideStore.vector : {};
+  return {
+    ...(defaults ?? {}),
+    ...overrides,
+    store: {
+      ...defaultStore,
+      ...overrideStore,
+      fts: { ...defaultFts, ...overrideFts },
+      vector: { ...defaultVector, ...overrideVector },
+    },
+  };
 }
 
 function isFtsOnlyMemorySearch(memorySearch: JsonRecord | null): boolean {
@@ -116,18 +141,19 @@ function resolveUserPath(filePath: string): string {
   return path.resolve(filePath);
 }
 
-export function resolveMainMemoryIndexPath(params: {
+export function resolveMemoryIndexPath(params: {
+  agentId: string;
   memorySearch: JsonRecord;
   stateDir: string;
 }): string {
   const store = isRecord(params.memorySearch.store) ? params.memorySearch.store : {};
   const configuredPath = typeof store.path === 'string' && store.path.trim()
-    ? store.path.trim().replace(/\{agentId\}/g, MAIN_AGENT_ID)
+    ? store.path.trim().replace(/\{agentId\}/g, params.agentId)
     : null;
   if (configuredPath) {
     return resolveUserPath(configuredPath);
   }
-  return path.join(params.stateDir, 'memory', `${MAIN_AGENT_ID}.sqlite`);
+  return path.join(params.stateDir, 'memory', `${params.agentId}.sqlite`);
 }
 
 function readMemoryIndexMeta(dbPath: string): MemoryIndexMeta | null {
@@ -155,7 +181,31 @@ function readMemoryIndexMeta(dbPath: string): MemoryIndexMeta | null {
   }
 }
 
-export function resolveMainMemoryIndexMigrationNeed(params: {
+function isMemoryIndexMetaCurrent(
+  meta: MemoryIndexMeta | null,
+  expectedTokenizer?: string,
+): boolean {
+  return Boolean(
+    meta?.model === 'fts-only' &&
+    meta.provider === 'none' &&
+    (!expectedTokenizer || meta.ftsTokenizer === expectedTokenizer),
+  );
+}
+
+function describeMemoryIndexMismatch(
+  meta: MemoryIndexMeta | null,
+  expectedTokenizer?: string,
+): string {
+  return meta
+    ? `index meta is ${JSON.stringify({
+        model: meta.model,
+        provider: meta.provider,
+        ftsTokenizer: meta.ftsTokenizer,
+      })}, expected fts-only/${expectedTokenizer ?? 'default'}`
+    : 'index metadata is missing';
+}
+
+export function resolveFtsOnlyMemoryIndexMigrationNeed(params: {
   configPath: string;
   stateDir: string;
 }): MemoryIndexMigrationNeed {
@@ -168,37 +218,55 @@ export function resolveMainMemoryIndexMigrationNeed(params: {
     return { shouldMigrate: false, reason: 'invalid-config' };
   }
 
-  const memorySearch = resolveMainMemorySearchConfig(config);
-  if (!isFtsOnlyMemorySearch(memorySearch)) {
+  const defaultMemorySearch = resolveDefaultMemorySearchConfig(config);
+  const agentEntries = resolveConfiguredAgentEntries(config);
+  const resolvedAgents = agentEntries.map((entry) => ({
+    agentId: String(entry.id).trim(),
+    memorySearch: mergeMemorySearchConfig(defaultMemorySearch, entry),
+  }));
+  if (resolvedAgents.some(({ memorySearch }) => !isFtsOnlyMemorySearch(memorySearch))) {
     return { shouldMigrate: false, reason: 'not-fts-only-config' };
   }
 
-  const dbPath = resolveMainMemoryIndexPath({
-    memorySearch,
-    stateDir: params.stateDir,
-  });
-  if (!fs.existsSync(dbPath)) {
-    return { shouldMigrate: false, reason: 'no-index-db' };
+  let existingIndexCount = 0;
+  const targets: MemoryIndexMigrationTarget[] = [];
+  for (const { agentId, memorySearch } of resolvedAgents) {
+    if (!memorySearch) {
+      continue;
+    }
+    const dbPath = resolveMemoryIndexPath({
+      agentId,
+      memorySearch,
+      stateDir: params.stateDir,
+    });
+    if (!fs.existsSync(dbPath)) {
+      continue;
+    }
+    existingIndexCount += 1;
+    const expectedTokenizer = resolveFtsTokenizer(memorySearch);
+    const meta = readMemoryIndexMeta(dbPath);
+    if (isMemoryIndexMetaCurrent(meta, expectedTokenizer)) {
+      continue;
+    }
+    targets.push({
+      agentId,
+      dbPath,
+      expectedTokenizer,
+      reason: describeMemoryIndexMismatch(meta, expectedTokenizer),
+    });
   }
 
-  const expectedTokenizer = resolveFtsTokenizer(memorySearch);
-  const meta = readMemoryIndexMeta(dbPath);
-  if (
-    meta?.model === 'fts-only' &&
-    meta.provider === 'none' &&
-    (!expectedTokenizer || meta.ftsTokenizer === expectedTokenizer)
-  ) {
-    return { shouldMigrate: false, reason: 'index-meta-current' };
+  if (targets.length === 0) {
+    return {
+      shouldMigrate: false,
+      reason: existingIndexCount === 0 ? 'no-index-db' : 'index-meta-current',
+    };
   }
 
-  const reason = meta
-    ? `index meta is ${JSON.stringify({
-        model: meta.model,
-        provider: meta.provider,
-        ftsTokenizer: meta.ftsTokenizer,
-      })}, expected fts-only/${expectedTokenizer ?? 'default'}`
-    : 'index metadata is missing';
-  return { shouldMigrate: true, dbPath, reason };
+  const reason = targets
+    .map((target) => `${target.agentId}: ${target.reason}`)
+    .join('; ');
+  return { shouldMigrate: true, targets, reason };
 }
 
 function tailLog(text: string): string {
@@ -250,7 +318,19 @@ export function runProcess(
   });
 }
 
-export async function migrateMainFtsOnlyMemoryIndex(params: {
+function findStaleTargets(targets: MemoryIndexMigrationTarget[]): MemoryIndexMigrationTarget[] {
+  return targets.filter((target) => {
+    if (!fs.existsSync(target.dbPath)) {
+      return true;
+    }
+    return !isMemoryIndexMetaCurrent(
+      readMemoryIndexMeta(target.dbPath),
+      target.expectedTokenizer,
+    );
+  });
+}
+
+export async function migrateAllFtsOnlyMemoryIndexes(params: {
   stateDir: string;
   configPath: string;
   runtimeRoot: string;
@@ -260,7 +340,7 @@ export async function migrateMainFtsOnlyMemoryIndex(params: {
 }): Promise<MemoryIndexMigrationResult> {
   let need: MemoryIndexMigrationNeed;
   try {
-    need = resolveMainMemoryIndexMigrationNeed({
+    need = resolveFtsOnlyMemoryIndexMigrationNeed({
       configPath: params.configPath,
       stateDir: params.stateDir,
     });
@@ -288,10 +368,11 @@ export async function migrateMainFtsOnlyMemoryIndex(params: {
     OPENCLAW_CONFIG_PATH: params.configPath,
     ELECTRON_RUN_AS_NODE: '1',
   };
-  const args = [openclawCliPath, 'memory', 'index', '--force', '--agent', MAIN_AGENT_ID];
+  const args = [openclawCliPath, 'memory', 'index', '--force'];
+  const targetAgentIds = need.targets.map((target) => target.agentId);
 
   console.log(
-    `[OpenClaw] FTS-only memory index migration needed for ${need.dbPath}; running official reindex: ${JSON.stringify(args.slice(1))}`,
+    `[OpenClaw] FTS-only memory index migration needed for agents ${JSON.stringify(targetAgentIds)}; running official all-agent reindex: ${JSON.stringify(args.slice(1))}`,
   );
   try {
     const result = await runner(params.electronNodeRuntimePath, args, {
@@ -301,6 +382,13 @@ export async function migrateMainFtsOnlyMemoryIndex(params: {
     });
 
     if (result.code === 0) {
+      const staleTargets = findStaleTargets(need.targets);
+      if (staleTargets.length > 0) {
+        const staleAgentIds = staleTargets.map((target) => target.agentId);
+        const error = `post-reindex verification failed for agents ${JSON.stringify(staleAgentIds)}`;
+        console.warn(`[OpenClaw] FTS-only memory index migration ${error}.`);
+        return { status: 'failed', code: result.code, error };
+      }
       console.log(`[OpenClaw] FTS-only memory index migration completed: ${need.reason}`);
       return { status: 'migrated', code: result.code, reason: need.reason };
     }
