@@ -1,0 +1,17 @@
+diff --git a/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js b/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
+index 9b75baa..e018ea7 100644
+--- a/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
++++ b/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
+@@ -23,8 +23,11 @@ class WebInstallerTarget extends NsisTarget_1.NsisTarget {
+                 throw new Error("Cannot compute app package download URL");
+             }
+             appPackageUrl = (0, PublishManager_1.computeDownloadUrl)(publishConfigs[0], null, packager);
++            // Computed URLs point at a directory, so the NSIS template appends the
++            // package file name. An explicit appPackageUrl is used verbatim, as the
++            // option documentation states ("it is full URL").
++            defines.APP_PACKAGE_URL_IS_INCOMPLETE = null;
+         }
+-        defines.APP_PACKAGE_URL_IS_INCOMPLETE = null;
+         defines.APP_PACKAGE_URL = appPackageUrl;
+     }
+     get installerFilenamePattern() {
