@@ -561,8 +561,22 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     return quickActions.find(action => action.id === selectedActionId);
   }, [quickActions, selectedActionId]);
 
-  // Handle quick action button click: select action + activate skill in one batch
+  // Deselect quick action: restore the chip bar and deactivate the auto-enabled skill
+  const handleQuickActionDeselect = () => {
+    const action = quickActions.find(a => a.id === selectedActionId);
+    dispatch(clearSelection());
+    if (action && activeSkillIds.includes(action.skillMapping)) {
+      dispatch(setActiveSkillIds(activeSkillIds.filter(id => id !== action.skillMapping)));
+    }
+  };
+
+  // Handle quick action button click: select action + activate skill in one batch.
+  // Clicking the selected chip again collapses the prompt panel.
   const handleActionSelect = (actionId: string) => {
+    if (actionId === selectedActionId) {
+      handleQuickActionDeselect();
+      return;
+    }
     dispatch(selectAction(actionId));
     const action = quickActions.find(a => a.id === actionId);
     if (action) {
@@ -591,17 +605,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     }
   };
 
-  // When the mapped skill is deactivated from input area, restore the QuickActionBar
+  // When the mapped skill is deactivated from input area, restore the QuickActionBar.
+  // Only applies when the mapped skill exists (and thus was auto-enabled on select);
+  // otherwise a missing skill would make the prompt panel impossible to open.
   useEffect(() => {
     if (!selectedActionId) return;
     const action = quickActions.find(a => a.id === selectedActionId);
     if (action) {
-      const skillStillActive = activeSkillIds.includes(action.skillMapping);
-      if (!skillStillActive) {
+      const mappedSkillExists = skills.some(s => s.id === action.skillMapping);
+      if (mappedSkillExists && !activeSkillIds.includes(action.skillMapping)) {
         dispatch(clearSelection());
       }
     }
-  }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
+  }, [activeSkillIds, dispatch, quickActions, selectedActionId, skills]);
 
   // Handle prompt selection from QuickAction
   const handleQuickActionPromptSelect = (prompt: string, promptId?: string) => {
@@ -861,13 +877,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({
             className="relative z-0 mt-8 flex w-full max-w-3xl flex-col items-center animate-fade-in-up"
             style={{ animationDelay: '260ms', animationFillMode: 'both' }}
           >
-            {selectedAction ? (
-              <PromptPanel
-                action={selectedAction}
-                onPromptSelect={handleQuickActionPromptSelect}
-              />
-            ) : (
-              <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
+            <QuickActionBar
+              actions={quickActions}
+              selectedActionId={selectedActionId}
+              onActionSelect={handleActionSelect}
+            />
+            {selectedAction && (
+              <div className="mt-4 w-full">
+                <PromptPanel
+                  action={selectedAction}
+                  onPromptSelect={handleQuickActionPromptSelect}
+                  onClose={handleQuickActionDeselect}
+                />
+              </div>
             )}
             <CreditsResetCampaignFloat />
           </div>

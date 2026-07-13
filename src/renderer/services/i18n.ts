@@ -1147,6 +1147,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkGreetingEvening: '晚上好',
     coworkGreetingLateNight: '夜深了',
     coworkHomeTagline: '我是 LobsterAI，你的全场景办公 Agent',
+    coworkQuickActionCollapse: '收起',
     coworkCurrentAgent: '当前 Agent',
     coworkSelectAgent: '选择 Agent',
 
@@ -3976,6 +3977,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkGreetingEvening: 'Good evening',
     coworkGreetingLateNight: 'Up late?',
     coworkHomeTagline: "I'm LobsterAI, your all-in-one office agent",
+    coworkQuickActionCollapse: 'Collapse',
     coworkCurrentAgent: 'Current Agent',
     coworkSelectAgent: 'Select Agent',
 
