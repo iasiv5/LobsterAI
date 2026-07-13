@@ -11,7 +11,10 @@ import {
   CoworkSystemMessageKind,
 } from '../../../common/coworkSystemMessages';
 import { buildGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
-import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import {
+  type OpenClawSessionPatch,
+  OpenClawSessionReasoningLevel,
+} from '../../../common/openclawSession';
 import { CoworkIpcChannel } from '../../../shared/cowork/constants';
 import {
   type CoworkGoal,
@@ -75,8 +78,6 @@ import {
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { consumeRecentOpenClawTokenProxyQuotaError } from '../openclawTokenProxy';
 import {
-  extractThinkingFromCurrentTurn,
-  findMatchingThinkingMessageIdInCurrentTurn,
   findRedundantFinalPrefixMessageId,
   findReusableCommittedAssistantMessageId,
   findReusableFinalAssistantMessageId,
@@ -109,6 +110,16 @@ import {
   hasCronRunHistoryForSession,
   shouldReplaceLocalConversationWithCronHistory,
 } from './openclawCronRunHistorySync';
+import {
+  extractCurrentTurnThinkingBlocks,
+  OpenClawThinkingMetadata,
+} from './openclawThinkingBlocks';
+import {
+  logThinkingDiagnostic,
+  summarizeAgentEventForThinkingDiagnostics,
+  summarizeCurrentTurnThinkingHistoryForDiagnostics,
+  summarizeThinkingMessageForDiagnostics,
+} from './openclawThinkingDiagnostics';
 import {
   buildSubagentChildHistorySyncPlan,
 } from './subagent/childHistorySync';
@@ -2188,6 +2199,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private incrementalBackfillTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private pendingBackfillToolCallIds: Map<string, Set<string>> = new Map();
   private static readonly INCREMENTAL_BACKFILL_DEBOUNCE_MS = 2000;
+
+  /** Short history sync at a tool boundary, used to place canonical thinking before the tool. */
+  private thinkingHistorySyncTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private pendingThinkingToolCallIds: Map<string, Set<string>> = new Map();
+  private static readonly THINKING_HISTORY_SYNC_DEBOUNCE_MS = 250;
 
   // ── Subagent tracking (delegated) ───────────────────────────────────────
   private readonly subagentTracker: SubagentTracker;
@@ -4366,7 +4382,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         await this.requestSessionPatchWithProfile({
           sessionId,
           sessionKey,
-          patch: { model },
+          patch: {
+            model,
+            ...(isManagedSessionKey(sessionKey)
+              ? { reasoningLevel: OpenClawSessionReasoningLevel.Stream }
+              : {}),
+          },
           source,
           reason: 'model sync before chat.send',
           timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_SEND_TIMEOUT_MS,
@@ -5173,6 +5194,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     this.incrementalBackfillTimer.clear();
     this.pendingBackfillToolCallIds.clear();
+    for (const timer of this.thinkingHistorySyncTimer.values()) {
+      clearTimeout(timer);
+    }
+    this.thinkingHistorySyncTimer.clear();
+    this.pendingThinkingToolCallIds.clear();
     this.gatewayStoppingIntentionally = false;
   }
 
@@ -5501,6 +5527,115 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  private syncThinkingBlocksFromHistory(
+    sessionId: string,
+    turn: ActiveTurn,
+    historyMessages: unknown[],
+    options: { includeUnanchored: boolean },
+  ): void {
+    const extractedBlocks = extractCurrentTurnThinkingBlocks(historyMessages);
+    const anchoredBlocks = extractedBlocks.filter((block) => {
+      return block.anchorToolCallId
+        && turn.toolUseMessageIdByToolCallId.has(block.anchorToolCallId);
+    });
+    const unanchoredBlocks = extractedBlocks.filter((block) => !block.anchorToolCallId);
+    const lastUnanchoredAssistantOrdinal = unanchoredBlocks.reduce(
+      (latest, block) => Math.max(latest, block.assistantOrdinal),
+      -1,
+    );
+    const canonicalBlocks = [
+      ...anchoredBlocks,
+      ...(options.includeUnanchored
+        ? unanchoredBlocks.filter((block) => {
+          return block.assistantOrdinal === lastUnanchoredAssistantOrdinal;
+        })
+        : []),
+    ].sort((left, right) => {
+      return left.assistantOrdinal - right.assistantOrdinal
+        || left.contentIndex - right.contentIndex;
+    });
+    if (canonicalBlocks.length === 0) return;
+
+    const claimedMessageIds = new Set<string>();
+    for (const block of canonicalBlocks) {
+      const anchorMessageId = block.anchorToolCallId
+        ? turn.toolUseMessageIdByToolCallId.get(block.anchorToolCallId)
+        : turn.assistantMessageId ?? undefined;
+      const session = this.store.getSession(sessionId);
+      if (!session) return;
+      const lastUserIndex = session.messages.findLastIndex((message) => message.type === 'user');
+      const currentTurnMessages = session.messages.slice(lastUserIndex + 1);
+      let message = currentTurnMessages.find((candidate) => {
+        return candidate.type === 'assistant'
+          && candidate.metadata?.isThinking === true
+          && candidate.metadata?.[OpenClawThinkingMetadata.Key] === block.key;
+      });
+
+      if (!message) {
+        const anchorIndex = anchorMessageId
+          ? currentTurnMessages.findIndex((candidate) => candidate.id === anchorMessageId)
+          : currentTurnMessages.length;
+        const reusableCandidates = currentTurnMessages.filter((candidate, index) => {
+          return candidate.type === 'assistant'
+            && candidate.metadata?.isThinking === true
+            && !candidate.metadata?.[OpenClawThinkingMetadata.Key]
+            && candidate.content.trim() === block.text
+            && !claimedMessageIds.has(candidate.id)
+            && (anchorIndex < 0 || index < anchorIndex);
+        });
+        message = reusableCandidates.at(-1);
+      }
+
+      const metadata: CoworkMessageMetadata = {
+        ...message?.metadata,
+        isThinking: true,
+        isStreaming: false,
+        isFinal: true,
+        [OpenClawThinkingMetadata.Key]: block.key,
+        ...(block.anchorToolCallId
+          ? { [OpenClawThinkingMetadata.AnchorToolCallId]: block.anchorToolCallId }
+          : {}),
+      };
+
+      if (message) {
+        claimedMessageIds.add(message.id);
+        if (message.content !== block.text
+            || message.metadata?.[OpenClawThinkingMetadata.Key] !== block.key
+            || message.metadata?.isStreaming !== false
+            || message.metadata?.isFinal !== true) {
+          this.store.updateMessage(sessionId, message.id, {
+            content: block.text,
+            metadata,
+          });
+          this.emit('messageUpdate', sessionId, message.id, block.text, metadata);
+        }
+        continue;
+      }
+
+      const messagePayload = {
+        type: 'assistant' as const,
+        content: block.text,
+        metadata,
+      };
+      const insertBeforeMessageId = anchorMessageId
+        && typeof this.store.insertMessageBeforeId === 'function'
+        ? anchorMessageId
+        : undefined;
+      const thinkingMessage = insertBeforeMessageId
+        ? this.store.insertMessageBeforeId(sessionId, insertBeforeMessageId, messagePayload)
+        : this.store.addMessage(sessionId, messagePayload);
+      claimedMessageIds.add(thinkingMessage.id);
+      this.emit('message', sessionId, thinkingMessage, insertBeforeMessageId);
+      logThinkingDiagnostic(
+        'history-thinking-block-create',
+        `sessionId=${sessionId}`,
+        `key=${block.key}`,
+        `chars=${block.text.length}`,
+        `before=${insertBeforeMessageId ?? '-'}`,
+      );
+    }
+  }
+
   private syncBackfillableToolsFromHistory(
     sessionId: string,
     turn: ActiveTurn,
@@ -5655,6 +5790,60 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }, OpenClawRuntimeAdapter.INCREMENTAL_BACKFILL_DEBOUNCE_MS));
   }
 
+  private scheduleThinkingHistorySync(sessionId: string, toolCallId: string): void {
+    let pending = this.pendingThinkingToolCallIds.get(sessionId);
+    if (!pending) {
+      pending = new Set();
+      this.pendingThinkingToolCallIds.set(sessionId, pending);
+    }
+    pending.add(toolCallId);
+
+    const existingTimer = this.thinkingHistorySyncTimer.get(sessionId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    this.thinkingHistorySyncTimer.set(sessionId, setTimeout(() => {
+      this.thinkingHistorySyncTimer.delete(sessionId);
+      void this.executeThinkingHistorySync(sessionId);
+    }, OpenClawRuntimeAdapter.THINKING_HISTORY_SYNC_DEBOUNCE_MS));
+  }
+
+  private async executeThinkingHistorySync(sessionId: string): Promise<void> {
+    const turn = this.activeTurns.get(sessionId);
+    const pending = this.pendingThinkingToolCallIds.get(sessionId);
+    const client = this.gatewayClient;
+    if (!turn?.sessionKey || !client || !pending || pending.size === 0) return;
+
+    const toolCallIds = new Set(pending);
+    pending.clear();
+    const turnToken = turn.turnToken;
+    const limit = Math.min(toolCallIds.size * 3 + 5, 30);
+
+    try {
+      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey: turn.sessionKey,
+        limit,
+      }, { timeoutMs: 5_000 });
+      const currentTurn = this.activeTurns.get(sessionId);
+      if (!currentTurn || currentTurn.turnToken !== turnToken) return;
+      if (!Array.isArray(history?.messages)) return;
+
+      this.syncThinkingBlocksFromHistory(sessionId, currentTurn, history.messages, {
+        includeUnanchored: false,
+      });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] tool-boundary thinking history sync failed:', error);
+    } finally {
+      const remaining = this.pendingThinkingToolCallIds.get(sessionId);
+      if (remaining && remaining.size > 0 && this.activeTurns.has(sessionId)) {
+        this.thinkingHistorySyncTimer.set(sessionId, setTimeout(() => {
+          this.thinkingHistorySyncTimer.delete(sessionId);
+          void this.executeThinkingHistorySync(sessionId);
+        }, OpenClawRuntimeAdapter.THINKING_HISTORY_SYNC_DEBOUNCE_MS));
+      }
+    }
+  }
+
   /**
    * Execute a single incremental backfill: fetch chat.history and update
    * any tool results whose currently stored text is shorter than the authoritative text.
@@ -5690,6 +5879,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (!currentTurn || currentTurn.turnToken !== turnToken) return;
 
       if (Array.isArray(history?.messages)) {
+        logThinkingDiagnostic(
+          'history-incremental-backfill',
+          `sessionId=${sessionId}`,
+          `messages=${history.messages.length}`,
+          summarizeCurrentTurnThinkingHistoryForDiagnostics(history.messages),
+        );
+        this.syncThinkingBlocksFromHistory(sessionId, currentTurn, history.messages, {
+          includeUnanchored: false,
+        });
         for (const msg of history.messages) {
           if (!isRecord(msg)) continue;
 
@@ -5990,6 +6188,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (event.event === 'agent') {
+      const diagnostic = summarizeAgentEventForThinkingDiagnostics(event.payload, event.seq);
+      if (diagnostic) {
+        logThinkingDiagnostic(diagnostic);
+      }
       // Process assistant text updates here (before handleAgentEvent) because
       // handleAgentEvent may enqueue events when sessionId mapping isn't ready.
       this.processAgentAssistantText(event.payload);
@@ -6265,6 +6467,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const shouldKeepRunningAfterFinal = stream === 'tool'
       || stream === 'tools'
+      || stream === 'thinking'
       || stream === 'compaction'
       || (!stream && isRecord(agentPayload.data) && typeof agentPayload.data.toolCallId === 'string')
       || (stream === 'lifecycle' && getAgentLifecyclePhase(agentPayload.data) !== AgentLifecyclePhase.End);
@@ -6312,6 +6515,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         : 'unknown';
       console.log(`[OpenClawRuntime] received a compaction stream event for session ${sessionId}, run ${runId}, phase ${phase}.`);
       this.handleAgentCompactionEvent(sessionId, agentPayload.data);
+      return;
+    }
+    if (stream === 'thinking') {
+      this.handleAgentThinkingEvent(sessionId, turn, agentPayload.data);
+      return;
     }
   }
 
@@ -6327,6 +6535,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const hasToolShape = isRecord(payload.data) && typeof payload.data.toolCallId === 'string';
     const isSupportedStream = stream === 'tool'
       || stream === 'tools'
+      || stream === 'thinking'
       || stream === 'lifecycle'
       || stream === 'compaction'
       || (!stream && hasToolShape);
@@ -7002,6 +7211,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const toolNameRaw = typeof data.name === 'string' ? data.name.trim() : '';
     const toolName = toolNameRaw || 'Tool';
+    logThinkingDiagnostic(
+      'tool-event',
+      `sessionId=${sessionId}`,
+      `phase=${phase}`,
+      `tool=${toolName}`,
+      `toolCall=${toolCallId.slice(-12)}`,
+      `assistantMessage=${turn.assistantMessageId ?? '-'}`,
+      `thinkingMessage=${turn.thinkingMessageId ?? '-'}`,
+      `thinkingChars=${turn.currentThinkingText?.length ?? 0}`,
+    );
 
     if (phase === 'start' && turn.planMode) {
       const blockedReason = getPlanModeBlockedToolReason(toolNameRaw, data.args);
@@ -7098,6 +7317,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       });
       turn.toolUseMessageIdByToolCallId.set(toolCallId, toolUseMessage.id);
       this.emit('message', sessionId, toolUseMessage);
+      this.scheduleThinkingHistorySync(sessionId, toolCallId);
 
       // Track sessions_spawn tool calls for subagent visualization
       if (toolNameRaw.toLowerCase() === 'sessions_spawn') {
@@ -7225,6 +7445,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const state = chatPayload.state;
     if (!state) return;
     const runId = typeof chatPayload.runId === 'string' ? chatPayload.runId.trim() : '';
+    logThinkingDiagnostic(
+      'chat-event',
+      `seq=${seq ?? '-'}`,
+      `state=${state}`,
+      `run=${runId ? runId.slice(-12) : '-'}`,
+      `stopReason=${chatPayload.stopReason ?? '-'}`,
+      summarizeThinkingMessageForDiagnostics(chatPayload.message),
+    );
     console.debug(
       '[OpenClawRuntime] handleChatEvent:',
       `state=${state}`,
@@ -7375,6 +7603,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Update thinking text on the turn
     if (thinkingText) {
+      const previousThinkingText = turn.currentThinkingText ?? '';
+      logThinkingDiagnostic(
+        'chat-thinking-snapshot',
+        `sessionId=${turn.sessionId}`,
+        `previousChars=${previousThinkingText.length}`,
+        `nextChars=${thinkingText.length}`,
+        `extendsPrevious=${Boolean(previousThinkingText && thinkingText.startsWith(previousThinkingText))}`,
+        summarizeThinkingMessageForDiagnostics(message),
+      );
       turn.currentThinkingText = thinkingText;
     }
 
@@ -7613,6 +7850,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  private handleAgentThinkingEvent(sessionId: string, turn: ActiveTurn, data: unknown): void {
+    if (!isRecord(data)) return;
+
+    const cumulativeText = typeof data.text === 'string' ? data.text.trim() : '';
+    const deltaText = typeof data.delta === 'string' ? data.delta : '';
+    const nextThinkingText = cumulativeText
+      || `${turn.currentThinkingText}${deltaText}`.trim();
+    if (!nextThinkingText || nextThinkingText === turn.currentThinkingText) return;
+
+    if (
+      turn.currentThinkingText
+      && !nextThinkingText.startsWith(turn.currentThinkingText)
+    ) {
+      this.finalizeThinkingMessage(sessionId, turn);
+    }
+
+    turn.currentThinkingText = nextThinkingText;
+    logThinkingDiagnostic(
+      'adapterAction=thinking-stream-update',
+      `sessionId=${sessionId}`,
+      `chars=${nextThinkingText.length}`,
+      `deltaChars=${deltaText.length}`,
+      `thinkingMessage=${turn.thinkingMessageId ?? '-'}`,
+    );
+    this.syncThinkingMessage(sessionId, turn);
+  }
+
   private syncThinkingMessage(sessionId: string, turn: ActiveTurn): void {
     const thinkingText = turn.currentThinkingText;
     if (!thinkingText) return;
@@ -7630,6 +7894,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // If assistant message already exists, insert thinking BEFORE it
       // (agent stream may deliver text before chat delta delivers thinking)
       const insertBeforeId = turn.assistantMessageId || undefined;
+      logThinkingDiagnostic(
+        'thinking-message-create',
+        `sessionId=${sessionId}`,
+        `chars=${thinkingText.length}`,
+        `before=${insertBeforeId ?? '-'}`,
+        `toolMessages=${turn.toolUseMessageIdByToolCallId.size}`,
+      );
       console.log('[ThinkingOrder] syncThinkingMessage CREATE: assistantMessageId=', turn.assistantMessageId, 'insertBeforeId=', insertBeforeId, 'sessionId=', sessionId);
       const thinkingMessage = insertBeforeId
         ? this.store.insertMessageBeforeId(sessionId, insertBeforeId, messagePayload)
@@ -7640,37 +7911,40 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    logThinkingDiagnostic(
+      'thinking-message-update',
+      `sessionId=${sessionId}`,
+      `messageId=${turn.thinkingMessageId}`,
+      `chars=${thinkingText.length}`,
+    );
     this.throttledStoreUpdateMessage(sessionId, turn.thinkingMessageId,
       thinkingText, { isThinking: true, isStreaming: true, isFinal: false });
     this.throttledEmitMessageUpdate(sessionId, turn.thinkingMessageId, thinkingText);
-  }
-
-  private reuseFinalThinkingMessage(sessionId: string, turn: ActiveTurn): boolean {
-    const thinkingText = turn.currentThinkingText;
-    if (!thinkingText) return false;
-    const session = this.store.getSession(sessionId);
-    const messageId = findMatchingThinkingMessageIdInCurrentTurn(session?.messages ?? [], thinkingText);
-    if (!messageId) return false;
-
-    const finalMetadata = { isThinking: true, isStreaming: false, isFinal: true };
-    this.store.updateMessage(sessionId, messageId, {
-      content: thinkingText,
-      metadata: finalMetadata,
-    });
-    this.emit('messageUpdate', sessionId, messageId, thinkingText, finalMetadata);
-    turn.thinkingMessageId = null;
-    turn.currentThinkingText = '';
-    return true;
   }
 
   private finalizeThinkingMessage(sessionId: string, turn: ActiveTurn): void {
     if (!turn.thinkingMessageId) return;
     const messageId = turn.thinkingMessageId;
 
+    logThinkingDiagnostic(
+      'thinking-message-finalize',
+      `sessionId=${sessionId}`,
+      `messageId=${messageId}`,
+      `chars=${turn.currentThinkingText?.length ?? 0}`,
+      `toolMessages=${turn.toolUseMessageIdByToolCallId.size}`,
+    );
+
     this.flushPendingStoreUpdate(sessionId, messageId);
     this.clearPendingMessageUpdate(messageId);
 
-    const finalMetadata = { isThinking: true, isStreaming: false, isFinal: true };
+    const session = this.store.getSession(sessionId);
+    const existingMessage = session?.messages.find((message) => message.id === messageId);
+    const finalMetadata = {
+      ...existingMessage?.metadata,
+      isThinking: true,
+      isStreaming: false,
+      isFinal: true,
+    };
     this.store.updateMessage(sessionId, messageId, {
       content: turn.currentThinkingText || undefined,
       metadata: finalMetadata,
@@ -7684,6 +7958,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private splitAssistantSegmentBeforeTool(sessionId: string, turn: ActiveTurn): void {
+    logThinkingDiagnostic(
+      'tool-boundary-split',
+      `sessionId=${sessionId}`,
+      `assistantMessage=${turn.assistantMessageId ?? '-'}`,
+      `thinkingMessage=${turn.thinkingMessageId ?? '-'}`,
+      `thinkingChars=${turn.currentThinkingText?.length ?? 0}`,
+    );
+    // A tool can follow a thinking-only assistant message. Finalize the
+    // reasoning block even when no visible assistant text was created.
+    this.finalizeThinkingMessage(sessionId, turn);
     if (!turn.assistantMessageId) return;
     const messageId = turn.assistantMessageId;
 
@@ -7716,8 +8000,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     turn.hasSeenAgentAssistantStream = false;
     turn.chatDeltaOverwriteSkipLogged = false;
 
-    // Finalize thinking message when splitting before tool
-    this.finalizeThinkingMessage(sessionId, turn);
   }
 
   private handleChatDelta(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): void {
@@ -7917,6 +8199,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }, { timeoutMs: 5_000 });
         if (Array.isArray(history?.messages)) {
           this.syncToolResultsFromHistory(sessionId, turn, history.messages);
+          logThinkingDiagnostic(
+            'history-chat-final-tool-backfill',
+            `sessionId=${sessionId}`,
+            `messages=${history.messages.length}`,
+            summarizeCurrentTurnThinkingHistoryForDiagnostics(history.messages),
+          );
         }
       } catch (err) {
         console.warn('[OpenClawRuntime] chat history tool result backfill failed:', err);
@@ -9286,6 +9574,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
 
         historyMessages = history.messages;
+        logThinkingDiagnostic(
+          'history-final-reconcile',
+          `sessionId=${sessionId}`,
+          `attemptDelayMs=${delayMs}`,
+          `messages=${history.messages.length}`,
+          summarizeCurrentTurnThinkingHistoryForDiagnostics(history.messages),
+        );
         const previousHistoryCountKnown = this.gatewayHistoryCountBySession.has(sessionId);
         const previousHistoryCount = this.gatewayHistoryCountBySession.get(sessionId) ?? 0;
         this.syncSystemMessagesFromHistory(sessionId, history.messages, {
@@ -9329,19 +9624,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         }
       }
 
+      if (historyMessages) {
+        // Preserve OpenClaw's assistant/tool ordering instead of collapsing all
+        // reasoning from the turn into one trailing message. This also runs for
+        // thinking-only turns that have no canonical visible text.
+        this.syncThinkingBlocksFromHistory(sessionId, turn, historyMessages, {
+          includeUnanchored: true,
+        });
+      }
+
       if (!historyMessages || !canonicalText) {
         console.debug('[OpenClawRuntime] syncFinalAssistant — no canonical text found');
         return;
-      }
-
-      // Extract thinking from history messages and sync thinking message
-      const thinkingFromHistory = extractThinkingFromCurrentTurn(historyMessages);
-      if (thinkingFromHistory && thinkingFromHistory !== turn.currentThinkingText) {
-        turn.currentThinkingText = thinkingFromHistory;
-        if (!this.reuseFinalThinkingMessage(sessionId, turn)) {
-          this.syncThinkingMessage(sessionId, turn);
-          this.finalizeThinkingMessage(sessionId, turn);
-        }
       }
 
       // For channel sessions, append file paths from "message" tool calls as clickable links
@@ -9844,6 +10138,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.incrementalBackfillTimer.delete(sessionId);
       }
       this.pendingBackfillToolCallIds.delete(sessionId);
+      const thinkingSyncTimer = this.thinkingHistorySyncTimer.get(sessionId);
+      if (thinkingSyncTimer) {
+        clearTimeout(thinkingSyncTimer);
+        this.thinkingHistorySyncTimer.delete(sessionId);
+      }
+      this.pendingThinkingToolCallIds.delete(sessionId);
       const shouldRememberClosedRunIds = !turn.suppressRecentlyClosedRunIdsOnCleanup;
       const allowRetryReopen = Boolean(
         turn.allowRecentlyClosedRunRetryReopenOnCleanup

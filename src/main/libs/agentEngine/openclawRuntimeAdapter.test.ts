@@ -1776,6 +1776,7 @@ test('continueSession patches a session override before chat.send even when the 
   expect(requests[0].params).toEqual({
     key: 'agent:main:lobsterai:session-1',
     model,
+    reasoningLevel: 'stream',
   });
 });
 
@@ -2016,6 +2017,26 @@ function createReconcileStore(
           ...message,
         };
         session.messages.push(created);
+        return created;
+      },
+      insertMessageBeforeId: (
+        sessionId: string,
+        beforeMessageId: string,
+        message: Record<string, unknown>,
+      ) => {
+        expect(sessionId).toBe(session.id);
+        const created = {
+          id: `msg-${nextId++}`,
+          timestamp: nextId,
+          metadata: {},
+          ...message,
+        };
+        const targetIndex = session.messages.findIndex((entry) => entry.id === beforeMessageId);
+        if (targetIndex < 0) {
+          session.messages.push(created);
+        } else {
+          session.messages.splice(targetIndex, 0, created);
+        }
         return created;
       },
       updateSession: (sessionId: string, patch: Record<string, unknown>, updateOptions?: Record<string, unknown>) => {
@@ -2892,7 +2913,85 @@ test('lifecycle fallback backfills missing tool result for the current turn', as
     && message.metadata?.toolUseId === 'call-read'
   ));
   expect(resultMessage?.content).toBe('gateway log output');
+  const thinkingIndex = session.messages.findIndex((message) => message.metadata?.isThinking === true);
+  const toolUseIndex = session.messages.findIndex((message) => (
+    message.type === 'tool_use' && message.metadata?.toolUseId === 'call-read'
+  ));
+  expect(thinkingIndex).toBeGreaterThan(0);
+  expect(thinkingIndex).toBeLessThan(toolUseIndex);
+  expect(session.messages[thinkingIndex].metadata).toMatchObject({
+    isThinking: true,
+    isStreaming: false,
+    isFinal: true,
+    openclawThinkingAnchorToolCallId: 'call-read',
+    openclawThinkingKey: 'tool:call-read:thinking:0',
+  });
   expect(session.status).toBe('completed');
+});
+
+test('history thinking reconciliation preserves multiple tool-round boundaries idempotently', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'inspect and test', timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'tool_use', content: 'Using tool: read', timestamp: 2, metadata: { toolUseId: 'call-read' } },
+    { id: 'msg-3', type: 'tool_result', content: 'source', timestamp: 3, metadata: { toolUseId: 'call-read' } },
+    { id: 'msg-4', type: 'tool_use', content: 'Using tool: exec', timestamp: 4, metadata: { toolUseId: 'call-exec' } },
+    { id: 'msg-5', type: 'tool_result', content: 'ok', timestamp: 5, metadata: { toolUseId: 'call-exec' } },
+    { id: 'msg-6', type: 'assistant', content: 'Done.', timestamp: 6, metadata: { isFinal: true } },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const turn = createActiveTurn(session.id, sessionKey, 'run-multi-thinking');
+  turn.assistantMessageId = 'msg-6';
+  turn.toolUseMessageIdByToolCallId.set('call-read', 'msg-2');
+  turn.toolUseMessageIdByToolCallId.set('call-exec', 'msg-4');
+  const history = [
+    { role: 'user', content: 'inspect and test' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Inspect the source.' },
+        { type: 'toolCall', id: 'call-read', name: 'read' },
+      ],
+    },
+    { role: 'toolResult', toolCallId: 'call-read', content: 'source' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Run the tests.' },
+        { type: 'toolCall', id: 'call-exec', name: 'exec' },
+      ],
+    },
+    { role: 'toolResult', toolCallId: 'call-exec', content: 'ok' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Summarize the result.' },
+        { type: 'text', text: 'Done.' },
+      ],
+    },
+  ];
+
+  adapter.syncThinkingBlocksFromHistory(session.id, turn, history, { includeUnanchored: true });
+  adapter.syncThinkingBlocksFromHistory(session.id, turn, history, { includeUnanchored: true });
+
+  expect(session.messages.map((message) => message.content)).toEqual([
+    'inspect and test',
+    'Inspect the source.',
+    'Using tool: read',
+    'source',
+    'Run the tests.',
+    'Using tool: exec',
+    'ok',
+    'Summarize the result.',
+    'Done.',
+  ]);
+  const thinkingMessages = session.messages.filter((message) => message.metadata?.isThinking === true);
+  expect(thinkingMessages).toHaveLength(3);
+  expect(thinkingMessages.map((message) => message.metadata?.openclawThinkingKey)).toEqual([
+    'tool:call-read:thinking:0',
+    'tool:call-exec:thinking:0',
+    expect.stringMatching(/^final:thinking:/),
+  ]);
 });
 
 test('lifecycle fallback waits when history sync returns a short assistant segment after large tool results', async () => {
@@ -3730,6 +3829,81 @@ test('chat final reuses identical finalized thinking from the current turn', asy
     ))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('thinking stream is finalized before its tool and reconciled without duplication', async () => {
+  vi.useFakeTimers();
+  try {
+    const thinkingText = 'Inspect the repository before editing.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'fix the issue', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const turn = createActiveTurn(session.id, sessionKey, 'run-thinking-stream');
+    adapter.activeTurns.set(session.id, turn);
+    adapter.sessionIdByRunId.set(turn.runId, session.id);
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string) => {
+        if (method !== 'chat.history') return {};
+        return {
+          messages: [
+            { role: 'user', content: 'fix the issue' },
+            {
+              role: 'assistant',
+              content: [
+                { type: 'thinking', thinking: thinkingText },
+                { type: 'toolCall', id: 'call-read', name: 'read' },
+              ],
+            },
+          ],
+        };
+      },
+    };
+
+    adapter.handleAgentEvent({
+      runId: turn.runId,
+      sessionKey,
+      stream: 'thinking',
+      data: { text: thinkingText, delta: thinkingText },
+    }, 1);
+    adapter.handleAgentEvent({
+      runId: turn.runId,
+      sessionKey,
+      stream: 'tool',
+      data: { toolCallId: 'call-read', phase: 'start', name: 'read' },
+    }, 2);
+
+    expect(session.messages.map((message) => message.type)).toEqual([
+      'user',
+      'assistant',
+      'tool_use',
+    ]);
+    expect(session.messages[1].metadata).toMatchObject({
+      isThinking: true,
+      isStreaming: false,
+      isFinal: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(300);
+
+    const thinkingMessages = session.messages.filter((message) => message.metadata?.isThinking === true);
+    expect(thinkingMessages).toHaveLength(1);
+    expect(thinkingMessages[0]).toMatchObject({
+      content: thinkingText,
+      metadata: {
+        isThinking: true,
+        isStreaming: false,
+        isFinal: true,
+        openclawThinkingAnchorToolCallId: 'call-read',
+        openclawThinkingKey: 'tool:call-read:thinking:0',
+      },
+    });
   } finally {
     vi.useRealTimers();
   }
