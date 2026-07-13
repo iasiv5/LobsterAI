@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { AddressInfo } from 'node:net';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
