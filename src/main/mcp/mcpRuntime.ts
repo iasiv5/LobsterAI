@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
-import { SESSION_AGNOSTIC_PERMISSION_SESSION_ID } from '../../shared/cowork/constants';
+import { ASK_USER_QUESTION_TOOL_NAME, SESSION_AGNOSTIC_PERMISSION_SESSION_ID } from '../../shared/cowork/constants';
 import { McpIpcChannel } from '../../shared/mcp/constants';
 import { isComputerUseKitInstalled } from '../computerUse/computerUseKit';
 import { resolveComputerUseMcpServer } from '../computerUse/computerUseMcpServer';
@@ -33,6 +33,10 @@ export interface McpRuntimeDeps {
     restartGatewayIfRunning?: boolean;
     expectedImpact?: OpenClawConfigImpact;
   }) => Promise<{ success: boolean; changed: boolean }>;
+  /** Fired when an AskUserQuestion request is surfaced to the renderer. */
+  onAskUserRequested?: (sessionId: string, request: { requestId: string; toolName: string }) => void;
+  /** Fired when a pending AskUserQuestion request is dismissed upstream. */
+  onAskUserDismissed?: (requestId: string) => void;
 }
 
 export class McpRuntime {
@@ -137,7 +141,7 @@ export class McpRuntime {
             sessionId,
             request: {
               requestId: request.requestId,
-              toolName: 'AskUserQuestion',
+              toolName: ASK_USER_QUESTION_TOOL_NAME,
               toolInput: {
                 questions: request.questions,
                 ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
@@ -147,6 +151,10 @@ export class McpRuntime {
         } catch (error) {
           console.error('[AskUser] failed to send permission request to window:', error);
         }
+      });
+      this.deps.onAskUserRequested?.(sessionId, {
+        requestId: request.requestId,
+        toolName: ASK_USER_QUESTION_TOOL_NAME,
       });
     });
 
@@ -160,6 +168,7 @@ export class McpRuntime {
           // ignore
         }
       });
+      this.deps.onAskUserDismissed?.(requestId);
     });
 
     this.bridgeServer.onMediaGeneration(async (request) => {

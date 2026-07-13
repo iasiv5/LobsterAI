@@ -1,6 +1,7 @@
 import { ExclamationTriangleIcon, MinusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
+import { ASK_USER_QUESTION_TOOL_NAME } from '../../../shared/cowork/constants';
 import { i18nService } from '../../services/i18n';
 import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../types/cowork';
 
@@ -194,7 +195,7 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
   const toolInput = useMemo(() => permission.toolInput ?? {}, [permission.toolInput]);
 
   const questions = useMemo<QuestionItem[]>(() => {
-    if (permission.toolName !== 'AskUserQuestion') return [];
+    if (permission.toolName !== ASK_USER_QUESTION_TOOL_NAME) return [];
     if (!toolInput || typeof toolInput !== 'object') return [];
     const rawQuestions = (toolInput as Record<string, unknown>).questions;
     if (!Array.isArray(rawQuestions)) return [];
@@ -312,7 +313,7 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
       ? detectDangerLevelFromCommand(requestedCommand) !== 'safe'
       : /\b(delete|remove|rm|unlink|rmdir|erase|del)\b/i.test(questionText) || /删除|移除/.test(questionText);
 
-    if (permission.toolName === 'AskUserQuestion' && looksLikeDeleteQuestion) {
+    if (permission.toolName === ASK_USER_QUESTION_TOOL_NAME && looksLikeDeleteQuestion) {
       return { dangerLevel: 'caution' as DangerLevel, dangerReasonText: i18nService.t('dangerReasonFileDelete') };
     }
     if (permission.toolName !== 'Bash') {

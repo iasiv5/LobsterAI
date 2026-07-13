@@ -814,6 +814,9 @@ interface IElectronAPI {
     markSessionViewed: (
       sessionId: string,
     ) => Promise<{ success: boolean; error?: string }>;
+    setActiveSession: (
+      sessionId: string | null,
+    ) => Promise<{ success: boolean; error?: string }>;
     remoteManaged: (
       sessionId: string,
     ) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;
@@ -1210,6 +1213,7 @@ interface IElectronAPI {
       updatedAt: number;
     }>;
     relaunch: () => Promise<void>;
+    openSystemNotificationSettings: () => Promise<{ success: boolean; error?: string }>;
   };
   appUpdate: {
     getState: () => Promise<AppUpdateRuntimeState>;

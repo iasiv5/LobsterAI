@@ -6,6 +6,13 @@
  */
 export const SESSION_AGNOSTIC_PERMISSION_SESSION_ID = '__askuser__';
 
+/**
+ * Tool name carried by AskUserQuestion requests when they are surfaced through
+ * the permission-request channel. Used to classify "waiting for input"
+ * requests apart from regular approval requests.
+ */
+export const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
+
 /** Default page size for session list pagination. */
 export const COWORK_SESSION_PAGE_SIZE = 50;
 
@@ -34,6 +41,7 @@ export const CoworkIpcChannel = {
   SubagentListByAgent: 'cowork:subagent:listByAgent',
   SubagentDelete: 'cowork:subagent:delete',
   MarkSessionViewed: 'cowork:session:markViewed',
+  SetActiveSession: 'cowork:session:setActive',
   ExportSessionDiagnostics: 'cowork:session:exportDiagnostics',
   GetSessionMessageRailIndex: 'cowork:session:getMessageRailIndex',
   OpenSessionFromNotification: 'cowork:session:openFromNotification',

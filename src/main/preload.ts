@@ -405,6 +405,8 @@ contextBridge.exposeInMainWorld('electron', {
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     markSessionViewed: (sessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.MarkSessionViewed, sessionId),
+    setActiveSession: (sessionId: string | null) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SetActiveSession, sessionId),
     notifyOpenSessionFromNotificationReady: () =>
       ipcRenderer.invoke(CoworkIpcChannel.OpenSessionFromNotificationReady),
     remoteManaged: (sessionId: string) =>
@@ -776,6 +778,8 @@ contextBridge.exposeInMainWorld('electron', {
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
     getKeyfromAttribution: () => ipcRenderer.invoke(AppIpcChannel.GetKeyfromAttribution),
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
+    openSystemNotificationSettings: () =>
+      ipcRenderer.invoke(AppIpcChannel.OpenSystemNotificationSettings),
   },
   appUpdate: {
     getState: () => ipcRenderer.invoke(AppUpdateIpc.GetState),

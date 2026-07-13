@@ -229,6 +229,12 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
       this.emit('permissionRequest', sessionId, request);
     });
 
+    runtime.on('permissionResolved', (sessionId, requestId) => {
+      this.requestEngine.delete(requestId);
+      this.requestSession.delete(requestId);
+      this.emit('permissionResolved', sessionId, requestId);
+    });
+
     runtime.on('complete', (sessionId, claudeSessionId) => {
       this.sessionEngine.delete(sessionId);
       this.clearRequestEngineBySession(sessionId);

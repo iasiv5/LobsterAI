@@ -10,7 +10,10 @@ import {
   normalizeBrowserWebAccessConfig,
 } from '../../shared/browserWebAccess/constants';
 import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants';
-import { normalizeNotificationSettings } from '../../shared/notifications/constants';
+import {
+  normalizeNotificationSettings,
+  TaskCompletionNotificationMode,
+} from '../../shared/notifications/constants';
 import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, normalizeFontPreference, ShortcutAction, type ShortcutConfig } from '../config';
@@ -1341,7 +1344,10 @@ const Settings: React.FC<SettingsProps> = ({
   const [useSystemProxy, setUseSystemProxy] = useState(false);
   const [sqliteAutoBackupEnabled, setSqliteAutoBackupEnabled] = useState(false);
   const [usageAnalyticsEnabled, setUsageAnalyticsEnabled] = useState(true);
-  const [taskCompletionNotificationsEnabled, setTaskCompletionNotificationsEnabled] = useState(true);
+  const [taskCompletionNotificationMode, setTaskCompletionNotificationMode] =
+    useState<TaskCompletionNotificationMode>(TaskCompletionNotificationMode.Unfocused);
+  const [permissionNotificationsEnabled, setPermissionNotificationsEnabled] = useState(true);
+  const [questionNotificationsEnabled, setQuestionNotificationsEnabled] = useState(true);
   const [browserWebAccess, setBrowserWebAccess] = useState<BrowserWebAccessConfig>(() => ({
     ...defaultBrowserWebAccessConfig,
     webFetch: { ...defaultBrowserWebAccessConfig.webFetch },
@@ -1899,9 +1905,12 @@ const Settings: React.FC<SettingsProps> = ({
       setUseSystemProxy(config.useSystemProxy ?? false);
       setSqliteAutoBackupEnabled(config.sqliteAutoBackupEnabled === true);
       setUsageAnalyticsEnabled(config.usageAnalyticsEnabled !== false);
-      setTaskCompletionNotificationsEnabled(
-        normalizeNotificationSettings(config.notificationSettings).taskCompletionNotificationsEnabled,
-      );
+      {
+        const notificationSettings = normalizeNotificationSettings(config.notificationSettings);
+        setTaskCompletionNotificationMode(notificationSettings.taskCompletionNotificationMode);
+        setPermissionNotificationsEnabled(notificationSettings.permissionNotificationsEnabled);
+        setQuestionNotificationsEnabled(notificationSettings.questionNotificationsEnabled);
+      }
       setBrowserWebAccess(normalizeBrowserWebAccessConfig(config.browserWebAccess));
       const savedTestMode = config.app?.testMode ?? false;
       setTestMode(savedTestMode);
@@ -3331,9 +3340,9 @@ const Settings: React.FC<SettingsProps> = ({
         dreamingEnabled,
         dreamingFrequency,
       };
-      const previousTaskCompletionNotificationsEnabled = normalizeNotificationSettings(
+      const previousNotificationSettings = normalizeNotificationSettings(
         previousConfig.notificationSettings,
-      ).taskCompletionNotificationsEnabled;
+      );
       const previousThemeId = initialThemeIdRef.current;
       const previousUiFontSize = normalizeFontPreference(
         previousConfig.uiFontSize,
@@ -3362,9 +3371,11 @@ const Settings: React.FC<SettingsProps> = ({
         useSystemProxy,
         sqliteAutoBackupEnabled,
         usageAnalyticsEnabled,
-        notificationSettings: {
-          taskCompletionNotificationsEnabled,
-        },
+        notificationSettings: normalizeNotificationSettings({
+          taskCompletionNotificationMode,
+          permissionNotificationsEnabled,
+          questionNotificationsEnabled,
+        }),
         browserWebAccess: normalizedBrowserWebAccess,
         shortcuts,
         app: {
@@ -3471,11 +3482,25 @@ const Settings: React.FC<SettingsProps> = ({
             previousConfig.sqliteAutoBackupEnabled === true,
           );
         }
-        if (previousTaskCompletionNotificationsEnabled !== taskCompletionNotificationsEnabled) {
+        if (previousNotificationSettings.taskCompletionNotificationMode !== taskCompletionNotificationMode) {
           reportGeneralSettingChanged(
-            'taskCompletionNotificationsEnabled',
-            taskCompletionNotificationsEnabled,
-            previousTaskCompletionNotificationsEnabled,
+            'taskCompletionNotificationMode',
+            taskCompletionNotificationMode,
+            previousNotificationSettings.taskCompletionNotificationMode,
+          );
+        }
+        if (previousNotificationSettings.permissionNotificationsEnabled !== permissionNotificationsEnabled) {
+          reportGeneralSettingChanged(
+            'permissionNotificationsEnabled',
+            permissionNotificationsEnabled,
+            previousNotificationSettings.permissionNotificationsEnabled,
+          );
+        }
+        if (previousNotificationSettings.questionNotificationsEnabled !== questionNotificationsEnabled) {
+          reportGeneralSettingChanged(
+            'questionNotificationsEnabled',
+            questionNotificationsEnabled,
+            previousNotificationSettings.questionNotificationsEnabled,
           );
         }
         if (previousSkipMissedJobs !== skipMissedJobs) {
@@ -4681,14 +4706,73 @@ const Settings: React.FC<SettingsProps> = ({
               }}
             />
 
+            <div>
+              <div className="flex items-center justify-between gap-4">
+                <h4 className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                  {i18nService.t('taskCompletionNotificationMode')}
+                </h4>
+                <div className="w-[140px] shrink-0">
+                  <ThemedSelect
+                    id="task-completion-notification-mode"
+                    value={taskCompletionNotificationMode}
+                    onChange={(value) => {
+                      setTaskCompletionNotificationMode(value as TaskCompletionNotificationMode);
+                    }}
+                    options={[
+                      {
+                        value: TaskCompletionNotificationMode.Always,
+                        label: i18nService.t('taskCompletionNotificationModeAlways'),
+                      },
+                      {
+                        value: TaskCompletionNotificationMode.Unfocused,
+                        label: i18nService.t('taskCompletionNotificationModeUnfocused'),
+                      },
+                      {
+                        value: TaskCompletionNotificationMode.Off,
+                        label: i18nService.t('taskCompletionNotificationModeOff'),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-secondary">
+                {i18nService.t('taskCompletionNotificationModeDescription')}
+              </p>
+            </div>
+
             <SettingsToggleRow
-              title={i18nService.t('taskCompletionNotifications')}
-              description={i18nService.t('taskCompletionNotificationsDescription')}
-              checked={taskCompletionNotificationsEnabled}
+              title={i18nService.t('permissionNotifications')}
+              description={i18nService.t('permissionNotificationsDescription')}
+              checked={permissionNotificationsEnabled}
               onToggle={() => {
-                setTaskCompletionNotificationsEnabled((prev) => !prev);
+                setPermissionNotificationsEnabled((prev) => !prev);
               }}
             />
+
+            <SettingsToggleRow
+              title={i18nService.t('questionNotifications')}
+              description={i18nService.t('questionNotificationsDescription')}
+              checked={questionNotificationsEnabled}
+              onToggle={() => {
+                setQuestionNotificationsEnabled((prev) => !prev);
+              }}
+            />
+
+            {(window.electron.platform === 'win32' ||
+              (window.electron.platform === 'darwin' && !import.meta.env.DEV)) && (
+              <p className="text-sm text-secondary">
+                {i18nService.t('notificationSystemPermissionHint')}{' '}
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => {
+                    void window.electron.appInfo.openSystemNotificationSettings?.();
+                  }}
+                >
+                  {i18nService.t('openSystemNotificationSettings')}
+                </button>
+              </p>
+            )}
 
             <SettingsToggleRow
               title={i18nService.t('skipMissedJobs')}

@@ -42,6 +42,7 @@ export interface CoworkRuntimeEvents {
   contextUsageUpdate: (sessionId: string, usage: CoworkContextUsage) => void;
   contextMaintenance: (sessionId: string, active: boolean) => void;
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
+  permissionResolved: (sessionId: string, requestId: string) => void;
   complete: (sessionId: string, claudeSessionId: string | null) => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;

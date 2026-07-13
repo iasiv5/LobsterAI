@@ -99,7 +99,12 @@ import {
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
 import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
-import { normalizeNotificationSettings, type NotificationSettings } from '../shared/notifications/constants';
+import {
+  normalizeNotificationSettings,
+  type NotificationSettings,
+  TaskCompletionNotificationMode,
+  WaitingNotificationKind,
+} from '../shared/notifications/constants';
 import {
   OpenClawEngineIpc,
   OpenClawGatewayRepairErrorCode,
@@ -220,6 +225,7 @@ import {
   performDataMigrationRestoreSync,
   performPendingDataMigrationRestoreSync,
 } from './libs/dataMigration/dataMigrationService';
+import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
@@ -322,7 +328,6 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/systemProxy';
-import { TaskCompletionNotifier } from './libs/taskCompletionNotifier';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import {
@@ -2531,12 +2536,27 @@ const bindCoworkRuntimeForwarder = (): void => {
         console.error('Failed to forward cowork permission request:', error);
       }
     });
+    const { requestId, toolName } = (request ?? {}) as { requestId?: unknown; toolName?: unknown };
+    if (typeof requestId === 'string' && requestId) {
+      getDesktopNotificationManager().handlePermissionRequest(sessionId, {
+        requestId,
+        toolName: typeof toolName === 'string' ? toolName : '',
+      });
+    }
+  });
+
+  runtime.on('permissionResolved', (_sessionId: string, requestId: string) => {
+    getDesktopNotificationManager().handlePermissionResolved(requestId);
+  });
+
+  runtime.on('sessionStopped', (sessionId: string) => {
+    getDesktopNotificationManager().handleSessionStopped(sessionId);
   });
 
   runtime.on('complete', (sessionId: string, claudeSessionId: string | null) => {
     mediaSelectionBySession.delete(sessionId);
     mediaReferencesBySession.delete(sessionId);
-    getTaskCompletionNotifier().handleComplete(sessionId);
+    getDesktopNotificationManager().handleComplete(sessionId);
     const windows = BrowserWindow.getAllWindows();
     windows.forEach(win => {
       if (win.isDestroyed()) return;
@@ -2635,20 +2655,27 @@ const getCoworkTempJanitor = (): CoworkTempJanitor => {
   return coworkTempJanitor;
 };
 
-const getTaskCompletionNotifier = (): TaskCompletionNotifier => {
-  if (!taskCompletionNotifier) {
-    taskCompletionNotifier = new TaskCompletionNotifier({
+const getDesktopNotificationManager = (): DesktopNotificationManager => {
+  if (!desktopNotificationManager) {
+    desktopNotificationManager = new DesktopNotificationManager({
       getWindow: () => mainWindow,
       getNotificationIconPath,
       getNotificationSettings: () =>
         getStore().get<AppConfigSettings>('app_config')?.notificationSettings,
+      getSessionTitle: (sessionId: string) => {
+        try {
+          return getCoworkStore().getSession(sessionId, 0)?.title ?? null;
+        } catch {
+          return null;
+        }
+      },
       focusMainWindow: focusMainWindowForReason,
       openSession: (sessionId: string) => {
         const targetWindow = mainWindow && !mainWindow.isDestroyed()
           ? mainWindow
-          : ensureMainWindowForReason?.('task completion notification') ?? null;
+          : ensureMainWindowForReason?.('desktop notification') ?? null;
         if (!targetWindow || targetWindow.isDestroyed()) {
-          console.warn(`[TaskCompletionNotifier] could not open session ${sessionId} because no main window was available`);
+          console.warn(`[DesktopNotification] could not open session ${sessionId} because no main window was available`);
           return;
         }
 
@@ -2665,7 +2692,7 @@ const getTaskCompletionNotifier = (): TaskCompletionNotifier => {
       },
     });
   }
-  return taskCompletionNotifier;
+  return desktopNotificationManager;
 };
 
 const getSkillManager = () => {
@@ -2680,6 +2707,12 @@ const getMcpRuntime = (): McpRuntime => {
     mcpRuntime = new McpRuntime({
       getStore,
       syncOpenClawConfig,
+      onAskUserRequested: (sessionId, request) => {
+        getDesktopNotificationManager().handlePermissionRequest(sessionId, request);
+      },
+      onAskUserDismissed: (requestId) => {
+        getDesktopNotificationManager().handlePermissionResolved(requestId);
+      },
     });
   }
   return mcpRuntime;
@@ -3025,7 +3058,7 @@ const getNotificationIconPath = (): string | null => {
 // 保存对主窗口的引用
 let mainWindow: BrowserWindow | null = null;
 let dataMigrationRestoreWindow: BrowserWindow | null = null;
-let taskCompletionNotifier: TaskCompletionNotifier | null = null;
+let desktopNotificationManager: DesktopNotificationManager | null = null;
 let ensureMainWindowForReason: ((reason: string) => BrowserWindow | null) | null = null;
 let isOpenSessionFromNotificationReady = false;
 let pendingOpenSessionFromNotificationId: string | null = null;
@@ -3037,7 +3070,7 @@ const flushOpenSessionFromNotification = (): void => {
 
   const sessionId = pendingOpenSessionFromNotificationId;
   pendingOpenSessionFromNotificationId = null;
-  console.log(`[TaskCompletionNotifier] opening session ${sessionId} from notification`);
+  console.log(`[DesktopNotification] opening session ${sessionId} from notification`);
   mainWindow.webContents.send(CoworkIpcChannel.OpenSessionFromNotification, { sessionId });
 };
 
@@ -3584,14 +3617,35 @@ if (!gotTheLock) {
     getStore().set(key, value);
     if (key === 'app_config') {
       const nextAppConfig = value as AppConfigSettings | undefined;
-      const previousNotificationsEnabled = normalizeNotificationSettings(
+      const previousNotificationSettings = normalizeNotificationSettings(
         previousAppConfig?.notificationSettings,
-      ).taskCompletionNotificationsEnabled;
-      const nextNotificationsEnabled = normalizeNotificationSettings(
+      );
+      const nextNotificationSettings = normalizeNotificationSettings(
         nextAppConfig?.notificationSettings,
-      ).taskCompletionNotificationsEnabled;
-      if (previousNotificationsEnabled && !nextNotificationsEnabled) {
-        getTaskCompletionNotifier().clearAll('task completion notifications disabled');
+      );
+      if (
+        previousNotificationSettings.taskCompletionNotificationMode !== TaskCompletionNotificationMode.Off &&
+        nextNotificationSettings.taskCompletionNotificationMode === TaskCompletionNotificationMode.Off
+      ) {
+        getDesktopNotificationManager().clearAllCompletions('task completion notifications disabled');
+      }
+      if (
+        previousNotificationSettings.permissionNotificationsEnabled &&
+        !nextNotificationSettings.permissionNotificationsEnabled
+      ) {
+        getDesktopNotificationManager().closeWaitingNotifications(
+          WaitingNotificationKind.Permission,
+          'permission notifications disabled',
+        );
+      }
+      if (
+        previousNotificationSettings.questionNotificationsEnabled &&
+        !nextNotificationSettings.questionNotificationsEnabled
+      ) {
+        getDesktopNotificationManager().closeWaitingNotifications(
+          WaitingNotificationKind.Question,
+          'question notifications disabled',
+        );
       }
       const browserWebAccessChanged = hasBrowserWebAccessConfigChanged(previousAppConfig, nextAppConfig);
       const systemProxyChanged = getUseSystemProxyFromConfig(previousAppConfig) !==
@@ -3827,6 +3881,29 @@ if (!gotTheLock) {
   ipcMain.handle('app:getVersion', () => app.getVersion());
   ipcMain.handle('app:getSystemLocale', () => app.getLocale());
   ipcMain.handle(AppIpcChannel.GetKeyfromAttribution, () => getKeyfromAttribution(getStore()));
+
+  ipcMain.handle(AppIpcChannel.OpenSystemNotificationSettings, async () => {
+    try {
+      let url: string | null = null;
+      if (process.platform === 'darwin') {
+        // Deep link into this app's notification permission pane. Unpackaged
+        // dev builds have no notification registration to open.
+        if (!app.isPackaged) return { success: false, error: 'Unavailable in development builds' };
+        url = `x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${encodeURIComponent(APP_USER_MODEL_ID)}`;
+      } else if (process.platform === 'win32') {
+        url = 'ms-settings:notifications';
+      }
+      if (!url) return { success: false, error: 'Unsupported platform' };
+      await shell.openExternal(url);
+      return { success: true };
+    } catch (error) {
+      console.warn('[DesktopNotification] failed to open system notification settings:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to open system notification settings',
+      };
+    }
+  });
 
   // ── Auth IPC handlers ──
 
@@ -6740,10 +6817,10 @@ if (!gotTheLock) {
 
   ipcMain.handle(CoworkIpcChannel.MarkSessionViewed, async (_event, sessionId: string) => {
     try {
-      getTaskCompletionNotifier().markSessionViewed(sessionId);
+      getDesktopNotificationManager().markSessionViewed(sessionId);
       return { success: true };
     } catch (error) {
-      console.warn(`[TaskCompletionNotifier] failed to mark session ${sessionId} viewed:`, error);
+      console.warn(`[DesktopNotification] failed to mark session ${sessionId} viewed:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to mark session viewed',
@@ -6751,14 +6828,32 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(CoworkIpcChannel.SetActiveSession, async (event, sessionId: string | null) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
+      return { success: false, error: 'Unknown renderer' };
+    }
+    try {
+      getDesktopNotificationManager().setActiveSession(
+        typeof sessionId === 'string' && sessionId ? sessionId : null,
+      );
+      return { success: true };
+    } catch (error) {
+      console.warn('[DesktopNotification] failed to update active session:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update active session',
+      };
+    }
+  });
+
   ipcMain.handle(CoworkIpcChannel.OpenSessionFromNotificationReady, async event => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
-      console.warn('[TaskCompletionNotifier] ignored notification open readiness from an unknown renderer');
+      console.warn('[DesktopNotification] ignored notification open readiness from an unknown renderer');
       return { success: false, error: 'Unknown renderer' };
     }
 
     isOpenSessionFromNotificationReady = true;
-    console.log('[TaskCompletionNotifier] renderer is ready to open sessions from notifications');
+    console.log('[DesktopNotification] renderer is ready to open sessions from notifications');
     flushOpenSessionFromNotification();
     return { success: true };
   });
@@ -6770,7 +6865,7 @@ if (!gotTheLock) {
       coworkStoreInstance.deleteSession(sessionId);
       mediaSelectionBySession.delete(sessionId);
       mediaReferencesBySession.delete(sessionId);
-      getTaskCompletionNotifier().handleSessionDeleted(sessionId);
+      getDesktopNotificationManager().handleSessionDeleted(sessionId);
       // Remove any pending media tasks for this session
       for (const [taskId, tracker] of pendingMediaTasks) {
         if (tracker.sessionId === sessionId) pendingMediaTasks.delete(taskId);
@@ -6812,7 +6907,7 @@ if (!gotTheLock) {
       coworkStoreInstance.deleteSessions(sessionIds);
       const router = getCoworkEngineRouter();
       for (const sessionId of sessionIds) {
-        getTaskCompletionNotifier().handleSessionDeleted(sessionId);
+        getDesktopNotificationManager().handleSessionDeleted(sessionId);
         try {
           getIMGatewayManager()?.getIMStore()?.deleteSessionMappingByCoworkSessionId(sessionId);
         } catch {
@@ -7307,6 +7402,10 @@ if (!gotTheLock) {
 
         const runtime = getCoworkEngineRouter();
         runtime.respondToPermission(options.requestId, options.result);
+        // Close the desktop notification for this request regardless of which
+        // subsystem handled it (runtime approvals emit permissionResolved on
+        // their own; AskUserQuestion bridge requests do not).
+        getDesktopNotificationManager().handlePermissionResolved(options.requestId);
         return { success: true };
       } catch (error) {
         return {
@@ -10283,7 +10382,7 @@ if (!gotTheLock) {
     });
 
     mainWindow.on('focus', () => {
-      getTaskCompletionNotifier().clearAll('main window focused');
+      getDesktopNotificationManager().handleWindowFocused();
     });
 
     // 处理渲染进程崩溃或退出

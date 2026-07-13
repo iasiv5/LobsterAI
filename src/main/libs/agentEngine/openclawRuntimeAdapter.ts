@@ -3312,6 +3312,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       isSessionActive: (sessionId) => this.isSessionActive(sessionId),
       continueSession: (sessionId, prompt) => this.continueSession(sessionId, prompt),
       emitPermissionRequest: (sessionId, request) => this.emit('permissionRequest', sessionId, request),
+      emitPermissionResolved: (sessionId, requestId) => this.emit('permissionResolved', sessionId, requestId),
       emitError: (sessionId, error) => this.emit('error', sessionId, error),
     });
     this.subagentSessionMaterializer = new SubagentSessionMaterializer({

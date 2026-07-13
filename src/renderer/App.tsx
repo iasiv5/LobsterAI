@@ -927,6 +927,15 @@ const App: React.FC = () => {
     return unsubscribe;
   }, []);
 
+  // Tell the main process which session is currently visible so desktop
+  // notifications for that session can be suppressed and cleared.
+  useEffect(() => {
+    const visibleSessionId = mainView === 'cowork' && !showSettings ? currentSessionId ?? null : null;
+    void window.electron.cowork.setActiveSession?.(visibleSessionId)?.catch?.((error: unknown) => {
+      console.debug('[App] failed to report active session:', error);
+    });
+  }, [mainView, showSettings, currentSessionId]);
+
   useEffect(() => {
     if (!isInitialized) return;
 
