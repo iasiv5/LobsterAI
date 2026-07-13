@@ -16,6 +16,7 @@ import {
   getRecentGatewayLogEntries,
   pruneGatewayLogs,
 } from './gatewayLogRotation';
+import { mergeNoProxyValue } from './noProxyEnv';
 import { getCodexHomeDir } from './openaiCodexAuth';
 import { migrateLegacyCronStorageWithDoctor } from './openclawCronLegacyMigration';
 import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
@@ -589,7 +590,12 @@ export class OpenClawEngineManager extends EventEmitter {
         env.https_proxy = proxyUrl;
         env.HTTP_PROXY = proxyUrl;
         env.HTTPS_PROXY = proxyUrl;
-        console.log(`[OpenClaw] Injected system proxy for gateway via ${targetUrl}:`, proxyUrl);
+        // Loopback must bypass the proxy, otherwise gateway children (e.g. skill
+        // scripts curling 127.0.0.1 bridge servers) fail health checks intermittently.
+        const mergedNoProxy = mergeNoProxyValue(env.no_proxy, env.NO_PROXY);
+        env.no_proxy = mergedNoProxy;
+        env.NO_PROXY = mergedNoProxy;
+        console.log(`[OpenClaw] Injected system proxy for gateway via ${targetUrl}:`, proxyUrl, `(no_proxy=${mergedNoProxy})`);
       }
     }
 
