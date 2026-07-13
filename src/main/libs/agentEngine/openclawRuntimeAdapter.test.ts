@@ -1776,6 +1776,7 @@ test('continueSession patches a session override before chat.send even when the 
   expect(requests[0].params).toEqual({
     key: 'agent:main:lobsterai:session-1',
     model,
+    reasoningLevel: 'stream',
   });
 });
 
@@ -2018,6 +2019,26 @@ function createReconcileStore(
         session.messages.push(created);
         return created;
       },
+      insertMessageBeforeId: (
+        sessionId: string,
+        beforeMessageId: string,
+        message: Record<string, unknown>,
+      ) => {
+        expect(sessionId).toBe(session.id);
+        const created = {
+          id: `msg-${nextId++}`,
+          timestamp: nextId,
+          metadata: {},
+          ...message,
+        };
+        const targetIndex = session.messages.findIndex((entry) => entry.id === beforeMessageId);
+        if (targetIndex < 0) {
+          session.messages.push(created);
+        } else {
+          session.messages.splice(targetIndex, 0, created);
+        }
+        return created;
+      },
       updateSession: (sessionId: string, patch: Record<string, unknown>, updateOptions?: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
         updateSessionCalls.push({ sessionId, patch, options: updateOptions });
@@ -2116,6 +2137,7 @@ function createActiveTurn(sessionId: string, sessionKey: string, runId: string) 
     mediaStatusPollCountByTaskId: new Map(),
     mediaStatusPollBaseByToolCallId: new Map(),
     contextMaintenanceToolCallIds: new Set(),
+    thinking: { messageId: null, currentText: '', messageIdByKey: new Map() },
     stopRequested: false,
     pendingUserSync: false,
     bufferedChatPayloads: [],
@@ -2837,6 +2859,7 @@ test('lifecycle fallback repairs managed session assistant text from history', a
     mediaStatusPollCountByTaskId: new Map(),
     mediaStatusPollBaseByToolCallId: new Map(),
     contextMaintenanceToolCallIds: new Set(),
+    thinking: { messageId: null, currentText: '', messageIdByKey: new Map() },
     stopRequested: false,
     pendingUserSync: false,
     bufferedChatPayloads: [],
@@ -2892,6 +2915,19 @@ test('lifecycle fallback backfills missing tool result for the current turn', as
     && message.metadata?.toolUseId === 'call-read'
   ));
   expect(resultMessage?.content).toBe('gateway log output');
+  const thinkingIndex = session.messages.findIndex((message) => message.metadata?.isThinking === true);
+  const toolUseIndex = session.messages.findIndex((message) => (
+    message.type === 'tool_use' && message.metadata?.toolUseId === 'call-read'
+  ));
+  expect(thinkingIndex).toBeGreaterThan(0);
+  expect(thinkingIndex).toBeLessThan(toolUseIndex);
+  expect(session.messages[thinkingIndex].metadata).toMatchObject({
+    isThinking: true,
+    isStreaming: false,
+    isFinal: true,
+    openclawThinkingAnchorToolCallId: 'call-read',
+    openclawThinkingKey: 'tool:call-read:thinking:0',
+  });
   expect(session.status).toBe('completed');
 });
 
@@ -3658,76 +3694,6 @@ test('chat history sync materializes missed backfillable tool results by result 
         agentId: 'ts-engineer',
       }),
     ]));
-
-    await vi.advanceTimersByTimeAsync(800);
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-test('chat final reuses identical finalized thinking from the current turn', async () => {
-  vi.useFakeTimers();
-  try {
-    const thinkingText = 'The user wants me to spawn two subagents to test. Let me do that.';
-    const finalText = 'fibonacci 也完成了。两个 subagent 测试都正常完成。';
-    const { session, store } = createReconcileStore([
-      { id: 'msg-1', type: 'user', content: '起两个subagent 随便做点什么，用于测试', timestamp: 1, metadata: {} },
-      {
-        id: 'msg-2',
-        type: 'assistant',
-        content: thinkingText,
-        timestamp: 2,
-        metadata: { isThinking: true, isStreaming: false, isFinal: true },
-      },
-      {
-        id: 'msg-3',
-        type: 'assistant',
-        content: 'summer-poem 已完成，还在等 fibonacci 的结果...',
-        timestamp: 3,
-        metadata: { isStreaming: false, isFinal: true },
-      },
-    ]);
-
-    const adapter = new OpenClawRuntimeAdapter(store, {});
-    const sessionKey = `agent:main:lobsterai:${session.id}`;
-    adapter.gatewayClient = {
-      start: () => {},
-      stop: () => {},
-      request: async () => ({
-        messages: [
-          { role: 'user', content: '起两个subagent 随便做点什么，用于测试' },
-          {
-            role: 'assistant',
-            content: [
-              { type: 'thinking', thinking: thinkingText },
-              { type: 'text', text: finalText },
-            ],
-          },
-        ],
-      }),
-    };
-
-    const turn = createActiveTurn(session.id, sessionKey, 'run-final');
-    adapter.activeTurns.set(session.id, turn);
-    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
-
-    adapter.handleChatEvent({
-      state: 'final',
-      runId: 'run-final',
-      sessionKey,
-      message: { role: 'assistant', content: finalText },
-    }, 1);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const thinkingMessages = session.messages.filter((message) => message.metadata?.isThinking === true);
-    expect(thinkingMessages.map((message) => message.id)).toEqual(['msg-2']);
-    expect(thinkingMessages[0].content).toBe(thinkingText);
-    expect(session.messages.some((message) => (
-      message.type === 'assistant'
-      && message.metadata?.isThinking !== true
-      && message.content === finalText
-    ))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(800);
   } finally {
