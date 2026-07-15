@@ -37,6 +37,19 @@ const PingDot: React.FC<{ dotClassName: string }> = ({ dotClassName }) => (
   </span>
 );
 
+const logCollapsePreferenceFailure = (action: string, error: unknown): void => {
+  console.warn(`[AppUpdateCard] failed to ${action}:`, error);
+  try {
+    window.electron?.log?.fromRenderer?.(
+      'warn',
+      'AppUpdateCard',
+      `failed to ${action}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  } catch {
+    // Best-effort diagnostic only.
+  }
+};
+
 const AppUpdateCard: React.FC<AppUpdateCardProps> = ({
   updateState,
   onUpdate,
@@ -51,9 +64,14 @@ const AppUpdateCard: React.FC<AppUpdateCardProps> = ({
 
   useEffect(() => {
     let isCurrent = true;
-    void readUpdateCardCollapsedVersion().then((version) => {
-      if (isCurrent) setCollapsedVersion(version);
-    });
+    void readUpdateCardCollapsedVersion()
+      .then((version) => {
+        if (isCurrent) setCollapsedVersion(version);
+      })
+      .catch((error) => {
+        if (isCurrent) setCollapsedVersion(null);
+        logCollapsePreferenceFailure('read collapsed update version', error);
+      });
     return () => {
       isCurrent = false;
     };
@@ -92,12 +110,16 @@ const AppUpdateCard: React.FC<AppUpdateCardProps> = ({
 
   const handleExpand = () => {
     setCollapsedVersion(null);
-    void clearUpdateCardCollapsedVersion();
+    void clearUpdateCardCollapsedVersion().catch((error) => {
+      logCollapsePreferenceFailure('clear collapsed update version', error);
+    });
   };
 
   const handleCollapse = () => {
     setCollapsedVersion(latestVersion);
-    void saveUpdateCardCollapsedVersion(latestVersion);
+    void saveUpdateCardCollapsedVersion(latestVersion).catch((error) => {
+      logCollapsePreferenceFailure('save collapsed update version', error);
+    });
   };
 
   const handlePrimary = async () => {
