@@ -2347,10 +2347,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     taskCompletionNotificationModeAlways: '总是',
     taskCompletionNotificationModeUnfocused: '应用未聚焦时',
     taskCompletionNotificationModeOff: '从不',
-    permissionNotifications: '等待授权时通知',
-    permissionNotificationsDescription: '会话等待你确认操作时显示系统提醒',
-    questionNotifications: '等待输入时通知',
-    questionNotificationsDescription: '会话等待你回答问题时显示系统提醒',
+    permissionNotifications: '需要你处理时通知',
+    permissionNotificationsDescription: '会话需要你确认操作或回答问题时显示系统提醒',
     notificationSystemPermissionHint: '若未收到通知，请在系统设置中允许 LobsterAI 发送通知。',
     openSystemNotificationSettings: '打开系统设置',
     preventSleep: '防止休眠',
@@ -2359,6 +2357,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skipMissedJobsDescription: '启动时跳过离线期间未触发的定时任务，不补充执行（保存后生效）',
     usageAnalyticsEnabled: '帮助改进 LobsterAI',
     usageAnalyticsEnabledDescription: '允许发送基础使用统计，帮助我们改进功能体验。不会上传对话内容、文件内容或 API Key。',
+    // 通用设置分组标题
+    settingsGroupBasics: '常规',
+    settingsGroupNotifications: '通知',
+    settingsGroupDataPrivacy: '数据与隐私',
     coworkTempUsageTitle: '会话临时文件',
     coworkTempUsageLoading: '正在统计占用空间…',
     coworkTempUsageLabel: '当前占用 {size}，可清理 {cleanable}（其余为 90 天内的附件原图等受保护内容）',
@@ -5260,14 +5262,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     taskCompletionNotificationMode: 'Task Completion Notifications',
     taskCompletionNotificationModeDescription: 'Set when to show a system alert after a task completes',
     taskCompletionNotificationModeAlways: 'Always',
-    taskCompletionNotificationModeUnfocused: 'When app is unfocused',
+    taskCompletionNotificationModeUnfocused: 'When unfocused',
     taskCompletionNotificationModeOff: 'Never',
-    permissionNotifications: 'Approval Notifications',
+    permissionNotifications: 'Attention Notifications',
     permissionNotificationsDescription:
-      'Show a system alert when a session is waiting for you to approve an action',
-    questionNotifications: 'Question Notifications',
-    questionNotificationsDescription:
-      'Show a system alert when a session is waiting for you to answer a question',
+      'Show a system alert when a session needs you to approve an action or answer a question',
     notificationSystemPermissionHint:
       'If you are not receiving notifications, allow LobsterAI to send notifications in the system settings.',
     openSystemNotificationSettings: 'Open System Settings',
@@ -5279,6 +5278,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     usageAnalyticsEnabled: 'Help improve LobsterAI',
     usageAnalyticsEnabledDescription:
       'Allow basic usage analytics to help improve the product. Chat content, file content, and API keys are not uploaded.',
+    // General settings group titles
+    settingsGroupBasics: 'General',
+    settingsGroupNotifications: 'Notifications',
+    settingsGroupDataPrivacy: 'Data & Privacy',
     coworkTempUsageTitle: 'Session temp files',
     coworkTempUsageLoading: 'Measuring usage…',
     coworkTempUsageLabel:

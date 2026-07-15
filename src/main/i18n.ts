@@ -30,7 +30,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     permissionNotificationBody: 'Agent 请求执行 {toolName}，等待你的确认',
     permissionNotificationBodyGeneric: 'Agent 请求执行操作，等待你的确认',
     questionNotificationTitle: '等待你的回答',
-    questionNotificationBody: '等待你回答问题后继续',
+    questionNotificationBody: '需要你回答问题后才能继续',
 
     // Session titles (created by ChannelSessionSync)
     coworkDefaultSessionTitle: '新对话',

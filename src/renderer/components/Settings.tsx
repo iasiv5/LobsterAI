@@ -1277,10 +1277,33 @@ const SettingsToggleRow: React.FC<{
         onClick={onToggle}
       />
     </div>
-    <p className="mt-3 text-sm text-secondary">
+    <p className="mt-1 text-sm text-secondary">
       {description}
     </p>
   </div>
+);
+
+// Groups related settings rows into a labeled card (label above a bordered,
+// divider-separated card). Used to categorize the General settings tab.
+const SettingsGroup: React.FC<{
+  title: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}> = ({ title, children, footer }) => (
+  <section className="space-y-2.5">
+    <h4 className="px-1 text-xs font-semibold uppercase tracking-wider text-secondary">
+      {title}
+    </h4>
+    <div className="divide-y divide-border rounded-xl border border-border bg-surface">
+      {children}
+    </div>
+    {footer}
+  </section>
+);
+
+// A single padded row inside a SettingsGroup card.
+const SettingsRow: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="px-4 py-3.5">{children}</div>
 );
 
 const SettingsNumberInputRow: React.FC<{
@@ -4604,232 +4627,256 @@ const Settings: React.FC<SettingsProps> = ({
       case 'general':
         return (
           <div className="space-y-8">
-            {/* Language Section */}
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium text-foreground">
-                {i18nService.t('language')}
-              </h4>
-              <div className="w-[140px] shrink-0">
-                <ThemedSelect
-                  id="language"
-                  value={language}
-                  onChange={(value) => {
-                    const nextLanguage = value as LanguageType;
-                    setLanguage(nextLanguage);
-                    i18nService.setLanguage(nextLanguage, { persist: false });
-                  }}
-                  options={[
-                    { value: 'zh', label: i18nService.t('chinese') },
-                    { value: 'en', label: i18nService.t('english') }
-                  ]}
-                />
-              </div>
-            </div>
-
-            <SettingsToggleRow
-              title={i18nService.t('autoLaunch')}
-              description={i18nService.t('autoLaunchDescription')}
-              checked={autoLaunch}
-              disabled={isUpdatingAutoLaunch}
-              onToggle={async () => {
-                if (isUpdatingAutoLaunch) return;
-                const next = !autoLaunch;
-                setIsUpdatingAutoLaunch(true);
-                try {
-                  console.log(`[Renderer][Settings] updating auto-launch setting: requested=${next}`);
-                  const result = await window.electron.autoLaunch.set(next);
-                  console.log(
-                    `[Renderer][Settings] auto-launch update result: success=${result.success}, enabled=${result.enabled ?? 'unknown'}, error=${result.error ?? 'none'}`,
-                  );
-                  if (result.success) {
-                    const previous = autoLaunch;
-                    const actualEnabled = result.enabled ?? next;
-                    setAutoLaunchState(actualEnabled);
-                    reportGeneralSettingChanged('autoLaunch', actualEnabled, previous);
-                  } else {
-                    if (typeof result.enabled === 'boolean') {
-                      setAutoLaunchState(result.enabled);
-                    }
-                    setError(getAutoLaunchErrorMessage(result.errorCode));
-                  }
-                } catch (err) {
-                  console.error('Failed to set auto-launch:', err);
-                  setError(i18nService.t('autoLaunchUpdateFailed'));
-                } finally {
-                  setIsUpdatingAutoLaunch(false);
-                }
-              }}
-            />
-
-            <SettingsToggleRow
-              title={i18nService.t('preventSleep')}
-              description={i18nService.t('preventSleepDescription')}
-              checked={preventSleep}
-              disabled={isUpdatingPreventSleep}
-              onToggle={async () => {
-                if (isUpdatingPreventSleep) return;
-                const next = !preventSleep;
-                setIsUpdatingPreventSleep(true);
-                try {
-                  const result = await window.electron.preventSleep.set(next);
-                  if (result.success) {
-                    const previous = preventSleep;
-                    setPreventSleepState(next);
-                    reportGeneralSettingChanged('preventSleep', next, previous);
-                  } else {
-                    setError(result.error || 'Failed to update prevent-sleep setting');
-                  }
-                } catch (err) {
-                  console.error('Failed to set prevent-sleep:', err);
-                  setError('Failed to update prevent-sleep setting');
-                } finally {
-                  setIsUpdatingPreventSleep(false);
-                }
-              }}
-            />
-
-            <SettingsToggleRow
-              title={i18nService.t('useSystemProxy')}
-              description={i18nService.t('useSystemProxyDescription')}
-              checked={useSystemProxy}
-              onToggle={() => {
-                setUseSystemProxy((prev) => !prev);
-              }}
-            />
-
-            <SettingsToggleRow
-              title={i18nService.t('sqliteAutoBackupEnabled')}
-              description={i18nService.t('sqliteAutoBackupEnabledDescription')}
-              checked={sqliteAutoBackupEnabled}
-              onToggle={() => {
-                setSqliteAutoBackupEnabled((prev) => !prev);
-              }}
-            />
-
-            <div>
-              <div className="flex items-center justify-between gap-4">
-                <h4 className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                  {i18nService.t('taskCompletionNotificationMode')}
-                </h4>
-                <div className="w-[140px] shrink-0">
-                  <ThemedSelect
-                    id="task-completion-notification-mode"
-                    value={taskCompletionNotificationMode}
-                    onChange={(value) => {
-                      setTaskCompletionNotificationMode(value as TaskCompletionNotificationMode);
-                    }}
-                    options={[
-                      {
-                        value: TaskCompletionNotificationMode.Always,
-                        label: i18nService.t('taskCompletionNotificationModeAlways'),
-                      },
-                      {
-                        value: TaskCompletionNotificationMode.Unfocused,
-                        label: i18nService.t('taskCompletionNotificationModeUnfocused'),
-                      },
-                      {
-                        value: TaskCompletionNotificationMode.Off,
-                        label: i18nService.t('taskCompletionNotificationModeOff'),
-                      },
-                    ]}
-                  />
-                </div>
-              </div>
-              <p className="mt-3 text-sm text-secondary">
-                {i18nService.t('taskCompletionNotificationModeDescription')}
-              </p>
-            </div>
-
-            <SettingsToggleRow
-              title={i18nService.t('permissionNotifications')}
-              description={i18nService.t('permissionNotificationsDescription')}
-              checked={permissionNotificationsEnabled}
-              onToggle={() => {
-                setPermissionNotificationsEnabled((prev) => !prev);
-              }}
-            />
-
-            <SettingsToggleRow
-              title={i18nService.t('questionNotifications')}
-              description={i18nService.t('questionNotificationsDescription')}
-              checked={questionNotificationsEnabled}
-              onToggle={() => {
-                setQuestionNotificationsEnabled((prev) => !prev);
-              }}
-            />
-
-            {(window.electron.platform === 'win32' ||
-              (window.electron.platform === 'darwin' && !import.meta.env.DEV)) && (
-              <p className="text-sm text-secondary">
-                {i18nService.t('notificationSystemPermissionHint')}{' '}
-                <button
-                  type="button"
-                  className="text-primary hover:underline"
-                  onClick={() => {
-                    void window.electron.appInfo.openSystemNotificationSettings?.();
-                  }}
-                >
-                  {i18nService.t('openSystemNotificationSettings')}
-                </button>
-              </p>
-            )}
-
-            <SettingsToggleRow
-              title={i18nService.t('skipMissedJobs')}
-              description={i18nService.t('skipMissedJobsDescription')}
-              checked={skipMissedJobs}
-              onToggle={() => {
-                setSkipMissedJobs((prev) => !prev);
-              }}
-            />
-
-            <SettingsToggleRow
-              title={i18nService.t('usageAnalyticsEnabled')}
-              description={i18nService.t('usageAnalyticsEnabledDescription')}
-              checked={usageAnalyticsEnabled}
-              onToggle={() => {
-                setUsageAnalyticsEnabled((prev) => !prev);
-              }}
-            />
-
-            <div>
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0 flex-1">
+            {/* Group: General basics */}
+            <SettingsGroup title={i18nService.t('settingsGroupBasics')}>
+              <SettingsRow>
+                <div className="flex items-center justify-between gap-4">
                   <h4 className="text-sm font-medium text-foreground">
-                    {i18nService.t('coworkTempUsageTitle')}
+                    {i18nService.t('language')}
                   </h4>
-                  <p className="mt-1 text-sm text-secondary">
-                    {tempStorageUsageBytes === null
-                      ? i18nService.t('coworkTempUsageLoading')
-                      : i18nService.t('coworkTempUsageLabel')
-                          .replace('{size}', formatBackupSize(tempStorageUsageBytes) || '0 B')
-                          .replace(
-                            '{cleanable}',
-                            formatBackupSize(tempStorageCleanableBytes ?? 0) || '0 B',
-                          )}
+                  <div className="w-[140px] shrink-0">
+                    <ThemedSelect
+                      id="language"
+                      value={language}
+                      onChange={(value) => {
+                        const nextLanguage = value as LanguageType;
+                        setLanguage(nextLanguage);
+                        i18nService.setLanguage(nextLanguage, { persist: false });
+                      }}
+                      options={[
+                        { value: 'zh', label: i18nService.t('chinese') },
+                        { value: 'en', label: i18nService.t('english') }
+                      ]}
+                    />
+                  </div>
+                </div>
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('autoLaunch')}
+                  description={i18nService.t('autoLaunchDescription')}
+                  checked={autoLaunch}
+                  disabled={isUpdatingAutoLaunch}
+                  onToggle={async () => {
+                    if (isUpdatingAutoLaunch) return;
+                    const next = !autoLaunch;
+                    setIsUpdatingAutoLaunch(true);
+                    try {
+                      console.log(`[Renderer][Settings] updating auto-launch setting: requested=${next}`);
+                      const result = await window.electron.autoLaunch.set(next);
+                      console.log(
+                        `[Renderer][Settings] auto-launch update result: success=${result.success}, enabled=${result.enabled ?? 'unknown'}, error=${result.error ?? 'none'}`,
+                      );
+                      if (result.success) {
+                        const previous = autoLaunch;
+                        const actualEnabled = result.enabled ?? next;
+                        setAutoLaunchState(actualEnabled);
+                        reportGeneralSettingChanged('autoLaunch', actualEnabled, previous);
+                      } else {
+                        if (typeof result.enabled === 'boolean') {
+                          setAutoLaunchState(result.enabled);
+                        }
+                        setError(getAutoLaunchErrorMessage(result.errorCode));
+                      }
+                    } catch (err) {
+                      console.error('Failed to set auto-launch:', err);
+                      setError(i18nService.t('autoLaunchUpdateFailed'));
+                    } finally {
+                      setIsUpdatingAutoLaunch(false);
+                    }
+                  }}
+                />
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('preventSleep')}
+                  description={i18nService.t('preventSleepDescription')}
+                  checked={preventSleep}
+                  disabled={isUpdatingPreventSleep}
+                  onToggle={async () => {
+                    if (isUpdatingPreventSleep) return;
+                    const next = !preventSleep;
+                    setIsUpdatingPreventSleep(true);
+                    try {
+                      const result = await window.electron.preventSleep.set(next);
+                      if (result.success) {
+                        const previous = preventSleep;
+                        setPreventSleepState(next);
+                        reportGeneralSettingChanged('preventSleep', next, previous);
+                      } else {
+                        setError(result.error || 'Failed to update prevent-sleep setting');
+                      }
+                    } catch (err) {
+                      console.error('Failed to set prevent-sleep:', err);
+                      setError('Failed to update prevent-sleep setting');
+                    } finally {
+                      setIsUpdatingPreventSleep(false);
+                    }
+                  }}
+                />
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('useSystemProxy')}
+                  description={i18nService.t('useSystemProxyDescription')}
+                  checked={useSystemProxy}
+                  onToggle={() => {
+                    setUseSystemProxy((prev) => !prev);
+                  }}
+                />
+              </SettingsRow>
+            </SettingsGroup>
+
+            {/* Group: Notifications */}
+            <SettingsGroup
+              title={i18nService.t('settingsGroupNotifications')}
+              footer={
+                (window.electron.platform === 'win32' ||
+                  (window.electron.platform === 'darwin' && !import.meta.env.DEV)) && (
+                  <p className="px-1 text-xs text-secondary">
+                    {i18nService.t('notificationSystemPermissionHint')}{' '}
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => {
+                        void window.electron.appInfo.openSystemNotificationSettings?.();
+                      }}
+                    >
+                      {i18nService.t('openSystemNotificationSettings')}
+                    </button>
                   </p>
+                )
+              }
+            >
+              <SettingsRow>
+                <div>
+                  <div className="flex items-center justify-between gap-4">
+                    <h4 className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                      {i18nService.t('taskCompletionNotificationMode')}
+                    </h4>
+                    <div className="w-[180px] shrink-0">
+                      <ThemedSelect
+                        id="task-completion-notification-mode"
+                        value={taskCompletionNotificationMode}
+                        onChange={(value) => {
+                          setTaskCompletionNotificationMode(value as TaskCompletionNotificationMode);
+                        }}
+                        options={[
+                          {
+                            value: TaskCompletionNotificationMode.Always,
+                            label: i18nService.t('taskCompletionNotificationModeAlways'),
+                          },
+                          {
+                            value: TaskCompletionNotificationMode.Unfocused,
+                            label: i18nService.t('taskCompletionNotificationModeUnfocused'),
+                          },
+                          {
+                            value: TaskCompletionNotificationMode.Off,
+                            label: i18nService.t('taskCompletionNotificationModeOff'),
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
                   <p className="mt-1 text-sm text-secondary">
-                    {i18nService.t('coworkTempUsageManualNote')}
+                    {i18nService.t('taskCompletionNotificationModeDescription')}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleOpenTempCleanConfirm();
-                  }}
-                  disabled={isLoadingTempCleanPreview || isCleaningTempStorage || tempStorageCleanableBytes === 0}
-                  className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isLoadingTempCleanPreview
-                    ? i18nService.t('coworkTempPreviewLoading')
-                    : i18nService.t('coworkTempCleanNow')}
-                </button>
-              </div>
-              {tempStorageCleanResult && (
-                <p className="mt-2 text-sm text-secondary">{tempStorageCleanResult}</p>
-              )}
-            </div>
+              </SettingsRow>
 
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('permissionNotifications')}
+                  description={i18nService.t('permissionNotificationsDescription')}
+                  checked={permissionNotificationsEnabled || questionNotificationsEnabled}
+                  onToggle={() => {
+                    const nextEnabled = !(permissionNotificationsEnabled || questionNotificationsEnabled);
+                    setPermissionNotificationsEnabled(nextEnabled);
+                    setQuestionNotificationsEnabled(nextEnabled);
+                  }}
+                />
+              </SettingsRow>
+            </SettingsGroup>
+
+            {/* Group: Scheduled tasks */}
+            <SettingsGroup title={i18nService.t('scheduledTasks')}>
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('skipMissedJobs')}
+                  description={i18nService.t('skipMissedJobsDescription')}
+                  checked={skipMissedJobs}
+                  onToggle={() => {
+                    setSkipMissedJobs((prev) => !prev);
+                  }}
+                />
+              </SettingsRow>
+            </SettingsGroup>
+
+            {/* Group: Data & privacy */}
+            <SettingsGroup title={i18nService.t('settingsGroupDataPrivacy')}>
+              <SettingsRow>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-sm font-medium text-foreground">
+                      {i18nService.t('coworkTempUsageTitle')}
+                    </h4>
+                    <p className="mt-1 text-sm text-secondary">
+                      {tempStorageUsageBytes === null
+                        ? i18nService.t('coworkTempUsageLoading')
+                        : i18nService.t('coworkTempUsageLabel')
+                            .replace('{size}', formatBackupSize(tempStorageUsageBytes) || '0 B')
+                            .replace(
+                              '{cleanable}',
+                              formatBackupSize(tempStorageCleanableBytes ?? 0) || '0 B',
+                            )}
+                    </p>
+                    <p className="mt-1 text-sm text-secondary">
+                      {i18nService.t('coworkTempUsageManualNote')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleOpenTempCleanConfirm();
+                    }}
+                    disabled={isLoadingTempCleanPreview || isCleaningTempStorage || tempStorageCleanableBytes === 0}
+                    className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isLoadingTempCleanPreview
+                      ? i18nService.t('coworkTempPreviewLoading')
+                      : i18nService.t('coworkTempCleanNow')}
+                  </button>
+                </div>
+                {tempStorageCleanResult && (
+                  <p className="mt-2 text-sm text-secondary">{tempStorageCleanResult}</p>
+                )}
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('sqliteAutoBackupEnabled')}
+                  description={i18nService.t('sqliteAutoBackupEnabledDescription')}
+                  checked={sqliteAutoBackupEnabled}
+                  onToggle={() => {
+                    setSqliteAutoBackupEnabled((prev) => !prev);
+                  }}
+                />
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
+                  title={i18nService.t('usageAnalyticsEnabled')}
+                  description={i18nService.t('usageAnalyticsEnabledDescription')}
+                  checked={usageAnalyticsEnabled}
+                  onToggle={() => {
+                    setUsageAnalyticsEnabled((prev) => !prev);
+                  }}
+                />
+              </SettingsRow>
+            </SettingsGroup>
           </div>
         );
 
