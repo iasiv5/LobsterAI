@@ -27,6 +27,11 @@ import { SkillsView } from './components/skills';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateCard from './components/update/AppUpdateCard';
+import AppUpdateInteractionOverlay from './components/update/AppUpdateInteractionOverlay';
+import {
+  isAppUpdateInteractionBlockingStatus,
+  shouldBlockAppInteractionForUpdate,
+} from './components/update/appUpdateInteractionState';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
 import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
@@ -88,6 +93,15 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
 const INIT_STEP_TIMEOUT_MS_WINDOWS = 24_000;
 const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 
+const logAppUpdateRendererLifecycle = (message: string): void => {
+  console.debug(`[AppUpdate] ${message}`);
+  try {
+    window.electron?.log?.fromRenderer?.('debug', 'AppUpdate', message);
+  } catch {
+    // Best-effort diagnostic only.
+  }
+};
+
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
@@ -109,6 +123,7 @@ const App: React.FC = () => {
   });
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdateCardExpanded, setIsUpdateCardExpanded] = useState(false);
+  const [isUserInitiatedUpdateFlowActive, setIsUserInitiatedUpdateFlowActive] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
@@ -120,6 +135,7 @@ const App: React.FC = () => {
   const hasReportedAppStartedRef = useRef(false);
   const previousUpdateStatusRef = useRef<AppUpdateRuntimeState['status']>(AppUpdateStatus.Idle);
   const shouldInstallReadyUpdateRef = useRef(false);
+  const isUserInitiatedUpdateFlowActiveRef = useRef(false);
   const dispatch = useDispatch();
   const defaultSelectedModel = useSelector((state: RootState) => state.model.defaultSelectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
@@ -132,6 +148,10 @@ const App: React.FC = () => {
     ? minimizedPermissionIds.includes(pendingPermission.requestId)
     : false;
   const isPermissionModalOpen = pendingPermission !== null && !isPendingPermissionMinimized;
+  const isUpdateInteractionBlocked = shouldBlockAppInteractionForUpdate(
+    isUserInitiatedUpdateFlowActive,
+    appUpdateState.status,
+  );
 
   const waitWithTimeout = useCallback(
     async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -457,6 +477,22 @@ const App: React.FC = () => {
     }, 2200);
   }, []);
 
+  const startUserInitiatedUpdateFlow = useCallback((reason: string) => {
+    if (!isUserInitiatedUpdateFlowActiveRef.current) {
+      logAppUpdateRendererLifecycle(`interaction lock started reason=${reason}`);
+    }
+    isUserInitiatedUpdateFlowActiveRef.current = true;
+    setIsUserInitiatedUpdateFlowActive(true);
+  }, []);
+
+  const stopUserInitiatedUpdateFlow = useCallback((reason: string) => {
+    if (!isUserInitiatedUpdateFlowActiveRef.current) return;
+
+    isUserInitiatedUpdateFlowActiveRef.current = false;
+    setIsUserInitiatedUpdateFlowActive(false);
+    logAppUpdateRendererLifecycle(`interaction lock released reason=${reason}`);
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
@@ -484,14 +520,29 @@ const App: React.FC = () => {
       previousUpdateStatusRef.current = state.status;
       setAppUpdateState(state);
 
+      if (!isAppUpdateInteractionBlockingStatus(state.status)) {
+        shouldInstallReadyUpdateRef.current = false;
+        stopUserInitiatedUpdateFlow(`state=${state.status}`);
+      }
+
       if (state.status === AppUpdateStatus.Ready && previousStatus !== AppUpdateStatus.Ready) {
         if (shouldInstallReadyUpdateRef.current && state.readyFilePath) {
           shouldInstallReadyUpdateRef.current = false;
-          void window.electron.appUpdate.installReady().then((installResult) => {
-            if (!installResult.success) {
-              showToast(installResult.error || i18nService.t('updateInstallFailed'));
-            }
-          });
+          logAppUpdateRendererLifecycle(
+            `download ready; starting install version=${state.info?.latestVersion ?? 'unknown'}`,
+          );
+          void window.electron.appUpdate.installReady()
+            .then((installResult) => {
+              if (!installResult.success) {
+                stopUserInitiatedUpdateFlow('install-result-failed');
+                showToast(installResult.error || i18nService.t('updateInstallFailed'));
+              }
+            })
+            .catch((error) => {
+              stopUserInitiatedUpdateFlow('install-ipc-failed');
+              console.error('[AppUpdate] failed to install downloaded update:', error);
+              showToast(i18nService.t('updateInstallFailed'));
+            });
         }
       }
     });
@@ -500,7 +551,7 @@ const App: React.FC = () => {
       mounted = false;
       unsubscribe();
     };
-  }, [showToast]);
+  }, [showToast, stopUserInitiatedUpdateFlow]);
 
   const handleShowLogin = useCallback(() => {
     showToast(i18nService.t('featureInDevelopment'));
@@ -542,9 +593,19 @@ const App: React.FC = () => {
 
     if (appUpdateState.readyFilePath) {
       shouldInstallReadyUpdateRef.current = false;
-      const installResult = await window.electron.appUpdate.installReady();
-      if (!installResult.success) {
-        showToast(installResult.error || i18nService.t('updateInstallFailed'));
+      startUserInitiatedUpdateFlow(
+        `install-ready version=${updateInfo.latestVersion}`,
+      );
+      try {
+        const installResult = await window.electron.appUpdate.installReady();
+        if (!installResult.success) {
+          stopUserInitiatedUpdateFlow('install-result-failed');
+          showToast(installResult.error || i18nService.t('updateInstallFailed'));
+        }
+      } catch (error) {
+        stopUserInitiatedUpdateFlow('install-ipc-failed');
+        console.error('[AppUpdate] failed to install ready update:', error);
+        showToast(i18nService.t('updateInstallFailed'));
       }
       return;
     }
@@ -554,9 +615,25 @@ const App: React.FC = () => {
         // The user explicitly asked to update (or retry), so finish the whole
         // flow in one click: install and restart as soon as the download lands.
         shouldInstallReadyUpdateRef.current = true;
-        const retryResult = await window.electron.appUpdate.retryDownload();
-        if (!retryResult.success) {
+        startUserInitiatedUpdateFlow(
+          `download-and-install version=${updateInfo.latestVersion}`,
+        );
+        try {
+          const retryResult = await window.electron.appUpdate.retryDownload();
+          if (
+            !retryResult.success
+            || retryResult.state.status !== AppUpdateStatus.Downloading
+          ) {
+            stopUserInitiatedUpdateFlow(
+              `download-not-started state=${retryResult.state.status}`,
+            );
+            shouldInstallReadyUpdateRef.current = false;
+            showToast(i18nService.t('updateDownloadFailed'));
+          }
+        } catch (error) {
+          stopUserInitiatedUpdateFlow('download-ipc-failed');
           shouldInstallReadyUpdateRef.current = false;
+          console.error('[AppUpdate] failed to start update download:', error);
           showToast(i18nService.t('updateDownloadFailed'));
         }
         return;
@@ -577,12 +654,25 @@ const App: React.FC = () => {
       }
       return;
     }
-  }, [appUpdateState.readyFilePath, appUpdateState.status, showToast, updateInfo]);
+  }, [
+    appUpdateState.readyFilePath,
+    appUpdateState.status,
+    showToast,
+    startUserInitiatedUpdateFlow,
+    stopUserInitiatedUpdateFlow,
+    updateInfo,
+  ]);
 
   const handleCancelDownload = useCallback(async () => {
     shouldInstallReadyUpdateRef.current = false;
-    await window.electron.appUpdate.cancelDownload();
-  }, []);
+    stopUserInitiatedUpdateFlow('download-cancel-requested');
+    try {
+      await window.electron.appUpdate.cancelDownload();
+    } catch (error) {
+      console.error('[AppUpdate] failed to cancel update download:', error);
+      showToast(i18nService.t('updateDownloadFailed'));
+    }
+  }, [showToast, stopUserInitiatedUpdateFlow]);
 
   const handleRetryUpdate = useCallback(async () => {
     if (!updateInfo) return;
@@ -709,7 +799,7 @@ const App: React.FC = () => {
         return;
       }
 
-      if (showUpdateModal || isPermissionModalOpen) return;
+      if (showUpdateModal || isPermissionModalOpen || isUpdateInteractionBlocked) return;
 
       if (matchesAction(ShortcutAction.NewChat)) {
         event.preventDefault();
@@ -859,6 +949,7 @@ const App: React.FC = () => {
     handleShowSettings,
     handleShowSkills,
     handleToggleSidebar,
+    isUpdateInteractionBlocked,
     mainView,
     isPermissionModalOpen,
     showSettings,
@@ -1013,7 +1104,10 @@ const App: React.FC = () => {
     );
   }, [pendingPermission, handlePermissionResponse, handleMinimizePermission, isPendingPermissionMinimized]);
 
-  const isOverlayActive = showSettings || showUpdateModal || isPermissionModalOpen;
+  const isOverlayActive = showSettings
+    || showUpdateModal
+    || isPermissionModalOpen
+    || isUpdateInteractionBlocked;
   // Keep the badge visible while downloading so the collapsed-sidebar layouts
   // still surface progress; only a plain re-check hides nothing new.
   const shouldShowUpdateBadge = updateInfo && appUpdateState.status !== AppUpdateStatus.Checking;
@@ -1026,15 +1120,17 @@ const App: React.FC = () => {
     />
   ) : null;
   const updateCard = updateInfo ? (
-    <AppUpdateCard
-      updateState={appUpdateState}
-      onUpdate={handleConfirmUpdate}
-      onShowDetails={handleOpenUpdateModal}
-      onCancelDownload={handleCancelDownload}
-      onExpandedChange={setIsUpdateCardExpanded}
-    />
+    <div className={isUpdateInteractionBlocked ? 'relative z-50' : undefined}>
+      <AppUpdateCard
+        updateState={appUpdateState}
+        onUpdate={handleConfirmUpdate}
+        onShowDetails={handleOpenUpdateModal}
+        onCancelDownload={handleCancelDownload}
+        onExpandedChange={setIsUpdateCardExpanded}
+      />
+    </div>
   ) : null;
-  const canUseWindowsTopBarActions = isInitialized && !initError;
+  const canUseWindowsTopBarActions = isInitialized && !initError && !isUpdateInteractionBlocked;
   const canUseWindowsCollapsedTopBarActions = canUseWindowsTopBarActions && isSidebarCollapsed;
   const collapsedHeaderUpdateBadge = isSidebarCollapsed && !isWindows ? updateBadge : null;
   const windowsStandaloneTitleBar = isWindows ? (
@@ -1109,7 +1205,10 @@ const App: React.FC = () => {
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
       {windowsStandaloneTitleBar}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div
+        className="relative flex flex-1 min-h-0 overflow-hidden"
+        aria-busy={isUpdateInteractionBlocked}
+      >
         <Sidebar
           onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
@@ -1178,6 +1277,7 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
+        {isUpdateInteractionBlocked && <AppUpdateInteractionOverlay />}
       </div>
 
       <EngineFailureOverlay
