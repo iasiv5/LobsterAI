@@ -5,6 +5,7 @@ import inviteCreditsIconUrl from '../assets/icons/invite-credits.svg';
 import logoutIconUrl from '../assets/icons/logout.svg';
 import promoSubscriptionIconUrl from '../assets/icons/promo-subscription.svg';
 import rechargeIconUrl from '../assets/icons/recharge.svg';
+import soccerBallIconUrl from '../assets/icons/soccer-ball.svg';
 import usageOverviewIconUrl from '../assets/icons/usage-overview.svg';
 import { authService } from '../services/auth';
 import {
@@ -16,7 +17,12 @@ import {
 import { i18nService } from '../services/i18n';
 import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import { RootState } from '../store';
-import type { CreditItem } from '../store/slices/authSlice';
+import type {
+  CreditItem,
+  CreditsResetCampaignStatus,
+  FreeCreditsReward,
+} from '../store/slices/authSlice';
+import CreditsFinalRewardModal from './CreditsFinalRewardModal';
 import UserAvatarIcon from './icons/UserAvatarIcon';
 
 const ACCOUNT_MENU_ANALYTICS_SOURCE = 'home_account_menu';
@@ -98,6 +104,28 @@ const formatCredits = (n: number): string => {
   return n.toFixed(2);
 };
 
+const getFinalRewards = (status?: CreditsResetCampaignStatus): FreeCreditsReward[] => {
+  const rewards = status?.freeCreditsRewards?.length
+    ? status.freeCreditsRewards
+    : status?.freeCreditsReward
+      ? [status.freeCreditsReward]
+      : [];
+  return [...rewards].sort((a, b) => a.claimDeadline.localeCompare(b.claimDeadline));
+};
+
+const getFinalRewardText = (reward: FreeCreditsReward | undefined) => {
+  const creditsText = reward ? formatCredits(reward.credits) : '0';
+  const isEn = i18nService.getLanguage() === 'en';
+  const presentation = reward?.presentation;
+  return {
+    creditsText,
+    title: (isEn ? presentation?.titleEn : presentation?.titleZh)
+      || i18nService.t('authFinalRewardAlt').replace('{credits}', creditsText),
+    actionText: (isEn ? presentation?.actionTextEn : presentation?.actionTextZh)
+      || i18nService.t('authFinalRewardAction').replace('{credits}', creditsText),
+  };
+};
+
 const CreditItemRow: React.FC<{ item: CreditItem; isEn: boolean }> = ({ item, isEn }) => {
   const label = isEn ? item.labelEn : item.label;
   const badge = item.type === 'subscription' ? getSubscriptionBadge(label) : null;
@@ -168,7 +196,10 @@ const PortalMenuIcon: React.FC<{ src: string; darkInvert?: boolean }> = ({
   />
 );
 
-const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const UserMenu: React.FC<{ onClose: () => void; onOpenFinalReward: () => void }> = ({
+  onClose,
+  onOpenFinalReward,
+}) => {
   const user = useSelector((state: RootState) => state.auth.user);
   const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
   const [creditsExpanded, setCreditsExpanded] = useState(false);
@@ -274,6 +305,16 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
   };
 
+  const handleFinalReward = () => {
+    reportAccountMenuAction('open_credits_final_reward', {
+      creditItemCount: creditItems.length,
+      hasCredits,
+      result: 'success',
+    });
+    onClose();
+    onOpenFinalReward();
+  };
+
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';
 
   const totalCredits = profileSummary?.totalCreditsRemaining ?? 0;
@@ -282,10 +323,12 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const availableResetCount = profileSummary?.availableResetCount ?? 0;
   const availablePromoSubscriptionCount = profileSummary?.availablePromoSubscriptionCount ?? 0;
   const campaignActionLabel = availableResetCount > 0
-    ? i18nService.t('authCreditsResetAction')
+    ? i18nService.t('authCreditsResetActionCount').replace('{count}', String(availableResetCount))
     : availablePromoSubscriptionCount > 0
       ? i18nService.t('authPromoSubscriptionAction')
       : null;
+  const finalReward = getFinalRewards(profileSummary?.creditsResetCampaign)[0];
+  const finalRewardText = getFinalRewardText(finalReward);
 
   return (
     <div className="absolute bottom-full left-[-0.5rem] mb-1 w-[14.5rem] bg-surface rounded-xl shadow-popover border border-border overflow-hidden z-50 popover-enter">
@@ -366,6 +409,13 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             onClick={handleCreditsResetActivity}
           />
         )}
+        {finalReward ? (
+          <AccountMenuAction
+            icon={<PortalMenuIcon src={finalReward.presentation?.iconUrl || soccerBallIconUrl} darkInvert />}
+            label={finalRewardText.actionText}
+            onClick={handleFinalReward}
+          />
+        ) : null}
         <AccountMenuAction
           icon={<PortalMenuIcon src={usageOverviewIconUrl} darkInvert />}
           label={i18nService.t('authUsageOverview')}
@@ -391,10 +441,31 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
-const LoginButton: React.FC = () => {
+const formatRewardExpiry = (expiresAt: string): string => {
+  const value = expiresAt.replace('T', ' ').slice(0, 19);
+  return i18nService.getLanguage() === 'en' ? value : value.replace(/-/g, '/');
+};
+
+interface LoginButtonProps {
+  contentLeftOffset?: number;
+}
+
+const LoginButton: React.FC<LoginButtonProps> = ({ contentLeftOffset = 0 }) => {
   const { isLoggedIn, isLoading, profileSummary, user } = useSelector((state: RootState) => state.auth);
   const [showMenu, setShowMenu] = useState(false);
+  const [finalRewardOpen, setFinalRewardOpen] = useState(false);
+  const [finalRewardLoading, setFinalRewardLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const finalReward = getFinalRewards(profileSummary?.creditsResetCampaign)[0];
+  const finalRewardText = getFinalRewardText(finalReward);
+  const finalRewardAvailable = finalReward !== undefined;
+  const finalRewardUserKey = profileSummary?.id?.toString()
+    ?? user?.id?.toString()
+    ?? user?.userId
+    ?? user?.yid;
+  const finalRewardDismissKey = finalRewardAvailable && finalRewardUserKey && finalReward
+    ? `credits_final_reward_session_dismissed.${finalRewardUserKey}.${finalReward.campaignCode}`
+    : null;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -409,6 +480,14 @@ const LoginButton: React.FC = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showMenu]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !finalRewardDismissKey) {
+      setFinalRewardOpen(false);
+      return;
+    }
+    setFinalRewardOpen(sessionStorage.getItem(finalRewardDismissKey) !== '1');
+  }, [finalRewardDismissKey, isLoggedIn]);
 
   if (isLoading) {
     return null;
@@ -441,6 +520,35 @@ const LoginButton: React.FC = () => {
     }
   };
 
+  const closeFinalReward = () => {
+    if (finalRewardLoading) return;
+    if (finalRewardDismissKey) {
+      sessionStorage.setItem(finalRewardDismissKey, '1');
+    }
+    setFinalRewardOpen(false);
+  };
+
+  const claimFinalReward = async () => {
+    if (!finalReward || finalRewardLoading) return;
+    setFinalRewardLoading(true);
+    try {
+      const claimed = await authService.claimCreditsFinalReward(finalReward.campaignCode);
+      setFinalRewardOpen(false);
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('authFinalRewardClaimSuccess')
+          .replace('{credits}', formatCredits(claimed.creditsGranted))
+          .replace('{date}', formatRewardExpiry(claimed.expiresAt)),
+      }));
+    } catch (error) {
+      await authService.fetchProfileSummary();
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: error instanceof Error ? error.message : i18nService.t('authFinalRewardClaimFailed'),
+      }));
+    } finally {
+      setFinalRewardLoading(false);
+    }
+  };
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -464,7 +572,24 @@ const LoginButton: React.FC = () => {
           </>
         )}
       </button>
-      {showMenu && isLoggedIn && <UserMenu onClose={() => setShowMenu(false)} />}
+      {showMenu && isLoggedIn && (
+        <UserMenu
+          onClose={() => setShowMenu(false)}
+          onOpenFinalReward={() => setFinalRewardOpen(true)}
+        />
+      )}
+      <CreditsFinalRewardModal
+        open={finalRewardOpen}
+        loading={finalRewardLoading}
+        contentLeftOffset={contentLeftOffset}
+        campaignCode={finalReward?.campaignCode}
+        creditsText={finalRewardText.creditsText}
+        title={finalRewardText.title}
+        actionText={finalRewardText.actionText}
+        posterUrl={finalReward?.presentation?.posterUrl}
+        onClose={closeFinalReward}
+        onClaim={() => void claimFinalReward()}
+      />
     </div>
   );
 };

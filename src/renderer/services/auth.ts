@@ -269,6 +269,15 @@ class AuthService {
     }
   }
 
+  async claimCreditsFinalReward(campaignCode: string) {
+    const result = await window.electron.auth.claimCreditsFinalReward(campaignCode);
+    if (!result.success || !result.data) {
+      throw new Error(result.error || 'Claim failed');
+    }
+    await Promise.all([this.refreshQuota(), this.fetchProfileSummary()]);
+    return result.data;
+  }
+
   /**
    * Get current access token (for proxy API calls).
    */

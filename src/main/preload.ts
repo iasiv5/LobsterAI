@@ -1033,6 +1033,8 @@ contextBridge.exposeInMainWorld('electron', {
     getModels: () => ipcRenderer.invoke('auth:getModels'),
     getPricingCatalog: () => ipcRenderer.invoke(AuthIpcChannel.GetPricingCatalog),
     getProfileSummary: () => ipcRenderer.invoke('auth:getProfileSummary'),
+    claimCreditsFinalReward: (campaignCode: string) =>
+      ipcRenderer.invoke('auth:claimCreditsFinalReward', { campaignCode }),
     getActiveClientBanner: () => ipcRenderer.invoke('auth:getActiveClientBanner'),
     getActiveClientBanners: () => ipcRenderer.invoke('auth:getActiveClientBanners'),
     getPendingCallback: () => ipcRenderer.invoke(AuthIpcChannel.GetPendingCallback),
