@@ -37,14 +37,13 @@ const CreditsFinalRewardModal: React.FC<CreditsFinalRewardModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/55 py-6 pr-6"
-      style={{ paddingLeft: `${normalizedContentLeftOffset + 24}px` }}
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-6"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
       <div
-        className="relative -translate-y-6 max-w-full overflow-hidden rounded-2xl 2xl:translate-y-0"
+        className="relative max-w-full overflow-hidden rounded-2xl"
         style={{
           width: `min(clamp(320px, calc(48vw - ${contentPaneWidthDeduction}px), 760px), calc((100vh - 3rem) * 1.435))`,
         }}
