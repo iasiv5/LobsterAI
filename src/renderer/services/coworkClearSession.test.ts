@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { store } from '../store';
 import { setAgents, setCurrentAgentId } from '../store/slices/agentSlice';
@@ -32,6 +32,10 @@ beforeEach(() => {
   store.dispatch(setCurrentAgentId('main'));
   store.dispatch(setCurrentSession(null));
   store.dispatch(clearActiveSkills());
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('coworkService.clearSession', () => {
@@ -92,5 +96,30 @@ describe('coworkService.clearSession', () => {
     coworkService.clearSession({ restoreAgentSkills: true });
 
     expect(store.getState().skill.activeSkillIds).toEqual([]);
+  });
+
+  test('does not restore a session whose load finishes after clearing', async () => {
+    let resolveGetSession: ((value: { success: true; session: CoworkSession }) => void) | undefined;
+    const getSession = vi.fn(() => new Promise<{ success: true; session: CoworkSession }>((resolve) => {
+      resolveGetSession = resolve;
+    }));
+    const remoteManaged = vi.fn(async () => ({ remoteManaged: true }));
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          getSession,
+          remoteManaged,
+        },
+      },
+    });
+
+    const pendingLoad = coworkService.loadSession('session-1');
+    coworkService.clearSession();
+    resolveGetSession?.({ success: true, session: makeSession() });
+    await pendingLoad;
+
+    expect(store.getState().cowork.currentSession).toBeNull();
+    expect(store.getState().cowork.remoteManaged).toBe(false);
+    expect(remoteManaged).not.toHaveBeenCalled();
   });
 });

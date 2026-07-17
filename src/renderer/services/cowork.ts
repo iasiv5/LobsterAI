@@ -1680,6 +1680,9 @@ class CoworkService {
   }
 
   clearSession(options: { restoreAgentSkills?: boolean } = {}): void {
+    // Invalidate an in-flight load so an old history/IM session cannot replace
+    // the new-task view after the user has explicitly left that session.
+    this.latestLoadSessionRequestId += 1;
     store.dispatch(clearCurrentSession());
     if (options.restoreAgentSkills) {
       restoreCurrentAgentDefaultSkills();
