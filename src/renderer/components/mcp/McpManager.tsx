@@ -780,7 +780,10 @@ const McpManager: React.FC = () => {
       )}
 
       {/* Sticky toolbar: Description + Search + Tabs + Category pills */}
-      <div className="sticky top-0 z-10 space-y-4 bg-background pb-4">
+      <div
+        data-skin-management-toolbar="true"
+        className="sticky top-0 z-10 space-y-4 bg-background pb-4"
+      >
         {/* Description */}
         <p className="text-sm text-secondary">
           {i18nService.t('mcpDescription')}

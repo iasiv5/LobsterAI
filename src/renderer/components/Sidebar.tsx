@@ -254,12 +254,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSelectSession = async (session: CoworkSessionSummary) => {
     const agentId = session.agentId?.trim() || AgentId.Main;
-    if (agentId !== currentAgentId) {
-      agentService.switchAgent(agentId);
-      await coworkService.loadSessions(agentId);
+    try {
+      if (agentId !== currentAgentId) {
+        agentService.switchAgent(agentId, { targetSessionId: session.id });
+        await coworkService.loadSessions(agentId);
+      }
+      onShowCowork();
+      await coworkService.loadSession(session.id);
+    } finally {
+      coworkService.finishSessionNavigation(session.id);
     }
-    onShowCowork();
-    await coworkService.loadSession(session.id);
   };
 
   const handleEnterBatchMode = useCallback((sessionId: string, agentId: string) => {

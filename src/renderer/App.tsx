@@ -24,6 +24,7 @@ import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import { SkillsView } from './components/skills';
+import SkinBackdrop, { SkinBackdropVariant } from './components/skin/SkinBackdrop';
 import SkinPresentationScope from './components/skin/SkinPresentationScope';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
@@ -1218,7 +1219,7 @@ const App: React.FC = () => {
   return (
     <SkinProvider>
       <SkinPresentationScope
-        enabled={mainView === 'cowork'}
+        enabled
         className="h-screen overflow-hidden flex flex-col bg-surface-raised"
       >
       {toastMessage && (
@@ -1253,8 +1254,12 @@ const App: React.FC = () => {
         <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
           <div
             data-skin-cowork-frame={mainView === 'cowork' ? 'true' : undefined}
+            data-skin-management-frame={mainView !== 'cowork' ? 'true' : undefined}
             className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden"
           >
+            {mainView !== 'cowork' && (
+              <SkinBackdrop variant={SkinBackdropVariant.Management} />
+            )}
             <EngineStartupOverlay />
             {mainView === 'skills' ? (
               <SkillsView

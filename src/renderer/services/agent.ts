@@ -30,6 +30,10 @@ const syncActiveSkillsForCurrentAgent = (agentId: string, skillIds: string[]): v
   }
 };
 
+interface SwitchAgentOptions {
+  targetSessionId?: string;
+}
+
 class AgentService {
   async loadAgents(): Promise<void> {
     store.dispatch(setLoading(true));
@@ -266,9 +270,11 @@ class AgentService {
     }
   }
 
-  switchAgent(agentId: string): void {
+  switchAgent(agentId: string, options: SwitchAgentOptions = {}): void {
     store.dispatch(setCurrentAgentId(agentId));
-    store.dispatch(clearCurrentSession());
+    store.dispatch(clearCurrentSession(options.targetSessionId
+      ? { sessionNavigationTargetId: options.targetSessionId }
+      : undefined));
     const agent = store.getState().agent.agents.find((a) => a.id === agentId);
     if (agent?.skillIds?.length) {
       store.dispatch(setActiveSkillIds(agent.skillIds));

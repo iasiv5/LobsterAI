@@ -198,7 +198,10 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
   const showTabs = viewMode === 'list' && !selectedTaskId;
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      data-skin-management-page="true"
+      className="relative z-10 flex flex-col bg-background h-full"
+    >
       {/* Header */}
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
         <div className="flex items-center space-x-3 h-8">

@@ -55,6 +55,8 @@ interface CoworkState {
   hasMoreSessions: boolean;
   currentSessionId: string | null;
   currentSession: CoworkSession | null;
+  /** Target session selected during cross-agent navigation, used only to stabilize presentation. */
+  sessionNavigationTargetId: string | null;
   draftPrompts: Record<string, string>;
   /** Keyed by draftKey (sessionId or '__home__'), stores pending attachments */
   draftAttachments: Record<string, DraftAttachment[]>;
@@ -98,6 +100,7 @@ const initialState: CoworkState = {
   hasMoreSessions: false,
   currentSessionId: null,
   currentSession: null,
+  sessionNavigationTargetId: null,
   draftPrompts: {},
   draftAttachments: {},
   draftSelectedTextSnippets: {},
@@ -429,6 +432,7 @@ const coworkSlice = createSlice({
     },
 
     setCurrentSession(state, action: PayloadAction<CoworkSession | null>) {
+      state.sessionNavigationTargetId = null;
       if (action.payload) {
         const session = action.payload;
         // Ensure pagination fields are always present (guard against stale IPC data).
@@ -458,6 +462,12 @@ const coworkSlice = createSlice({
           }
         }
         markSessionRead(state, action.payload.id);
+      }
+    },
+
+    finishSessionNavigation(state, action: PayloadAction<string>) {
+      if (state.sessionNavigationTargetId === action.payload) {
+        state.sessionNavigationTargetId = null;
       }
     },
 
@@ -884,9 +894,13 @@ const coworkSlice = createSlice({
       state.config = { ...state.config, ...action.payload };
     },
 
-    clearCurrentSession(state) {
+    clearCurrentSession(
+      state,
+      action: PayloadAction<{ sessionNavigationTargetId: string } | undefined>,
+    ) {
       state.currentSessionId = null;
       state.currentSession = null;
+      state.sessionNavigationTargetId = action.payload?.sessionNavigationTargetId ?? null;
       state.isStreaming = false;
       state.remoteManaged = false;
     },
@@ -1032,6 +1046,7 @@ export const {
   appendSessions,
   setCurrentSessionId,
   setCurrentSession,
+  finishSessionNavigation,
   setDraftPrompt,
   setSteerDraft,
   addPendingSteer,

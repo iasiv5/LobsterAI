@@ -4,6 +4,8 @@ import { CoworkSessionStatusValue } from '../../types/cowork';
 import coworkReducer, {
   addMessage,
   addSession,
+  clearCurrentSession,
+  finishSessionNavigation,
   setConfig,
   setCurrentSession,
   setCurrentSessionId,
@@ -44,6 +46,42 @@ test('defaults hidden OpenClaw session policy to thirty days', () => {
   });
   expect(state.config.skipMissedJobs).toBe(true);
   expect(state.config.openClawHeartbeatEnabled).toBe(true);
+});
+
+test('keeps a cross-agent session presentation target until the session loads', () => {
+  const activeState = coworkReducer(undefined, setCurrentSession(makeSession()));
+  const navigatingState = coworkReducer(
+    activeState,
+    clearCurrentSession({ sessionNavigationTargetId: 'session-2' }),
+  );
+
+  expect(navigatingState.currentSession).toBeNull();
+  expect(navigatingState.currentSessionId).toBeNull();
+  expect(navigatingState.sessionNavigationTargetId).toBe('session-2');
+
+  const loadedState = coworkReducer(
+    navigatingState,
+    setCurrentSession(makeSession({ id: 'session-2' })),
+  );
+  expect(loadedState.sessionNavigationTargetId).toBeNull();
+});
+
+test('only finishes the matching cross-agent session navigation', () => {
+  const navigatingState = coworkReducer(
+    undefined,
+    clearCurrentSession({ sessionNavigationTargetId: 'session-2' }),
+  );
+  const staleCompletionState = coworkReducer(
+    navigatingState,
+    finishSessionNavigation('session-1'),
+  );
+  const completedState = coworkReducer(
+    staleCompletionState,
+    finishSessionNavigation('session-2'),
+  );
+
+  expect(staleCompletionState.sessionNavigationTargetId).toBe('session-2');
+  expect(completedState.sessionNavigationTargetId).toBeNull();
 });
 
 test('setConfig preserves loaded OpenClaw session policy', () => {

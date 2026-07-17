@@ -16,6 +16,7 @@ import {
   selectCoworkConfig,
   selectCurrentSession,
   selectIsStreaming,
+  selectSessionNavigationTargetId,
 } from '../../store/selectors/coworkSelectors';
 import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionGoal, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearActiveKits } from '../../store/slices/kitSlice';
@@ -108,6 +109,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
 
   const currentSession = useSelector(selectCurrentSession);
+  const sessionNavigationTargetId = useSelector(selectSessionNavigationTargetId);
   const isStreaming = useSelector(selectIsStreaming);
   const currentSessionIdRef = useRef<string | null>(null);
 
@@ -126,6 +128,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
+  const shouldPresentConversation = Boolean(currentSession || sessionNavigationTargetId);
   const currentAgentWorkingDirectory = currentAgent?.workingDirectory?.trim() || config.workingDirectory || '';
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
   const homeDraftCollaborationMode = useSelector((state: RootState) => (
@@ -793,9 +796,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   return (
     <div data-skin-cowork="true" className="relative flex-1 flex flex-col bg-background h-full">
       <SkinBackdrop
-        variant={currentSession ? SkinBackdropVariant.Conversation : SkinBackdropVariant.Home}
+        variant={shouldPresentConversation
+          ? SkinBackdropVariant.Conversation
+          : SkinBackdropVariant.Home}
       />
-      <SkinAmbientEffects visible={!currentSession} />
+      <SkinAmbientEffects visible={!shouldPresentConversation} />
 
       {currentSession ? (
         <div className="relative z-10 flex-1 flex flex-col h-full">

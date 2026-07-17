@@ -9,7 +9,8 @@
     [data-skin-session-titlebar],
     [data-skin-prompt-input],
     [data-skin-quick-actions],
-    [data-skin-prompt-panel]
+    [data-skin-prompt-panel],
+    [data-skin-management-page]
   ) {
   --lobster-primary: var(--lobster-skin-accent);
   --lobster-primary-foreground: var(--lobster-skin-accent-foreground);
@@ -38,9 +39,28 @@
 }
 
 [data-skin-presentation="immersive_shell"] [data-skin-cowork-frame="true"],
-[data-skin-presentation="immersive_shell"] [data-skin-cowork="true"] {
+[data-skin-presentation="immersive_shell"] [data-skin-cowork="true"],
+[data-skin-presentation="immersive_shell"] [data-skin-management-frame="true"] {
   background-color: var(--lobster-skin-canvas) !important;
   border-color: color-mix(in srgb, var(--lobster-skin-border) 55%, transparent) !important;
+}
+
+[data-skin-presentation="immersive_shell"] [data-skin-management-page="true"] {
+  background-color: color-mix(
+    in srgb,
+    var(--lobster-skin-canvas) 40%,
+    transparent
+  ) !important;
+}
+
+[data-skin-presentation="immersive_shell"] [data-skin-management-toolbar="true"] {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--lobster-skin-canvas) 18%, transparent) 0%,
+    color-mix(in srgb, var(--lobster-skin-canvas) 10%, transparent) 76%,
+    transparent 100%
+  ) !important;
+  backdrop-filter: blur(14px) saturate(0.82);
 }
 
 [data-skin-presentation="immersive_shell"] [data-skin-sidebar] {

@@ -9,6 +9,7 @@ import { useSkin, useSkinAsset } from '../../providers/SkinProvider';
 export const SkinBackdropVariant = {
   Home: 'home',
   Conversation: 'conversation',
+  Management: 'management',
 } as const;
 
 export type SkinBackdropVariant = typeof SkinBackdropVariant[keyof typeof SkinBackdropVariant];
@@ -45,30 +46,49 @@ const PRESENTED_HOME_OVERLAY = [
 
 const PRESENTED_CONVERSATION_OVERLAY = [
   'linear-gradient(to bottom,',
-  'color-mix(in srgb, var(--lobster-skin-canvas) 48%, transparent),',
-  'color-mix(in srgb, var(--lobster-skin-canvas) 68%, transparent))',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 44%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 62%, transparent))',
 ].join(' ');
 
 const PRESENTED_DARK_CONVERSATION_OVERLAY = [
   'linear-gradient(to bottom,',
-  'color-mix(in srgb, var(--lobster-skin-canvas) 42%, transparent),',
-  'color-mix(in srgb, var(--lobster-skin-canvas) 58%, transparent))',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 30%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 45%, transparent))',
+].join(' ');
+
+const PRESENTED_MANAGEMENT_OVERLAY = [
+  'linear-gradient(to bottom,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 32%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 46%, transparent))',
+].join(' ');
+
+const PRESENTED_DARK_MANAGEMENT_OVERLAY = [
+  'linear-gradient(to bottom,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 18%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 30%, transparent))',
 ].join(' ');
 
 const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
   const { activeSkin } = useSkin();
   const assetUrl = useSkinAsset(SkinAssetSlot.WorkspaceBackdrop);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!assetUrl || failedUrl === assetUrl) return null;
 
   const isHome = variant === SkinBackdropVariant.Home;
+  const isManagement = variant === SkinBackdropVariant.Management;
   const hasPresentation = Boolean(activeSkin?.presentation);
   const isDarkPresentation = (
     activeSkin?.presentation?.preferredAppearance === SkinPreferredAppearance.Dark
   );
+
+  if (!assetUrl || failedUrl === assetUrl || (isManagement && !hasPresentation)) return null;
+
   const overlay = hasPresentation
     ? isHome
       ? PRESENTED_HOME_OVERLAY
+      : isManagement
+        ? isDarkPresentation
+          ? PRESENTED_DARK_MANAGEMENT_OVERLAY
+          : PRESENTED_MANAGEMENT_OVERLAY
       : isDarkPresentation
         ? PRESENTED_DARK_CONVERSATION_OVERLAY
         : PRESENTED_CONVERSATION_OVERLAY
@@ -93,7 +113,11 @@ const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
           hasPresentation
             ? isHome
               ? 'opacity-[0.78]'
-              : 'opacity-[0.26] saturate-[0.88]'
+              : isManagement
+                ? isDarkPresentation
+                  ? 'opacity-[0.30] saturate-[0.88]'
+                  : 'opacity-[0.26] saturate-[0.88]'
+                : 'opacity-[0.26] saturate-[0.88]'
             : isHome
               ? 'opacity-[0.82] dark:opacity-[0.72]'
               : 'opacity-[0.32] saturate-[0.90] dark:opacity-[0.28]'

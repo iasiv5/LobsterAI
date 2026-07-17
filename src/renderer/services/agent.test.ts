@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { store } from '../store';
 import { setAgents, setCurrentAgentId } from '../store/slices/agentSlice';
+import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../store/slices/skillSlice';
 import type { Agent } from '../types/agent';
 import { agentService } from './agent';
@@ -35,6 +36,7 @@ const makeAgent = (overrides: Partial<Agent> = {}): Agent => ({
 beforeEach(() => {
   store.dispatch(setAgents([]));
   store.dispatch(setCurrentAgentId('main'));
+  store.dispatch(clearCurrentSession());
   store.dispatch(clearActiveSkills());
   vi.restoreAllMocks();
   delete (globalThis as { window?: unknown }).window;
@@ -136,6 +138,26 @@ describe('agentService.updateAgent', () => {
     await agentService.updateAgent('agent-1', { skillIds: ['docx', 'web-search'] });
 
     expect(store.getState().skill.activeSkillIds).toEqual(['xlsx']);
+  });
+});
+
+describe('agentService.switchAgent', () => {
+  test('preserves the target conversation presentation during a cross-agent session switch', () => {
+    store.dispatch(setAgents([makeAgent({ id: 'agent-2' })]));
+
+    agentService.switchAgent('agent-2', { targetSessionId: 'session-2' });
+
+    expect(store.getState().agent.currentAgentId).toBe('agent-2');
+    expect(store.getState().cowork.currentSession).toBeNull();
+    expect(store.getState().cowork.sessionNavigationTargetId).toBe('session-2');
+  });
+
+  test('clears a stale navigation target for a plain agent switch', () => {
+    store.dispatch(clearCurrentSession({ sessionNavigationTargetId: 'session-2' }));
+
+    agentService.switchAgent('main');
+
+    expect(store.getState().cowork.sessionNavigationTargetId).toBeNull();
   });
 });
 

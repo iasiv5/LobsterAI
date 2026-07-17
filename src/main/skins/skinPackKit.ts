@@ -42,24 +42,24 @@ export function buildSkinPackMarketplaceKit(): Record<string, unknown> {
         zh: '把 LobsterAI 变成蓝白冠军之夜：传奇 10 号在金色纸雨中高举世界冠军奖杯，热血、荣耀，像一件值得收藏的球迷纪念品',
       },
       {
-        en: 'Turn LobsterAI into a red-and-gold prosperity theme with a dignified, welcoming East Asian God of Wealth as the main visual, surrounded by gold ingots, auspicious clouds, and flowing golden lines—festive and luxurious without feeling gaudy, for market analysis, investment research, and daily reviews',
-        zh: '把 LobsterAI 打造成红金招财主题：一位威严亲和的东方财神作为主视觉，配以金元宝、祥云和流动金线，喜庆华贵但不俗艳，适合行情分析、投资研究与每日复盘',
+        en: 'Turn LobsterAI into a bright, airy red-and-gold prosperity theme with a dignified, welcoming East Asian God of Wealth as the main visual. Use generous ivory and warm-cream space, with vermilion, gold, auspicious clouds, and flowing golden lines as accents—festive and luxurious without feeling gaudy, for market analysis, investment research, and daily reviews',
+        zh: '把 LobsterAI 打造成明亮通透的红金招财主题：一位威严亲和的东方财神作为主视觉，以大面积象牙白和暖米色为画布，朱红、金色、祥云与流动金线作为点缀，喜庆华贵但不俗艳，适合行情分析、投资研究与每日复盘',
       },
       {
         en: 'Design a fan tribute look with a sea of red lights and refined East Asian stage aesthetics: a gentle young actor-singer silhouette, silver spotlights, and an elegant commemorative mood',
         zh: '设计一套红色灯海与东方舞台美学的应援外观：青年演员歌手的温柔剪影、银色追光和克制高级的纪念感',
       },
       {
-        en: 'Turn LobsterAI into a rainy-night study with an orange cat: warm lamps, a wooden desk, and rain tracing the window, quiet and comforting',
-        zh: '把 LobsterAI 打造成一间有橘猫陪伴的雨夜书房：暖灯、木质桌面、窗外雨痕，安静又治愈',
+        en: 'Turn LobsterAI into a bright post-rain morning study with an orange cat: creamy white, pale wood, soft daylight, and green plants by the window, fresh, quiet, comforting, and suited to reading, learning, and everyday work',
+        zh: '把 LobsterAI 打造成一间有橘猫陪伴的雨后清晨书房：奶油白、浅木色、柔和天光和窗边绿植，空气清新、安静治愈，整体明亮轻盈，适合阅读、学习与日常工作',
       },
       {
         en: 'Turn LobsterAI into a deep-blue data and automation command center with abstract trend light trails, precise grids, and amber status lights, built for coding, analysis, market monitoring, and long-running tasks',
         zh: '把 LobsterAI 变成深蓝数据与自动化指挥舱：抽象趋势光轨、精密网格和琥珀色状态灯，适合代码、分析、盯盘与长期任务',
       },
       {
-        en: 'Create a black-and-gold brand-studio look for content creators with photographic lighting, editorial collage, and restrained product displays, suited to image, video, and ecommerce creation',
-        zh: '为内容创作者打造一套黑金品牌工作室外观：摄影棚光影、杂志拼贴与克制的商品陈列，适合图片、视频和电商创作',
+        en: 'Create a bright cream-white and champagne-gold brand-studio look for content creators with airy daylight photography, lightweight editorial collage, and refined product displays—clean, polished, and suited to image, video, and ecommerce creation',
+        zh: '为内容创作者打造一套明亮的奶油白与香槟金品牌工作室外观：通透摄影棚日光、轻盈杂志拼贴和精致商品陈列，干净高级，适合图片、视频与电商创作',
       },
     ],
     skills: {
