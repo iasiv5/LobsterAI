@@ -9,7 +9,6 @@ import { RootState } from '../../store';
 import { selectTask, setViewMode } from '../../store/slices/scheduledTaskSlice';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import WindowTitleBar from '../window/WindowTitleBar';
 import AllRunsHistory from './AllRunsHistory';
 import { getTaskAnalyticsParams, reportScheduledTaskAction } from './analytics';
 import DeleteConfirmModal from './DeleteConfirmModal';
@@ -45,6 +44,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
 }) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
   const viewMode = useSelector((state: RootState) => state.scheduledTask.viewMode);
   const selectedTaskId = useSelector((state: RootState) => state.scheduledTask.selectedTaskId);
   const tasks = useSelector((state: RootState) => state.scheduledTask.tasks);
@@ -202,7 +202,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
       {/* Header */}
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
         <div className="flex items-center space-x-3 h-8">
-          {isSidebarCollapsed && (
+          {isSidebarCollapsed && !isWindows && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
               <button
                 type="button"
@@ -234,7 +234,6 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             {i18nService.t('scheduledTasksTitle')}
           </h1>
         </div>
-        <WindowTitleBar inline />
       </div>
 
       {/* Page header: title + subtitle + tabs + New Task button */}

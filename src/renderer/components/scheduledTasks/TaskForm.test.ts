@@ -138,6 +138,18 @@ describe('conversationOptionMatchesValue', () => {
     expect(conversationOptionMatchesValue('telegram', '', '123')).toBe(false);
     expect(conversationOptionMatchesValue('telegram', 'cebef798:direct:123', '')).toBe(false);
   });
+
+  // Regression: a bot present in both a group and a private chat must let the
+  // delivery dropdown highlight/select the group without confusing it with the
+  // DM sibling (previously the target was auto-resolved and not user-selectable).
+  test('disambiguates a group target from a DM sibling on the same bot', () => {
+    const groupId = 'bot1:group:zhangsan@popo.example.com';
+    const dmId = 'bot1:direct:lisi@popo.example.com';
+    expect(conversationOptionMatchesValue('popo', groupId, groupId)).toBe(true);
+    expect(conversationOptionMatchesValue('popo', groupId, 'zhangsan@popo.example.com')).toBe(true);
+    expect(conversationOptionMatchesValue('popo', groupId, dmId)).toBe(false);
+    expect(conversationOptionMatchesValue('popo', dmId, groupId)).toBe(false);
+  });
 });
 
 describe('formatConversationOptionLabel', () => {
@@ -160,7 +172,7 @@ describe('formatConversationOptionLabel', () => {
   test('derives name and kind from the conversation id when fields are missing', () => {
     const label = formatConversationOptionLabel({
       ...baseOption,
-      conversationId: 'bot1:group:12345@popo.netease.com',
+      conversationId: 'bot1:group:12345@popo.example.com',
     });
     expect(label).toBe(`${i18nService.t('scheduledTasksConvKindGroup')} · 12345`);
   });

@@ -349,6 +349,119 @@ describe('configService provider migrations', () => {
     });
   });
 
+  test('keeps an equivalent user GPT-5.6 Sol model while adding the other GPT-5.6 defaults', async () => {
+    const storedConfig: AppConfig = {
+      ...defaultConfig,
+      providerModelMigrationVersions: {
+        [ProviderName.OpenAI]: 1,
+      },
+      providers: {
+        ...defaultConfig.providers,
+        [ProviderName.OpenAI]: {
+          ...defaultConfig.providers![ProviderName.OpenAI],
+          enabled: true,
+          apiKey: 'sk-openai',
+          models: [
+            {
+              id: 'gpt5.6sol',
+              name: 'My GPT 5.6 Sol',
+              supportsImage: false,
+              customParams: { service_tier: 'priority' },
+            },
+            { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true, supportsThinking: true },
+          ],
+        },
+      },
+    };
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(storedConfig);
+
+    await configService.init();
+
+    const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
+    const models = savedConfig.providers?.[ProviderName.OpenAI].models ?? [];
+    const solModels = models.filter(
+      model => model.id.toLowerCase().replace(/[^a-z0-9]/g, '') === 'gpt56sol',
+    );
+    expect(solModels).toHaveLength(1);
+    expect(solModels[0]).toMatchObject({
+      id: 'gpt5.6sol',
+      name: 'My GPT 5.6 Sol',
+      supportsImage: true,
+      supportsThinking: true,
+      contextWindow: 1_050_000,
+      customParams: { service_tier: 'priority' },
+    });
+    expect(models.map(model => model.id)).toEqual([
+      'gpt5.6sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+    ]);
+    expect(savedConfig.providerModelMigrationVersions?.[ProviderName.OpenAI]).toBe(2);
+  });
+
+  test('keeps an equivalent user Grok 4.5 model without adding the canonical duplicate', async () => {
+    const storedConfig: AppConfig = {
+      ...defaultConfig,
+      providerModelMigrationVersions: undefined,
+      providers: {
+        ...defaultConfig.providers,
+        [ProviderName.Xai]: {
+          ...defaultConfig.providers![ProviderName.Xai],
+          enabled: true,
+          apiKey: 'xai-key',
+          models: [
+            { id: 'grok4.5', name: 'My Grok 4.5', supportsImage: false },
+            { id: 'grok-4.3', name: 'Grok 4.3', supportsImage: true, supportsThinking: true, contextWindow: 1_000_000 },
+          ],
+        },
+      },
+    };
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(storedConfig);
+
+    await configService.init();
+
+    const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
+    const models = savedConfig.providers?.[ProviderName.Xai].models ?? [];
+    expect(models.filter(
+      model => model.id.toLowerCase().replace(/[^a-z0-9]/g, '') === 'grok45',
+    )).toEqual([
+      {
+        id: 'grok4.5',
+        name: 'My Grok 4.5',
+        supportsImage: true,
+        supportsThinking: true,
+        contextWindow: 500_000,
+      },
+    ]);
+    expect(savedConfig.providerModelMigrationVersions?.[ProviderName.Xai]).toBe(1);
+  });
+
+  test('does not re-inject a deleted GPT-5.6 model after migration v2 is applied', async () => {
+    const storedConfig: AppConfig = {
+      ...defaultConfig,
+      providerModelMigrationVersions: {
+        [ProviderName.OpenAI]: 2,
+      },
+      providers: {
+        ...defaultConfig.providers,
+        [ProviderName.OpenAI]: {
+          ...defaultConfig.providers![ProviderName.OpenAI],
+          models: defaultConfig.providers![ProviderName.OpenAI].models?.filter(
+            model => model.id !== 'gpt-5.6-terra',
+          ),
+        },
+      },
+    };
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(storedConfig);
+
+    await configService.init();
+
+    const savedConfig = storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig;
+    expect(savedConfig.providers?.[ProviderName.OpenAI].models?.map(model => model.id)).not.toContain('gpt-5.6-terra');
+    expect(savedConfig.providerModelMigrationVersions?.[ProviderName.OpenAI]).toBe(2);
+  });
+
   test.each(addedProviderMigrationCases)(
     'does not re-inject a deleted $providerName model after migration is applied',
     async ({ providerName, deletedModelId }) => {

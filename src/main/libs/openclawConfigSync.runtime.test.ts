@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { ProviderName } from '../../shared/providers';
+
 vi.mock('electron', () => ({
   app: {
     isPackaged: false,
@@ -42,6 +44,12 @@ const mockRuntimeState = vi.hoisted(() => ({
       customParams?: Record<string, unknown>;
     }>;
   }>,
+  providerSourceEntries: [] as Array<{
+    providerName: string;
+    codingPlanEnabled: boolean;
+    authType?: 'apikey' | 'oauth';
+    displayName?: string;
+  }>,
   rawApiConfig: {
     config: {
       baseURL: 'https://api.openai.com/v1',
@@ -60,6 +68,7 @@ const mockRuntimeState = vi.hoisted(() => ({
 
 vi.mock('./claudeSettings', () => ({
   getAllServerModelMetadata: () => mockRuntimeState.serverModels,
+  listProviderSourceEntries: () => mockRuntimeState.providerSourceEntries,
   resolveAllEnabledProviderConfigs: () => mockRuntimeState.enabledProviders,
   resolveAllProviderApiKeys: () => ({}),
   resolveRawApiConfig: () => mockRuntimeState.rawApiConfig,
@@ -93,6 +102,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     mockRuntimeState.proxyPort = null;
     mockRuntimeState.serverModels = [];
     mockRuntimeState.enabledProviders = [];
+    mockRuntimeState.providerSourceEntries = [];
     mockRuntimeState.rawApiConfig = {
       config: {
         baseURL: 'https://api.openai.com/v1',
@@ -221,6 +231,45 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.models.pricing).toEqual({ enabled: false });
   });
 
+  test('defaults memory search to local FTS-only when embeddings are disabled', async () => {
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: true,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+        embeddingEnabled: false,
+        embeddingProvider: 'openai',
+        embeddingModel: '',
+        embeddingLocalModelPath: '',
+        embeddingVectorWeight: 0.7,
+        embeddingRemoteBaseUrl: '',
+        embeddingRemoteApiKey: '',
+      }),
+    });
+
+    const result = sync.sync('memory-search-default-fts');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.memorySearch).toMatchObject({
+      enabled: true,
+      provider: 'none',
+      fallback: 'none',
+      store: {
+        fts: { tokenizer: 'trigram' },
+        vector: { enabled: false },
+      },
+    });
+    expect(config.agents.defaults.memorySearch.remote).toBeUndefined();
+  });
+
   test('configures OpenClaw chat image attachment limit to 30MB', async () => {
     const sync = await createSync();
 
@@ -243,6 +292,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       target: 'none',
       lightContext: true,
       isolatedSession: true,
+      skipWhenBusy: true,
     });
   });
 
@@ -272,6 +322,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       target: 'none',
       lightContext: true,
       isolatedSession: true,
+      skipWhenBusy: true,
     });
   });
 
@@ -533,6 +584,63 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.agents.defaults.workspace).toBe(path.join(stateDir, 'workspace-main'));
     expect(config.agents.defaults.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
     expect(mainEntry.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+  });
+
+  test('does not copy main USER.md into non-main agent workspaces during sync', async () => {
+    const mainWorkspace = path.join(stateDir, 'workspace-main');
+    fs.mkdirSync(mainWorkspace, { recursive: true });
+    fs.writeFileSync(path.join(mainWorkspace, 'USER.md'), 'main user profile\n', 'utf8');
+
+    const sync = await createSync({
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: '',
+          workingDirectory: '',
+          icon: '',
+          skillIds: [],
+          subagentAllowAgentIds: [],
+          enabled: true,
+          pinned: false,
+          isDefault: true,
+          source: 'custom',
+          presetId: '',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: 'writer',
+          name: 'Writer',
+          description: '',
+          systemPrompt: 'writer soul',
+          identity: 'writer identity',
+          model: '',
+          workingDirectory: '',
+          icon: '',
+          skillIds: [],
+          subagentAllowAgentIds: [],
+          enabled: true,
+          pinned: false,
+          isDefault: false,
+          source: 'custom',
+          presetId: '',
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    });
+
+    const result = sync.sync('agent-user-md-isolation');
+    expect(result.ok).toBe(true);
+
+    const writerWorkspace = path.join(stateDir, 'workspace-writer');
+    expect(fs.readFileSync(path.join(writerWorkspace, 'SOUL.md'), 'utf8')).toBe('writer soul\n');
+    expect(fs.readFileSync(path.join(writerWorkspace, 'IDENTITY.md'), 'utf8')).toBe('writer identity\n');
+    expect(fs.existsSync(path.join(writerWorkspace, 'USER.md'))).toBe(false);
   });
 
   test('merges all server models into existing lobsterai provider and updates image input', async () => {
@@ -1104,6 +1212,97 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.plugins.allow).toContain('xai');
   });
 
+  test('keeps memory-core selected and explicitly disables dreaming when dreaming is off', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      plugins: {
+        entries: {
+          'memory-core': {
+            enabled: true,
+            config: {
+              retention: {
+                shortTermDays: 14,
+              },
+              dreaming: {
+                enabled: true,
+                frequency: '0 3 * * *',
+              },
+            },
+          },
+        },
+      },
+    }, null, 2));
+
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+        dreamingEnabled: false,
+        dreamingFrequency: '0 3 * * *',
+      }),
+    });
+
+    const result = sync.sync('dreaming-disabled-cleanup');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.slots.memory).toBe('memory-core');
+    expect(config.plugins.allow).toContain('memory-core');
+    expect(config.plugins.entries['memory-core']).toEqual({
+      enabled: true,
+      config: {
+        retention: {
+          shortTermDays: 14,
+        },
+        dreaming: {
+          enabled: false,
+        },
+      },
+    });
+  });
+
+  test('writes enabled memory-core dreaming config when dreaming is on', async () => {
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: tmpDir,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: false,
+        dreamingEnabled: true,
+        dreamingFrequency: '0 4 * * *',
+      }),
+    });
+
+    const result = sync.sync('dreaming-enabled');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.slots.memory).toBe('memory-core');
+    expect(config.plugins.allow).toContain('memory-core');
+    expect(config.plugins.entries['memory-core']).toEqual({
+      enabled: true,
+      config: {
+        dreaming: {
+          enabled: true,
+          frequency: '0 4 * * *',
+        },
+      },
+    });
+  });
+
   test('maps OpenAI OAuth mode to the ChatGPT Responses provider', async () => {
     const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
@@ -1199,6 +1398,35 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAIResponses);
     expect(selection.providerConfig.auth).toBe(AuthType.ApiKey);
     expect(selection.providerConfig.apiKey).toBe('${LOBSTER_APIKEY_XAI}');
+  });
+
+  test.each([
+    [ProviderName.OpenAI, 'gpt-5.6-sol', 'https://api.openai.com/v1', 1_050_000],
+    [ProviderName.OpenAI, 'gpt-5.6-terra', 'https://api.openai.com/v1', 1_050_000],
+    [ProviderName.OpenAI, 'gpt-5.6-luna', 'https://api.openai.com/v1', 1_050_000],
+    [ProviderName.Xai, 'grok-4.5', 'https://api.x.ai/v1', 500_000],
+  ])('writes official context metadata for %s/%s', async (providerName, modelId, baseURL, contextWindow) => {
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'test-key',
+      baseURL,
+      modelId,
+      apiType: 'openai',
+      providerName,
+      authType: 'apikey',
+      codingPlanEnabled: false,
+      supportsImage: false,
+      supportsThinking: false,
+      modelName: modelId,
+    });
+
+    expect(selection.providerConfig.models[0]).toMatchObject({
+      id: modelId,
+      input: ['text', 'image'],
+      reasoning: true,
+      contextWindow,
+    });
   });
 
   test('keeps MiniMax API key mode on the standard MiniMax provider', async () => {
@@ -2196,5 +2424,72 @@ describe('OpenClawConfigSync runtime config output', () => {
         'x-client-id': 'client-456',
       },
     });
+  });
+});
+
+describe('resolveModelSourceForOpenClawProvider', () => {
+  beforeEach(() => {
+    mockRuntimeState.providerSourceEntries = [];
+  });
+
+  test('classifies the LobsterAI plan without any Settings entry', async () => {
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('lobsterai-server')).toEqual({
+      source: 'lobsterai-plan',
+      providerName: ProviderName.LobsteraiServer,
+    });
+  });
+
+  test('classifies a custom provider with its display name', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Custom, codingPlanEnabled: false, displayName: '我的中转' },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('custom')).toEqual({
+      source: 'custom-provider',
+      providerName: ProviderName.Custom,
+      providerDisplayName: '我的中转',
+    });
+  });
+
+  test('classifies a vendor coding plan through the descriptor provider id', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Zhipu, codingPlanEnabled: true },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    // Zhipu maps to the OpenClaw provider id "zai".
+    expect(resolveModelSourceForOpenClawProvider('zai')).toEqual({
+      source: 'coding-plan',
+      providerName: ProviderName.Zhipu,
+      providerDisplayName: 'Zhipu',
+    });
+  });
+
+  test('classifies OAuth-mode builtin providers via their oauth descriptor id', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Minimax, codingPlanEnabled: false, authType: 'oauth' },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('minimax-portal')).toEqual({
+      source: 'builtin-oauth',
+      providerName: ProviderName.Minimax,
+      providerDisplayName: 'MiniMax',
+    });
+    // The api-key descriptor id no longer matches while OAuth mode is active.
+    expect(resolveModelSourceForOpenClawProvider('minimax')).toBeUndefined();
+  });
+
+  test('classifies plain builtin providers and unknown ids', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.DeepSeek, codingPlanEnabled: false },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('deepseek')).toEqual({
+      source: 'builtin-provider',
+      providerName: ProviderName.DeepSeek,
+      providerDisplayName: 'DeepSeek',
+    });
+    expect(resolveModelSourceForOpenClawProvider('never-configured')).toBeUndefined();
+    expect(resolveModelSourceForOpenClawProvider('')).toBeUndefined();
   });
 });

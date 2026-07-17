@@ -39,8 +39,13 @@ const DROPDOWN_MAX_HEIGHT = 380; // list max-h-72 plus the tab area and current-
 const DROPDOWN_WIDTH = 300;
 const MODEL_ITEM_HEIGHT = 36; // px-3 py-2 row with a 20px line
 const LIST_VERTICAL_PADDING = 8; // scroll container py-1
-const LIST_MAX_HEIGHT = 288; // matches max-h-72
+const LIST_MAX_HEIGHT = 288; // default cap for the scrollable model list (18rem)
+const LIST_MIN_HEIGHT = MODEL_ITEM_HEIGHT * 3 + LIST_VERTICAL_PADDING; // never collapse below three rows
 const DROPDOWN_VIEWPORT_MARGIN = 8;
+const DROPDOWN_TRIGGER_GAP = 4; // matches mt-1/mb-1 and the +4 offset in portal mode
+const DROPDOWN_TABS_BLOCK_HEIGHT = 49; // group tabs block: p-2 + p-0.5 + py-1.5 + leading-4 + border-b
+const DROPDOWN_FOOTER_HEIGHT = 33; // current-model footer: py-2 + leading-4 + border-t
+const DROPDOWN_BORDER_HEIGHT = 2;
 const HOVER_CARD_WIDTH = 220;
 const HOVER_CARD_GAP = 8;
 const HOVER_CARD_VIEWPORT_MARGIN = 8;
@@ -142,6 +147,17 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   );
 };
 
+export function resolveDropdownListMaxHeight(
+  availableSpace: number,
+  hasGroupTabs: boolean,
+  hasCurrentModelFooter: boolean,
+): number {
+  const chromeHeight = DROPDOWN_BORDER_HEIGHT
+    + (hasGroupTabs ? DROPDOWN_TABS_BLOCK_HEIGHT : 0)
+    + (hasCurrentModelFooter ? DROPDOWN_FOOTER_HEIGHT : 0);
+  return Math.min(Math.max(availableSpace - chromeHeight, LIST_MIN_HEIGHT), LIST_MAX_HEIGHT);
+}
+
 export function resolveHoverCardTop(
   desiredTop: number,
   cardHeight: number,
@@ -180,6 +196,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [isOpen, setIsOpen] = React.useState(false);
   const [resolvedDirection, setResolvedDirection] = React.useState<'up' | 'down'>('down');
   const [portalStyle, setPortalStyle] = React.useState<React.CSSProperties>({});
+  const [listMaxHeight, setListMaxHeight] = React.useState<number>(LIST_MAX_HEIGHT);
   const [activeGroup, setActiveGroup] = React.useState<ModelSelectorGroup>(ModelSelectorGroup.Server);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
@@ -217,6 +234,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     return model.isServerModel ? ModelSelectorGroup.Server : ModelSelectorGroup.User;
   };
   const selectedModelGroup = getModelGroup(selectedModel);
+  const showCurrentModelFooter = shouldShowGroupTabs && selectedModel !== null && selectedModelGroup !== null;
   const getPreferredGroup = (): ModelSelectorGroup => {
     const selectedGroup = getModelGroup(selectedModel);
     if (selectedGroup && isGroupAvailable(selectedGroup)) return selectedGroup;
@@ -263,6 +281,28 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     return spaceBelow < DROPDOWN_MAX_HEIGHT && rect.top > spaceBelow ? 'up' : 'down';
   }, [dropdownDirection]);
 
+  const resolveListMaxHeight = React.useCallback((direction: 'up' | 'down'): number => {
+    const container = containerRef.current;
+    if (!container) return LIST_MAX_HEIGHT;
+    const rect = container.getBoundingClientRect();
+    let topBoundary = 0;
+    let bottomBoundary = window.innerHeight;
+    if (!portal) {
+      // The in-place dropdown is clipped by overflow ancestors (e.g. the app
+      // shell below the window title bar), so clamp against them as well.
+      for (let el = container.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (window.getComputedStyle(el).overflowY === 'visible') continue;
+        const ancestorRect = el.getBoundingClientRect();
+        topBoundary = Math.max(topBoundary, ancestorRect.top);
+        bottomBoundary = Math.min(bottomBoundary, ancestorRect.bottom);
+      }
+    }
+    const availableSpace = (direction === 'up'
+      ? rect.top - topBoundary
+      : bottomBoundary - rect.bottom) - DROPDOWN_TRIGGER_GAP - DROPDOWN_VIEWPORT_MARGIN;
+    return resolveDropdownListMaxHeight(availableSpace, shouldShowGroupTabs, showCurrentModelFooter);
+  }, [portal, shouldShowGroupTabs, showCurrentModelFooter]);
+
   const updatePortalPosition = React.useCallback((direction: 'up' | 'down') => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -290,9 +330,15 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   }, [alignDropdownToTriggerEnd]);
 
   React.useEffect(() => {
-    if (!isOpen || !portal) return;
+    if (!isOpen) return;
 
-    const handlePositionUpdate = () => updatePortalPosition(resolvedDirection);
+    setListMaxHeight(resolveListMaxHeight(resolvedDirection));
+    const handlePositionUpdate = (event?: Event) => {
+      // Scrolls inside the dropdown itself (e.g. the model list) do not move the trigger.
+      if (event && event.target instanceof Node && dropdownRef.current?.contains(event.target)) return;
+      if (portal) updatePortalPosition(resolvedDirection);
+      setListMaxHeight(resolveListMaxHeight(resolvedDirection));
+    };
     window.addEventListener('resize', handlePositionUpdate);
     window.addEventListener('scroll', handlePositionUpdate, true);
 
@@ -300,7 +346,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       window.removeEventListener('resize', handlePositionUpdate);
       window.removeEventListener('scroll', handlePositionUpdate, true);
     };
-  }, [isOpen, portal, resolvedDirection, updatePortalPosition]);
+  }, [isOpen, portal, resolvedDirection, updatePortalPosition, resolveListMaxHeight]);
 
   React.useLayoutEffect(() => {
     if (!isOpen || !selectedModelKey) return;
@@ -315,13 +361,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     const targetScrollTop = selectedOffsetTop - ((scrollContainer.clientHeight - selectedItem.offsetHeight) / 2);
     const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
     scrollContainer.scrollTop = Math.min(Math.max(0, targetScrollTop), maxScrollTop);
-  }, [isOpen, selectedModelKey, visibleGroup, visibleModels.length]);
+  }, [isOpen, selectedModelKey, visibleGroup, visibleModels.length, listMaxHeight]);
 
   const toggleOpen = () => {
     if (disabled) return;
     if (!isOpen) {
       const nextDirection = resolveDirection();
       setResolvedDirection(nextDirection);
+      setListMaxHeight(resolveListMaxHeight(nextDirection));
       if (portal) {
         updatePortalPosition(nextDirection);
       }
@@ -557,7 +604,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   );
 
   const renderCurrentModelFooter = () => {
-    if (!shouldShowGroupTabs || !selectedModel || !selectedModelGroup) return null;
+    if (!showCurrentModelFooter || !selectedModel || !selectedModelGroup) return null;
     const inOtherGroup = selectedModelGroup !== visibleGroup;
     return (
       <button
@@ -595,8 +642,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       {shouldShowGroupTabs && renderGroupTabs()}
       <div
         ref={scrollContainerRef}
-        style={stableListMinHeight !== undefined ? { minHeight: stableListMinHeight } : undefined}
-        className="model-selector-scroll max-h-72 overflow-y-auto py-1"
+        style={{
+          maxHeight: listMaxHeight,
+          minHeight: stableListMinHeight !== undefined ? Math.min(stableListMinHeight, listMaxHeight) : undefined,
+        }}
+        className="model-selector-scroll overflow-y-auto py-1"
       >
         {defaultLabel && (
           <button

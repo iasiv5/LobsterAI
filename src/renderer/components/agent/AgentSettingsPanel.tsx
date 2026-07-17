@@ -88,6 +88,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
   const [model, setModel] = useState<Model | null>(null);
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [skillIds, setSkillIds] = useState<string[]>([]);
+  const [subagentAllowAgentIds, setSubagentAllowAgentIds] = useState<string[]>([]);
   const [nameTouched, setNameTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -112,6 +113,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     model: '',
     workingDirectory: '',
     skillIds: [] as string[],
+    subagentAllowAgentIds: [] as string[],
   });
 
   const getChangedFields = useCallback((): string[] => {
@@ -128,6 +130,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     if (skillIds.length !== init.skillIds.length || skillIds.some((id, i) => id !== init.skillIds[i])) {
       changedFields.push('skillIds');
     }
+    if (
+      subagentAllowAgentIds.length !== init.subagentAllowAgentIds.length ||
+      subagentAllowAgentIds.some((id, i) => id !== init.subagentAllowAgentIds[i])
+    ) {
+      changedFields.push('subagentAllowAgentIds');
+    }
     if (boundKeys.size !== initialBoundKeys.size || [...boundKeys].some((k) => !initialBoundKeys.has(k))) {
       changedFields.push('imBindings');
     }
@@ -141,6 +149,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     model,
     name,
     skillIds,
+    subagentAllowAgentIds,
     systemPrompt,
     userInfo,
     workingDirectory,
@@ -234,12 +243,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
 
       let nextSystemPrompt = a.systemPrompt;
       let nextIdentity = a.identity;
-      const nextUserInfo = await coworkService.readBootstrapFile('USER.md');
+      const nextUserInfo = await coworkService.readBootstrapFile('USER.md', { agentId });
       if (cancelled) return;
       if (isDefaultAgentId(agentId)) {
         const [mainIdentity, mainSoul] = await Promise.all([
-          coworkService.readBootstrapFile('IDENTITY.md'),
-          coworkService.readBootstrapFile('SOUL.md'),
+          coworkService.readBootstrapFile('IDENTITY.md', { agentId }),
+          coworkService.readBootstrapFile('SOUL.md', { agentId }),
         ]);
         if (cancelled) return;
         nextSystemPrompt = mainSoul;
@@ -258,6 +267,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
       setModel(resolvedModel);
       setWorkingDirectory(a.workingDirectory ?? '');
       setSkillIds(a.skillIds ?? []);
+      setSubagentAllowAgentIds(a.subagentAllowAgentIds ?? []);
       initialValuesRef.current = {
         name: a.name,
         description: a.description,
@@ -268,6 +278,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
         model: resolvedModelRef,
         workingDirectory: a.workingDirectory ?? '',
         skillIds: a.skillIds ?? [],
+        subagentAllowAgentIds: a.subagentAllowAgentIds ?? [],
       };
     })();
 
@@ -370,6 +381,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
         workingDirectory: workingDirectory.trim(),
         icon: icon.trim(),
         skillIds,
+        subagentAllowAgentIds,
       });
       if (!result) {
         reportAgentSettingsAction('save_failed', {
@@ -383,12 +395,12 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
       }
       const bootstrapWrites = isMainAgent
         ? [
-            coworkService.writeBootstrapFile('IDENTITY.md', identity),
-            coworkService.writeBootstrapFile('SOUL.md', systemPrompt),
-            coworkService.writeBootstrapFile('USER.md', userInfo),
+            coworkService.writeBootstrapFile('IDENTITY.md', identity, { agentId }),
+            coworkService.writeBootstrapFile('SOUL.md', systemPrompt, { agentId }),
+            coworkService.writeBootstrapFile('USER.md', userInfo, { agentId }),
           ]
         : [
-            coworkService.writeBootstrapFile('USER.md', userInfo),
+            coworkService.writeBootstrapFile('USER.md', userInfo, { agentId }),
           ];
       if (bootstrapWrites.length > 0) {
         const bootstrapSaved = await Promise.all(bootstrapWrites);
@@ -503,6 +515,19 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     return getAgentDisplayNameById(aid, agents);
   };
 
+  const availableSubagentAgents = agents
+    .filter((candidate) => candidate.enabled && candidate.id !== agentId)
+    .sort((left, right) => getAgentDisplayName(left).localeCompare(getAgentDisplayName(right)));
+
+  const handleToggleSubagentAllowAgent = (targetAgentId: string) => {
+    setSubagentAllowAgentIds((current) => {
+      if (current.includes(targetAgentId)) {
+        return current.filter(id => id !== targetAgentId);
+      }
+      return [...current, targetAgentId];
+    });
+  };
+
   const nameInputValue = isMainAgent && !nameTouched
     ? getAgentDisplayName({ id: agentId, name })
     : name;
@@ -512,6 +537,7 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
     { key: AgentDetailTab.Prompt, label: i18nService.t('coworkBootstrapSoulTitle') },
     { key: AgentDetailTab.User, label: i18nService.t('coworkBootstrapUserTitle') },
     { key: AgentDetailTab.Skills, label: i18nService.t('agentTabSkills') },
+    { key: AgentDetailTab.Collaboration, label: i18nService.t('agentTabCollaboration') },
     { key: AgentDetailTab.Im, label: i18nService.t('agentTabIM') },
   ];
 
@@ -535,6 +561,59 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
         aria-label={ariaLabel}
         className="min-h-0 flex-1 w-full resize-none border border-transparent bg-transparent text-sm leading-6 text-foreground placeholder:text-secondary/45 focus:outline-none"
       />
+    </div>
+  );
+
+  const renderCollaborationSettings = () => (
+    <div className="h-full overflow-y-auto">
+      <div className="mb-4">
+        <div className="text-sm font-semibold text-foreground">
+          {i18nService.t('agentSubagentsTitle')}
+        </div>
+        <p className="mt-1 text-xs leading-5 text-secondary">
+          {i18nService.t('agentSubagentsHint')}
+        </p>
+      </div>
+      {availableSubagentAgents.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-secondary">
+          {i18nService.t('agentSubagentsEmpty')}
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {availableSubagentAgents.map((candidate) => {
+            const checked = subagentAllowAgentIds.includes(candidate.id);
+            return (
+              <label
+                key={candidate.id}
+                className="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-raised"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-sm">
+                    <span className="font-medium text-secondary">
+                      {getAgentDisplayName(candidate).slice(0, 1).toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {getAgentDisplayName(candidate)}
+                    </div>
+                    <div className="truncate text-xs text-secondary">
+                      {candidate.id}
+                    </div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => handleToggleSubagentAllowAgent(candidate.id)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                  aria-label={getAgentDisplayName(candidate)}
+                />
+              </label>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -775,6 +854,8 @@ const AgentSettingsPanel: React.FC<AgentSettingsPanelProps> = ({ agentId, onClos
           {activeTab === AgentDetailTab.Skills && (
             <AgentSkillSelector selectedSkillIds={skillIds} onChange={setSkillIds} />
           )}
+
+          {activeTab === AgentDetailTab.Collaboration && renderCollaborationSettings()}
 
           {activeTab === AgentDetailTab.Im && (
             <div className="h-full overflow-y-auto">

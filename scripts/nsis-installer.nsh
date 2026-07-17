@@ -10,8 +10,12 @@
 ; which electron-builder inserts inside the install section -- right after
 ; the user clicks Install and, critically, *before* uninstallOldVersion.
 
+; Note: clobbers $0 (nsExec exit status). Callers that need a previous exit
+; code after this macro must copy it to another register first ($R2 by
+; convention below). [Console]::Out.Write emits no trailing newline, so the
+; timestamp can be embedded mid-line in log writes.
 !macro GetTimestamp OUTVAR
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "[DateTime]::Now.ToString(\"yyyy-MM-dd HH:mm:ss.fff\")"'
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "[Console]::Out.Write([DateTime]::Now.ToString(\"yyyy-MM-dd HH:mm:ss.fff\"))"'
   Pop $0
   Pop ${OUTVAR}
   StrCmp $0 "0" +2
@@ -54,12 +58,14 @@
       Start-Sleep -Milliseconds 500;\
     }"'
   Pop $0
+  StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
   CreateDirectory "$APPDATA\LobsterAI"
   FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $9 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $9 "$8 phase=process-stop-complete exit=$0 elapsed_ms=$5$\r$\n"
+  FileWrite $9 "$8 phase=process-stop-complete exit=$R2 elapsed_ms=$5$\r$\n"
   FileClose $9
 !macroend
 
@@ -123,18 +129,20 @@
       }"'
     Pop $0
     Pop $1
+    StrCpy $R2 $0
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
 
     StrCmp $R0 "" BackupSkipCloseLog
       !insertmacro GetTimestamp $8
-      FileWrite $R0 "$8 phase=backup-end exit=$0 elapsed_ms=$5$\r$\n"
+      FileWrite $R0 "$8 phase=backup-end exit=$R2 elapsed_ms=$5$\r$\n"
       FileWrite $R0 "$8 phase=backup-output text=$1$\r$\n"
       FileClose $R0
     BackupSkipCloseLog:
     FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $9 "$8 phase=skill-backup-complete exit=$0 elapsed_ms=$5$\r$\n"
+    FileWrite $9 "$8 phase=skill-backup-complete exit=$R2 elapsed_ms=$5$\r$\n"
     FileClose $9
 
     ; -- Remove old installation directory --
@@ -168,6 +176,7 @@
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
     FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=old-install-cleanup-complete elapsed_ms=$5 renamed_path=$3 cleanup_mode=async$\r$\n"
     FileClose $9
@@ -181,6 +190,7 @@
 
   CreateDirectory "$APPDATA\LobsterAI"
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=nsis-extract-complete$\r$\n"
   FileClose $2
@@ -200,69 +210,154 @@
   DetailPrint "[Installer] Preparing resource directories"
   DetailPrint "[Installer] Adding Windows Defender exclusions before extraction"
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=defender-exclusion-start$\r$\n"
   FileClose $2
   System::Call 'kernel32::GetTickCount()i .r7'
   nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender exclusions added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
   Pop $0
+  StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=defender-exclusion-complete exit=$0 elapsed_ms=$5$\r$\n"
+  FileWrite $2 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5$\r$\n"
   FileClose $2
 
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i'
 
-  DetailPrint "[Installer] Launching bundled extractor"
   DetailPrint "[Installer] Extracting bundled resources"
+  ; $R2 = current extractor exit code, $R3 = extractor id for logs.
+  ; ($R2 survives GetTimestamp, which clobbers $0 -- see the macro note.)
+  StrCpy $R2 ""
+  StrCpy $R3 "none"
+
+  ; -- Attempt 1: Windows built-in bsdtar (Win10 1803+) --
+  ; Runs a trusted system binary instead of the freshly written app exe,
+  ; which security software tends to freeze for cloud analysis on its first
+  ; execution (the root cause of installers hanging at this phase).
+  IfFileExists "$SYSDIR\tar.exe" 0 TarExtractElectron
+  StrCpy $R3 "system-tar"
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=tar-extract-start tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
+  FileWrite $2 "$8 phase=tar-extract-start extractor=system-tar tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
+  FileClose $2
+  System::Call 'kernel32::GetTickCount()i .r7'
+  nsExec::ExecToLog '"$SYSDIR\tar.exe" -xf "$INSTDIR\resources\win-resources.tar" -C "$INSTDIR\resources"'
+  Pop $0
+  StrCpy $R2 $0
+  System::Call 'kernel32::GetTickCount()i .r6'
+  IntOp $5 $6 - $7
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=tar-extract-exit extractor=system-tar exit=$R2 elapsed_ms=$5$\r$\n"
+  FileClose $2
+  StrCmp $R2 "error" TarExtractElectron
+  IntCmp $R2 0 TarExtractVerify TarExtractElectron TarExtractElectron
+
+  TarExtractElectron:
+  ; -- Attempt 2: bundled Electron Node runtime --
+  ; Wrapped in a 10-minute watchdog: if security software freezes the child
+  ; before it can run, the installer must fail visibly instead of hanging
+  ; forever (a killed installer leaves a half-installed app behind).
+  StrCpy $R3 "electron"
+  DetailPrint "[Installer] Launching bundled extractor"
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=tar-extract-start extractor=electron tar=$INSTDIR\resources\win-resources.tar dest=$INSTDIR\resources$\r$\n"
   FileClose $2
   System::Call 'kernel32::GetTickCount()i .r7'
 
-  nsExec::ExecToLog '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar" "$INSTDIR\resources" "$APPDATA\LobsterAI\install-timing.log"'
+  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "$$p = Start-Process -FilePath \"$INSTDIR\${APP_EXECUTABLE_FILENAME}\" -ArgumentList \"`\"$INSTDIR\resources\unpack-cfmind.cjs`\" `\"$INSTDIR\resources\win-resources.tar`\" `\"$INSTDIR\resources`\" `\"$APPDATA\LobsterAI\install-timing.log`\"\" -NoNewWindow -PassThru; if ($$p.WaitForExit(600000)) { $$p.WaitForExit(); if ($$p.ExitCode -eq $$null) { exit 125 }; exit $$p.ExitCode } else { Stop-Process -Id $$p.Id -Force -ErrorAction SilentlyContinue; exit 124 }"'
   Pop $0
+  StrCpy $R2 $0
   System::Call 'kernel32::GetTickCount()i .r6'
   IntOp $5 $6 - $7
-
-  ; Diagnostic: log raw exit code with brackets to reveal trailing whitespace
-  StrLen $4 $0
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=tar-extract-raw-exit exit_raw=[$0] exit_len=$4$\r$\n"
+  FileWrite $2 "$8 phase=tar-extract-exit extractor=electron exit=$R2 elapsed_ms=$5$\r$\n"
   FileClose $2
 
-  ; "error" = nsExec couldn't start the process (check before IntCmp, which
+  ; "error" = nsExec couldn't start powershell (check before IntCmp, which
   ; converts non-numeric strings to 0 and would misidentify "error" as success)
-  StrCmp $0 "error" TarExtractProcessFailed
+  StrCmp $R2 "error" TarExtractProcessFailed
+  StrCmp $R2 "124" TarExtractTimeout
   ; IntCmp tolerates trailing whitespace/CR that StrCmp would reject
-  IntCmp $0 0 TarExtractOK TarExtractNonZero TarExtractNonZero
+  IntCmp $R2 0 TarExtractVerify TarExtractNonZero TarExtractNonZero
+
+  TarExtractVerify:
+  ; Success requires the OpenClaw runtime entry to actually exist -- an exit
+  ; code alone must never trigger deletion of the only recovery source.
+  IfFileExists "$INSTDIR\resources\cfmind\gateway-bundle.mjs" TarExtractSucceeded
+  IfFileExists "$INSTDIR\resources\cfmind\openclaw.mjs" TarExtractSucceeded
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 reason=entry-missing-after-extract$\r$\n"
+  FileClose $2
+  ; A bogus system-tar success still gets a shot at the bundled extractor.
+  StrCmp $R3 "system-tar" TarExtractElectron
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction finished but the AI runtime files are still missing. LobsterAI will retry the extraction automatically on first launch. If the app still reports missing runtime files, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+  Goto TarExtractFailed
 
   TarExtractProcessFailed:
     FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $2 "$8 phase=tar-extract-error exit=$0 elapsed_ms=$5 reason=process-start-failed$\r$\n"
+    FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=process-start-failed$\r$\n"
     FileClose $2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed: could not start extractor process (exit=$0). This may be caused by antivirus software. See %APPDATA%\LobsterAI\install-timing.log for details."
-    Goto TarExtractOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed: could not start the extractor process (exit=$R2). This is usually caused by antivirus software. LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    Goto TarExtractFailed
+
+  TarExtractTimeout:
+    FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=timeout$\r$\n"
+    FileClose $2
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction timed out after 10 minutes -- the extractor process appears to be blocked, usually by antivirus software. LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    Goto TarExtractFailed
 
   TarExtractNonZero:
     FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $2 "$8 phase=tar-extract-error exit=$0 elapsed_ms=$5 reason=nonzero-exit$\r$\n"
+    FileWrite $2 "$8 phase=tar-extract-error extractor=$R3 exit=$R2 elapsed_ms=$5 reason=nonzero-exit$\r$\n"
     FileClose $2
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed (exit code $0). See %APPDATA%\LobsterAI\install-timing.log for details."
-  TarExtractOK:
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Resource extraction failed (exit code $R2). LobsterAI will retry the extraction automatically on first launch; if that fails too, add the install directory to your antivirus allowlist and reinstall. Details: $APPDATA\LobsterAI\install-timing.log"
+    Goto TarExtractFailed
 
+  TarExtractSucceeded:
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=tar-extract-complete exit=$0 elapsed_ms=$5$\r$\n"
+  FileWrite $2 "$8 phase=tar-extract-complete extractor=$R3 exit=$R2$\r$\n"
+  FileClose $2
+  ; Completion marker, read by the app for install-integrity diagnostics.
+  FileOpen $2 "$INSTDIR\resources\.win-resources-extracted" w
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 source=installer extractor=$R3$\r$\n"
   FileClose $2
   DetailPrint "[Installer] Bundled resources extraction complete"
+  ; Only a verified success may delete these: the preserved archive is what
+  ; lets the app finish an interrupted extraction at first launch.
   Delete "$INSTDIR\resources\win-resources.tar"
+  Delete "$INSTDIR\resources\unpack-cfmind.cjs"
+  Goto TarExtractDone
+
+  TarExtractFailed:
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=tar-extract-failed-archive-preserved extractor=$R3 exit=$R2$\r$\n"
+  FileClose $2
+  TarExtractDone:
 
   ; -- Restore user-created skills from AppData backup --
   ; The backup was created in customCheckAppRunning before extraction began.
@@ -271,6 +366,7 @@
   IfFileExists "$APPDATA\LobsterAI\skills-backup\*.*" 0 SkipSkillRestore
     DetailPrint "[Installer] Restoring user-created skills"
     FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
     !insertmacro GetTimestamp $8
     FileWrite $2 "$8 phase=skill-restore-start$\r$\n"
     FileClose $2
@@ -288,22 +384,24 @@
       Remove-Item -Path $$backup -Recurse -Force -ErrorAction SilentlyContinue"'
     Pop $0
     Pop $1
+    StrCpy $R2 $0
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
     FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $2 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $2 "$8 phase=skill-restore-complete exit=$0 elapsed_ms=$5$\r$\n"
+    FileWrite $2 "$8 phase=skill-restore-complete exit=$R2 elapsed_ms=$5$\r$\n"
     FileWrite $2 "$8 phase=skill-restore-output text=$1$\r$\n"
     FileClose $2
   SkipSkillRestore:
 
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
 
-  ; Clean up the unpack script -- no longer needed after installation
-  DetailPrint "[Installer] Cleaning up temporary installer files"
-  Delete "$INSTDIR\resources\unpack-cfmind.cjs"
+  ; The unpack script is deleted in TarExtractSucceeded above; after a failed
+  ; extraction it is intentionally kept alongside win-resources.tar.
 
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=install-complete$\r$\n"
   FileClose $2

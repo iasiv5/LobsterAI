@@ -12,6 +12,8 @@ import {
   normalizeBrowserHostnamePolicyList,
   normalizeBrowserWebAccessConfig,
 } from '../../shared/browserWebAccess/constants';
+import { COWORK_TEMP_DIR_NAME } from '../../shared/cowork/constants';
+import { CoworkErrorModelSource } from '../../shared/cowork/errorDetail';
 import { normalizeMcpServerUrlInput } from '../../shared/mcp/url';
 import {
   AuthType,
@@ -27,6 +29,7 @@ import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
 import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
 import {
   getAllServerModelMetadata,
+  listProviderSourceEntries,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
   resolveRawApiConfig,
@@ -46,7 +49,7 @@ import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
-import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
+import { getMainAgentWorkspacePath } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
 const gwDiagTs = (): string => {
@@ -91,6 +94,7 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
 export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
+const OPENCLAW_MEMORY_CORE_PLUGIN_ID = 'memory-core';
 export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 const OPENCLAW_DEFAULT_MODEL_MAX_TOKENS = 8192;
 const CHROME_PROXY_SERVER_ARG_PREFIX = '--proxy-server=';
@@ -356,6 +360,25 @@ const buildManagedSkillCreationPrompt = (skillsDirPath: string): string => [
   `  ${skillsDirPath}/<skill-name>/SKILL.md`,
   '',
   'Do NOT create skills under the workspace `skills/` subdirectory.',
+].join('\n');
+
+const MANAGED_DELIVERABLE_LINKS_PROMPT = [
+  '## Deliverable File Links',
+  '',
+  'When a turn creates or updates user-facing deliverable files (documents, spreadsheets,',
+  'presentations, HTML pages, images, audio, video, and similar outputs), you MUST list each',
+  'deliverable at the end of the final reply as a Markdown link with an absolute path:',
+  '',
+  '  `[report.docx](/absolute/path/to/report.docx)`',
+  '',
+  '- Both `[name](/absolute/path)` and `[name](file:///absolute/path)` are accepted.',
+  '- This also applies when files are produced indirectly, e.g. by a Python/Node script or a',
+  '  shell command you ran. Always link the final output files.',
+  `- Keep intermediate files (helper scripts, scratch data, drafts) inside the \`${COWORK_TEMP_DIR_NAME}/\``,
+  '  directory under the session working directory, and do not link them in the final reply.',
+  `- The user can clean up \`${COWORK_TEMP_DIR_NAME}/\` at any time;`,
+  '  anything the user should keep must be saved outside of it.',
+  '- Only link files that exist on disk after your work. Never link files you merely read.',
 ].join('\n');
 
 const MANAGED_MEMORY_POLICY_PROMPT = [
@@ -1049,6 +1072,69 @@ export const buildProviderSelection = (options: {
     },
   };
 };
+
+export type OpenClawProviderModelSource = {
+  source: CoworkErrorModelSource;
+  providerName?: string;
+  providerDisplayName?: string;
+};
+
+/**
+ * Classifies an OpenClaw provider id (as reported in gateway error metadata)
+ * back to the LobsterAI Settings entry it was generated from, so runtime
+ * errors can tell the user whether the failing model is the LobsterAI plan,
+ * a vendor coding plan, or their own custom provider.
+ */
+export function resolveModelSourceForOpenClawProvider(
+  openclawProviderId: string,
+): OpenClawProviderModelSource | undefined {
+  const providerId = openclawProviderId?.trim();
+  if (!providerId) return undefined;
+
+  if (providerId === OpenClawProviderId.LobsteraiServer) {
+    return {
+      source: CoworkErrorModelSource.LobsterAIPlan,
+      providerName: ProviderName.LobsteraiServer,
+    };
+  }
+
+  for (const entry of listProviderSourceEntries()) {
+    const descriptor = resolveDescriptor(
+      entry.providerName,
+      entry.codingPlanEnabled,
+      entry.authType,
+    );
+    if (descriptor.providerId !== providerId) continue;
+
+    if (entry.providerName === ProviderName.Custom) {
+      return {
+        source: CoworkErrorModelSource.CustomProvider,
+        providerName: entry.providerName,
+        providerDisplayName: entry.displayName,
+      };
+    }
+    // Built-in providers rarely carry a user displayName; fall back to the
+    // registry label ("DeepSeek", "Zhipu", ...) so the error card can name them.
+    const providerDisplayName =
+      entry.displayName || ProviderRegistry.get(entry.providerName)?.label || undefined;
+    if (entry.codingPlanEnabled) {
+      return {
+        source: CoworkErrorModelSource.CodingPlan,
+        providerName: entry.providerName,
+        providerDisplayName,
+      };
+    }
+    return {
+      source: entry.authType === 'oauth'
+        ? CoworkErrorModelSource.BuiltinOAuth
+        : CoworkErrorModelSource.BuiltinProvider,
+      providerName: entry.providerName,
+      providerDisplayName,
+    };
+  }
+
+  return undefined;
+}
 
 const buildProviderModelCatalog = (
   providers: Record<string, OpenClawProviderSelection['providerConfig']>,
@@ -1854,30 +1940,35 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           workspace: path.resolve(mainWorkspacePath),
           mediaMaxMb: 30,
           ...(taskWorkingDirectory ? { cwd: path.resolve(taskWorkingDirectory) } : {}),
-          ...(coworkConfig.embeddingEnabled ? {
-            memorySearch: {
-              enabled: true,
-              provider: (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
+          memorySearch: {
+            enabled: true,
+            provider: coworkConfig.embeddingEnabled
+              ? (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
                 ? coworkConfig.embeddingProvider
-                : 'openai'),
-              ...(coworkConfig.embeddingModel ? { model: coworkConfig.embeddingModel } : {}),
+                : 'openai')
+              : 'none',
+            ...(coworkConfig.embeddingEnabled && coworkConfig.embeddingModel ? { model: coworkConfig.embeddingModel } : {}),
+            ...(coworkConfig.embeddingEnabled ? {
               remote: {
                 ...(coworkConfig.embeddingRemoteBaseUrl ? { baseUrl: coworkConfig.embeddingRemoteBaseUrl } : {}),
                 ...(coworkConfig.embeddingRemoteApiKey ? { apiKey: coworkConfig.embeddingRemoteApiKey } : {}),
-              },
-              store: {
-                // Use trigram tokenizer for FTS5 — unicode61 (the openclaw default)
-                // cannot tokenize CJK characters, so Chinese/Japanese/Korean memory
-                // content is invisible to keyword search.
-                fts: { tokenizer: 'trigram' },
               },
               query: {
                 hybrid: {
                   vectorWeight: coworkConfig.embeddingVectorWeight ?? 0.7,
                 },
               },
+            } : {
+              fallback: 'none',
+            }),
+            store: {
+              // Use trigram tokenizer for FTS5 — unicode61 (the openclaw default)
+              // cannot tokenize CJK characters, so Chinese/Japanese/Korean memory
+              // content is invisible to keyword search.
+              fts: { tokenizer: 'trigram' },
+              ...(!coworkConfig.embeddingEnabled ? { vector: { enabled: false } } : {}),
             },
-          } : {}),
+          },
           heartbeat: {
             every: coworkConfig.openClawHeartbeatEnabled === false
               ? OPENCLAW_HEARTBEAT_EVERY_DISABLED
@@ -2004,6 +2095,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const trustedPluginAllow = Array.from(new Set([
           ...existingAllow,
           BUNDLED_BROWSER_PLUGIN_ID,
+          OPENCLAW_MEMORY_CORE_PLUGIN_ID,
           // A non-empty plugins.allow is a strict allowlist in OpenClaw
           // (manifest-owner-policy "not-in-allowlist"), so runtime-bundled
           // plugins we rely on must be listed here explicitly or they never
@@ -2037,6 +2129,10 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 // a removed plugin causes "Config invalid: plugin not found" errors.
                 allow: trustedPluginAllow,
                 deny: [],
+                slots: {
+                  ...((existingPlugins as Record<string, unknown>).slots as Record<string, unknown> | undefined),
+                  memory: OPENCLAW_MEMORY_CORE_PLUGIN_ID,
+                },
                 entries: pluginEntries,
               },
             }
@@ -2087,11 +2183,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     if (managedConfig.plugins) {
       const plugins = managedConfig.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
-      const existingMemoryCore = entries['memory-core'] ?? {};
+      const existingMemoryCore = entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] ?? {};
       const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
       if (coworkConfig.dreamingEnabled) {
-        entries['memory-core'] = {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
+          enabled: true,
           config: {
             ...existingMemoryCoreConfig,
             dreaming: {
@@ -2100,12 +2197,16 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             },
           },
         };
-      } else if (existingMemoryCoreConfig?.dreaming) {
-        // Remove dreaming config when disabled
-        const { dreaming: _, ...restConfig } = existingMemoryCoreConfig;
-        entries['memory-core'] = {
+      } else {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
-          config: Object.keys(restConfig).length > 0 ? restConfig : undefined,
+          enabled: true,
+          config: {
+            ...existingMemoryCoreConfig,
+            dreaming: {
+              enabled: false,
+            },
+          },
         };
       }
     }
@@ -2920,6 +3021,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         workingDirectory: '',
         icon: '',
         skillIds: [],
+        subagentAllowAgentIds: [],
         enabled: true,
         pinned: false,
         pinOrder: null,
@@ -3117,6 +3219,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       sections.push(MANAGED_WEB_SEARCH_POLICY_PROMPT);
       sections.push(MANAGED_BROWSER_POLICY_PROMPT);
       sections.push(MANAGED_EXEC_SAFETY_PROMPT);
+      sections.push(MANAGED_DELIVERABLE_LINKS_PROMPT);
       sections.push(MANAGED_MEMORY_POLICY_PROMPT);
       sections.push(MANAGED_HEARTBEAT_POLICY_PROMPT);
       sections.push(buildManagedSkillCreationPrompt(resolveSkillCreationPath()));
@@ -3318,7 +3421,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Sync workspace files (SOUL.md, IDENTITY.md, USER.md, AGENTS.md) for each non-main agent.
+   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
    * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
    * get their own workspace directories under the openclaw state directory.
    */
@@ -3327,8 +3430,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // Use the openclaw state directory as base, matching OpenClaw's own fallback
     // logic: {STATE_DIR}/workspace-{agentId}/
     const stateDir = this.engineManager.getStateDir();
-    const userContent = readBootstrapFile(mainWorkspaceDir, 'USER.md');
-
     try {
       if (repairHeartbeatFile(mainWorkspaceDir)) {
         console.log('[OpenClawConfigSync] Repaired legacy HEARTBEAT.md in main workspace');
@@ -3360,10 +3461,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
         const identityContent = (agent.identity || '').trim();
         this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
-
-        // Sync USER.md — shared user profile from the main Agent settings
-        const userPath = path.join(agentWorkspace, 'USER.md');
-        this.syncFileIfChanged(userPath, userContent);
 
         // Sync AGENTS.md for this agent (reuse same logic as main agent)
         this.syncAgentsMd(agentWorkspace, {

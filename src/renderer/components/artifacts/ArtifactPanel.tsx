@@ -1484,9 +1484,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             window.dispatchEvent(new CustomEvent('app:showToast', { detail: result?.error || t('copyFailed') }));
             return;
           }
-          await navigator.clipboard.writeText(result.content);
+          if (!await copyTextToClipboard(result.content)) {
+            throw new Error('Failed to copy artifact file content');
+          }
         } else {
-          await navigator.clipboard.writeText(selectedArtifact.content);
+          if (!await copyTextToClipboard(selectedArtifact.content)) {
+            throw new Error('Failed to copy artifact content');
+          }
         }
       }
       reportSelectedArtifactAction('copy_content', { result: 'success' });
@@ -3939,7 +3943,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               <span className="text-sm font-medium truncate">
                 {selectedArtifact.fileName || selectedArtifact.title}
               </span>
-              <span className="text-xs uppercase text-muted">{selectedArtifact.type}</span>
               <span className="flex-1" />
               {showArtifactActionsMenu && (
                 <div className="relative">

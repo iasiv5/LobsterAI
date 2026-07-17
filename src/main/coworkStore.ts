@@ -14,6 +14,7 @@ import {
   CoworkForkMode,
   type CoworkForkMode as CoworkForkModeType,
 } from '../shared/cowork/constants';
+import type { CoworkErrorDetail } from '../shared/cowork/errorDetail';
 import {
   type CoworkGoal,
   normalizeCoworkGoal,
@@ -132,6 +133,28 @@ function parseEmbeddingVectorWeight(value: string | undefined): number {
 
 function normalizeMemoryText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeStringIdList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function parseStringIdList(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    return normalizeStringIdList(JSON.parse(value) as string[]);
+  } catch {
+    return [];
+  }
 }
 
 function extractConversationSearchTerms(value: string): string[] {
@@ -357,9 +380,11 @@ export interface Agent {
   workingDirectory: string;
   icon: string;
   skillIds: string[];
+  subagentAllowAgentIds: string[];
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -377,6 +402,7 @@ export interface CreateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   source?: AgentSource;
   presetId?: string;
 }
@@ -390,8 +416,10 @@ export interface UpdateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   enabled?: boolean;
   pinned?: boolean;
+  sortOrder?: number | null;
 }
 
 
@@ -401,6 +429,7 @@ export interface CoworkMessageMetadata {
   toolResult?: string;
   toolUseId?: string | null;
   error?: string;
+  errorDetail?: CoworkErrorDetail;
   isError?: boolean;
   isStreaming?: boolean;
   isFinal?: boolean;
@@ -441,6 +470,13 @@ export interface CoworkConversationReplacementEntry {
   timestamp?: number;
 }
 
+export interface CoworkMessageReplacementEntry {
+  type: CoworkMessageType;
+  content: string;
+  metadata?: Record<string, unknown>;
+  timestamp?: number;
+}
+
 export interface CoworkSession {
   id: string;
   title: string;
@@ -469,6 +505,17 @@ export interface CoworkSession {
   goal?: CoworkGoal | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface UpsertSubagentChildSessionOptions {
+  id: string;
+  parentSessionId: string;
+  childSessionKey: string;
+  agentId: string;
+  title: string;
+  task?: string | null;
+  status?: CoworkSessionStatus;
+  createdAt?: number;
 }
 
 export interface CoworkSessionSummary {
@@ -1955,6 +2002,55 @@ export class CoworkStore {
     })();
   }
 
+  replaceSessionMessages(
+    sessionId: string,
+    messages: CoworkMessageReplacementEntry[],
+  ): void {
+    const now = Date.now();
+
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          "DELETE FROM cowork_messages WHERE session_id = ? AND type IN ('user', 'assistant', 'tool_use', 'tool_result')",
+        )
+        .run(sessionId);
+
+      const insert = this.db.prepare(`
+        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const seqRow = this.db
+        .prepare(
+          'SELECT COALESCE(MAX(sequence), 0) as max_seq FROM cowork_messages WHERE session_id = ?',
+        )
+        .get(sessionId) as { max_seq: number } | undefined;
+      let sequence = (seqRow?.max_seq ?? 0) + 1;
+      let lastUserMessageAt: number | null = null;
+      for (const message of messages) {
+        const messageTimestamp = normalizeMessageTimestamp(message.timestamp) ?? now;
+        if (message.type === 'user') {
+          lastUserMessageAt = Math.max(lastUserMessageAt ?? 0, messageTimestamp);
+        }
+        insert.run(
+          uuidv4(),
+          sessionId,
+          message.type,
+          message.content,
+          message.metadata ? JSON.stringify(message.metadata) : null,
+          messageTimestamp,
+          sequence++,
+        );
+      }
+
+      if (lastUserMessageAt != null) {
+        this.db
+          .prepare('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?')
+          .run(lastUserMessageAt, sessionId);
+      }
+    })();
+  }
+
   updateMessage(
     sessionId: string,
     messageId: string,
@@ -2120,6 +2216,34 @@ export class CoworkStore {
     if (config.dreamingTimezone !== undefined) {
       this.upsertConfig('dreamingTimezone', String(config.dreamingTimezone), now);
     }
+  }
+
+  /**
+   * Distinct session working directories with activity since the given
+   * timestamp. Used by the cowork temp janitor to scope its sweep.
+   */
+  listRecentSessionCwds(sinceMs: number): string[] {
+    const rows = this.getAll<{ cwd: string }>(
+      `
+      SELECT cwd FROM cowork_sessions
+      WHERE cwd IS NOT NULL AND cwd != ''
+      GROUP BY cwd
+      HAVING MAX(updated_at) >= ?
+    `,
+      [sinceMs],
+    );
+    return rows.map(row => row.cwd);
+  }
+
+  /** Distinct working directories of the given sessions. */
+  listSessionCwds(sessionIds: string[]): string[] {
+    if (sessionIds.length === 0) return [];
+    const placeholders = sessionIds.map(() => '?').join(', ');
+    const rows = this.getAll<{ cwd: string }>(
+      `SELECT DISTINCT cwd FROM cowork_sessions WHERE id IN (${placeholders}) AND cwd IS NOT NULL AND cwd != ''`,
+      sessionIds,
+    );
+    return rows.map(row => row.cwd);
   }
 
   getAppLanguage(): 'zh' | 'en' {
@@ -2702,9 +2826,11 @@ export class CoworkStore {
       working_directory?: string | null;
       icon: string;
       skill_ids: string;
+      subagent_allow_agent_ids?: string | null;
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
+      sort_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -2713,7 +2839,8 @@ export class CoworkStore {
     }
 
     const rows = this.getAll<AgentRow>(`
-      SELECT * FROM agents ORDER BY is_default DESC, created_at ASC
+      SELECT * FROM agents
+      ORDER BY COALESCE(sort_order, 2147483647) ASC, is_default DESC, created_at ASC
     `);
 
     return rows.map(row => this.mapAgentRow(row));
@@ -2730,9 +2857,11 @@ export class CoworkStore {
       working_directory?: string | null;
       icon: string;
       skill_ids: string;
+      subagent_allow_agent_ids?: string | null;
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
+      sort_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -2769,8 +2898,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -2782,9 +2911,11 @@ export class CoworkStore {
           request.model || '',
           request.workingDirectory || '',
           normalizeAgentAvatarIcon(request.icon),
-          JSON.stringify(request.skillIds || []),
+          JSON.stringify(normalizeStringIdList(request.skillIds)),
+          JSON.stringify(normalizeStringIdList(request.subagentAllowAgentIds)),
           request.source || 'custom',
           request.presetId || '',
+          this.getNextAgentSortOrder(),
           now,
           now,
         );
@@ -2846,7 +2977,11 @@ export class CoworkStore {
     }
     if (updates.skillIds !== undefined) {
       setClauses.push('skill_ids = ?');
-      values.push(JSON.stringify(updates.skillIds));
+      values.push(JSON.stringify(normalizeStringIdList(updates.skillIds)));
+    }
+    if (updates.subagentAllowAgentIds !== undefined) {
+      setClauses.push('subagent_allow_agent_ids = ?');
+      values.push(JSON.stringify(normalizeStringIdList(updates.subagentAllowAgentIds)));
     }
     if (updates.enabled !== undefined) {
       setClauses.push('enabled = ?');
@@ -2864,10 +2999,41 @@ export class CoworkStore {
         setClauses.push('pin_order = NULL');
       }
     }
+    if (updates.sortOrder !== undefined) {
+      setClauses.push('sort_order = ?');
+      values.push(updates.sortOrder);
+    }
 
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
     return this.getAgent(id);
+  }
+
+  reorderAgents(agentIds: string[]): Agent[] {
+    const normalizedIds = Array.from(new Set(agentIds.map(id => id.trim()).filter(Boolean)));
+    if (normalizedIds.length === 0) return this.listAgents();
+
+    const existingAgents = this.listAgents();
+    const existingIds = new Set(existingAgents.map(agent => agent.id));
+    const orderedIds = normalizedIds.filter(id => existingIds.has(id));
+    if (orderedIds.length === 0) return this.listAgents();
+    const orderedIdSet = new Set(orderedIds);
+    const finalIds = [
+      ...orderedIds,
+      ...existingAgents
+        .map(agent => agent.id)
+        .filter(id => !orderedIdSet.has(id)),
+    ];
+
+    const now = Date.now();
+    const updateSortOrder = this.db.prepare('UPDATE agents SET sort_order = ?, updated_at = ? WHERE id = ?');
+    const reorder = this.db.transaction((ids: string[]) => {
+      ids.forEach((id, index) => {
+        updateSortOrder.run(index + 1, now, id);
+      });
+    });
+    reorder(finalIds);
+    return this.listAgents();
   }
 
   deleteAgent(id: string): boolean {
@@ -2900,21 +3066,19 @@ export class CoworkStore {
     working_directory?: string | null;
     icon: string;
     skill_ids: string;
+    subagent_allow_agent_ids?: string | null;
     enabled: number;
     pinned?: number | null;
     pin_order?: number | null;
+    sort_order?: number | null;
     is_default: number;
     source: string;
     preset_id: string;
     created_at: number;
     updated_at: number;
   }): Agent {
-    let skillIds: string[] = [];
-    try {
-      skillIds = JSON.parse(row.skill_ids);
-    } catch {
-      skillIds = [];
-    }
+    const skillIds = parseStringIdList(row.skill_ids);
+    const subagentAllowAgentIds = parseStringIdList(row.subagent_allow_agent_ids);
     return {
       id: row.id,
       name: row.name,
@@ -2925,9 +3089,11 @@ export class CoworkStore {
       workingDirectory: row.working_directory || '',
       icon: row.icon,
       skillIds,
+      subagentAllowAgentIds,
       enabled: Boolean(row.enabled),
       pinned: Boolean(row.pinned),
       pinOrder: row.pinned ? (row.pin_order ?? null) : null,
+      sortOrder: row.sort_order ?? null,
       isDefault: Boolean(row.is_default),
       source: row.source as AgentSource,
       presetId: row.preset_id,
@@ -2936,9 +3102,109 @@ export class CoworkStore {
     };
   }
 
+  getSessionIdByClaudeSessionId(claudeSessionId: string): string | null {
+    const normalized = claudeSessionId.trim();
+    if (!normalized) return null;
+    const row = this.getOne<{ id: string }>(
+      'SELECT id FROM cowork_sessions WHERE claude_session_id = ? LIMIT 1',
+      [normalized],
+    );
+    return row?.id ?? null;
+  }
+
+  upsertSubagentChildSession(options: UpsertSubagentChildSessionOptions): CoworkSession {
+    const existing = this.getSession(options.id, 0);
+    const parent = this.getSession(options.parentSessionId, 0);
+    const agent = this.getAgent(options.agentId);
+    const now = Date.now();
+    const createdAt = options.createdAt ?? existing?.createdAt ?? now;
+    const title = options.title.trim() || agent?.name || options.agentId;
+    const cwd = parent?.cwd || agent?.workingDirectory || '';
+    const systemPrompt = agent?.systemPrompt || '';
+    const modelOverride = existing?.modelOverride || '';
+    const executionMode = parent?.executionMode || 'local';
+    const activeSkillIds = agent?.skillIds ?? [];
+    const status = options.status ?? 'running';
+
+    if (existing) {
+      this.db
+        .prepare(
+          `
+          UPDATE cowork_sessions
+          SET title = ?,
+              claude_session_id = ?,
+              status = ?,
+              cwd = ?,
+              system_prompt = ?,
+              model_override = ?,
+              execution_mode = ?,
+              active_skill_ids = ?,
+              agent_id = ?,
+              parent_session_id = ?,
+              updated_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(
+          title,
+          options.childSessionKey,
+          status,
+          cwd,
+          systemPrompt,
+          modelOverride,
+          executionMode,
+          JSON.stringify(activeSkillIds),
+          options.agentId,
+          options.parentSessionId,
+          now,
+          options.id,
+        );
+    } else {
+      this.db
+        .prepare(
+          `
+          INSERT INTO cowork_sessions (
+            id, title, claude_session_id, status, cwd, system_prompt, model_override,
+            execution_mode, active_skill_ids, agent_id, pinned, pin_order,
+            parent_session_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
+        `,
+        )
+        .run(
+          options.id,
+          title,
+          options.childSessionKey,
+          status,
+          cwd,
+          systemPrompt,
+          modelOverride,
+          executionMode,
+          JSON.stringify(activeSkillIds),
+          options.agentId,
+          options.parentSessionId,
+          createdAt,
+          now,
+        );
+    }
+
+    const session = this.getSession(options.id, 0);
+    if (!session) {
+      throw new Error(`Subagent child session ${options.id} could not be loaded`);
+    }
+    return session;
+  }
+
   private getNextAgentPinOrder(): number {
     const row = this.getOne<{ max_order: number | null }>(
       'SELECT MAX(pin_order) as max_order FROM agents WHERE pinned = 1',
+    );
+    return (row?.max_order ?? 0) + 1;
+  }
+
+  private getNextAgentSortOrder(): number {
+    const row = this.getOne<{ max_order: number | null }>(
+      'SELECT MAX(sort_order) as max_order FROM agents',
     );
     return (row?.max_order ?? 0) + 1;
   }

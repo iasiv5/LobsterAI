@@ -20,6 +20,7 @@ const makeAgent = (overrides: Partial<Agent> = {}): Agent => ({
   workingDirectory: '',
   icon: '',
   skillIds: [],
+  subagentAllowAgentIds: [],
   enabled: true,
   pinned: false,
   pinOrder: null,
@@ -54,6 +55,7 @@ describe('agentService.updateAgent', () => {
       isDefault: false,
       source: 'custom',
       skillIds: [],
+      subagentAllowAgentIds: [],
     }]));
     store.dispatch(setCurrentAgentId('agent-1'));
 
@@ -85,6 +87,7 @@ describe('agentService.updateAgent', () => {
       isDefault: false,
       source: 'custom',
       skillIds: [],
+      subagentAllowAgentIds: [],
     }]));
     store.dispatch(setCurrentAgentId('agent-1'));
     store.dispatch(setActiveSkillIds(['user-selected-skill']));
@@ -117,6 +120,7 @@ describe('agentService.updateAgent', () => {
       isDefault: false,
       source: 'custom',
       skillIds: ['docx'],
+      subagentAllowAgentIds: [],
     }]));
     store.dispatch(setCurrentAgentId('agent-2'));
     store.dispatch(setActiveSkillIds(['xlsx']));

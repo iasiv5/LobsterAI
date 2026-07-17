@@ -189,9 +189,11 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
     setIsRenaming(false);
   };
 
-  const indicatorLabel = task.indicator === AgentSidebarIndicator.Running
-    ? i18nService.t('myAgentSidebarRunning')
-    : i18nService.t('myAgentSidebarUnreadResult');
+  const indicatorLabel = task.indicator === AgentSidebarIndicator.PendingPermission
+    ? i18nService.t('myAgentSidebarPendingPermission')
+    : task.indicator === AgentSidebarIndicator.Running
+      ? i18nService.t('myAgentSidebarRunning')
+      : i18nService.t('myAgentSidebarUnreadResult');
   const menuItemClassName =
     'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
   const menuIconClassName = 'h-3.5 w-3.5';
@@ -277,6 +279,16 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
           <span className="min-w-0 flex-1 truncate">
             {task.title}
           </span>
+          {task.indicator === AgentSidebarIndicator.PendingPermission && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-primary transition-opacity group-hover:opacity-0"
+              title={indicatorLabel}
+              aria-label={indicatorLabel}
+            >
+              <span className="h-1 w-1 shrink-0 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+              {indicatorLabel}
+            </span>
+          )}
           {task.indicator === AgentSidebarIndicator.Running && (
             <span
               className="inline-flex h-3 w-3 shrink-0 items-center justify-center transition-opacity group-hover:opacity-0"

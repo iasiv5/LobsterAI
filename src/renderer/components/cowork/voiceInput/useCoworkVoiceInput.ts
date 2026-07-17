@@ -32,8 +32,6 @@ interface UseCoworkVoiceInputOptions {
   value: string;
   setValue: Dispatch<SetStateAction<string>>;
   textareaRef: RefObject<HTMLTextAreaElement>;
-  minHeight: number;
-  maxHeight: number;
   isLoggedIn: boolean;
   disabled: boolean;
   onQuotaExhausted?: () => void;
@@ -57,8 +55,6 @@ export const useCoworkVoiceInput = ({
   value,
   setValue,
   textareaRef,
-  minHeight,
-  maxHeight,
   isLoggedIn,
   disabled,
   onQuotaExhausted,
@@ -86,16 +82,15 @@ export const useCoworkVoiceInput = ({
 
     setValue(nextValue);
     valueRef.current = nextValue;
+    // Height sync happens in the prompt input's auto-resize effect.
     requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
       textarea.focus();
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
       textarea.selectionStart = nextValue.length;
       textarea.selectionEnd = nextValue.length;
     });
-  }, [dispatch, maxHeight, minHeight, setValue, textareaRef]);
+  }, [dispatch, setValue, textareaRef]);
 
   const markQuotaExhaustedIfNeeded = useCallback((error: unknown) => {
     if (!(error instanceof AsrClientError)) return false;

@@ -1,9 +1,9 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { SubagentMessageStore } from '../../subagentMessageStore';
-import { SubagentRunStore } from '../../subagentRunStore';
-import { type GatewayClientLike, SubagentTracker } from './subagentTracker';
+import { SubagentMessageStore } from '../../../subagentMessageStore';
+import { SubagentRunStore } from '../../../subagentRunStore';
+import { type GatewayClientLike, SubagentTracker } from './tracker';
 
 let db: BetterSqlite3.Database;
 let runStore: SubagentRunStore;
@@ -16,6 +16,7 @@ const setupDb = (): void => {
       id TEXT PRIMARY KEY,
       parent_session_id TEXT NOT NULL,
       session_key TEXT,
+      child_cowork_session_id TEXT,
       agent_id TEXT,
       task TEXT,
       label TEXT,
@@ -241,6 +242,40 @@ test('getSubTaskHistory preserves persisted message timestamps', async () => {
   expect(gatewayClient.request).not.toHaveBeenCalled();
 });
 
+test('getSubTaskHistory ignores persisted messages when failed run has no session key', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const gatewayClient: GatewayClientLike = {
+    request: vi.fn().mockResolvedValue({
+      sessions: [{ key: 'agent:worker:subagent:wrong-run' }],
+    }),
+  };
+  const tracker = new SubagentTracker(runStore, messageStore, () => gatewayClient);
+  runStore.insertSubagentRun({
+    id: 'run-error',
+    parentSessionId: 'parent-1',
+    sessionKey: null,
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'worker',
+    status: 'error',
+    createdAt: 1000,
+    endedAt: 1001,
+  });
+  messageStore.insertMessages('run-error', [{
+    id: 'message-1',
+    type: 'assistant',
+    content: 'wrong history',
+    timestamp: 1002,
+    sequence: 1,
+  }]);
+  runStore.markMessagesPersisted('run-error');
+
+  const messages = await tracker.getSubTaskHistory('parent-1', 'run-error');
+
+  expect(messages).toEqual([]);
+  expect(gatewayClient.request).not.toHaveBeenCalled();
+});
+
 test('deleted subagent run is not reinserted by late spawn results', async () => {
   const tracker = new SubagentTracker(runStore, messageStore, () => null);
   tracker.onToolStart('run-1', {
@@ -261,4 +296,66 @@ test('deleted subagent run is not reinserted by late spawn results', async () =>
 
   expect(deleted).toBe(true);
   expect(runStore.getSubagentRun('run-1')).toBeNull();
+});
+
+test('onHistorySpawnResult inserts a run without realtime tool state', () => {
+  const tracker = new SubagentTracker(runStore, messageStore, () => null);
+
+  tracker.onHistorySpawnResult({
+    toolCallId: 'call-spawn-worker',
+    parentSessionId: 'parent-1',
+    args: {
+      agentId: 'worker',
+      task: 'inspect files',
+      label: 'Worker',
+    },
+    resultText: JSON.stringify({
+      status: 'accepted',
+      childSessionKey: 'agent:worker:subagent:abc',
+    }),
+    createdAt: 1234,
+  });
+
+  expect(runStore.getSubagentRun('call-spawn-worker')).toEqual({
+    id: 'call-spawn-worker',
+    parentSessionId: 'parent-1',
+    sessionKey: 'agent:worker:subagent:abc',
+    childCoworkSessionId: expect.any(String),
+    agentId: 'worker',
+    task: 'inspect files',
+    label: 'Worker',
+    status: 'running',
+    createdAt: 1234,
+    endedAt: null,
+  });
+});
+
+test('forbidden spawn result is recorded as error', () => {
+  const tracker = new SubagentTracker(runStore, messageStore, () => null);
+
+  tracker.onToolStart('call-forbidden', {
+    taskName: 'essay-writer-1',
+    task: 'write an essay',
+  }, 'parent-1');
+
+  tracker.onSpawnResult('call-forbidden', JSON.stringify({
+    status: 'forbidden',
+    error: 'sessions_spawn requires explicit agentId when requireAgentId is configured.',
+  }), {
+    taskName: 'essay-writer-1',
+    task: 'write an essay',
+  });
+
+  expect(runStore.getSubagentRun('call-forbidden')).toEqual({
+    id: 'call-forbidden',
+    parentSessionId: 'parent-1',
+    sessionKey: null,
+    childCoworkSessionId: null,
+    agentId: 'essay-writer-1',
+    task: 'write an essay',
+    label: 'essay-writer-1',
+    status: 'error',
+    createdAt: expect.any(Number),
+    endedAt: expect.any(Number),
+  });
 });

@@ -16,6 +16,21 @@ import { localStore } from './store';
 
 type ProviderModel = NonNullable<ProviderConfig['models']>[number];
 
+const getProviderModelIdentity = (modelId: string): string =>
+  modelId.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const getCanonicalProviderModelId = (providerKey: string, modelId: string): string => {
+  const identity = getProviderModelIdentity(modelId);
+  if (!identity) {
+    return modelId;
+  }
+
+  const canonicalModel = ProviderRegistry.get(providerKey)?.defaultModels.find(
+    model => getProviderModelIdentity(model.id) === identity,
+  );
+  return canonicalModel?.id ?? modelId;
+};
+
 const getFixedProviderApiFormat = (providerKey: string): ApiFormat | null => {
   const def = ProviderRegistry.get(providerKey);
   if (def && !def.switchableBaseUrls) {
@@ -70,21 +85,22 @@ const normalizeProviderModels = (
   providerKey: string,
   models: ProviderConfig['models'],
 ): ProviderConfig['models'] => models?.map(model => {
+  const canonicalModelId = getCanonicalProviderModelId(providerKey, model.id);
   const contextWindow = ProviderRegistry.resolveModelContextWindow(
     providerKey,
-    model.id,
+    canonicalModelId,
     model.contextWindow,
   );
   const supportsThinking = ProviderRegistry.resolveModelSupportsThinking(
     providerKey,
-    model.id,
+    canonicalModelId,
     model.supportsThinking,
   );
   return {
     ...model,
     supportsImage: ProviderRegistry.resolveModelSupportsImage(
       providerKey,
-      model.id,
+      canonicalModelId,
       model.supportsImage,
     ),
     ...(supportsThinking ? { supportsThinking } : {}),
@@ -325,6 +341,31 @@ const ADDED_PROVIDER_MODELS: Record<string, { models: ProviderModel[]; position:
   },
 };
 
+// Model batches added after the original v1 migration. Keep these separate so
+// upgrading does not re-add older defaults that a user intentionally removed.
+const RECENT_PROVIDER_MODEL_MIGRATIONS: Record<string, {
+  version: number;
+  models: ProviderModel[];
+  position: 'start' | 'end';
+}> = {
+  [ProviderName.OpenAI]: {
+    version: 2,
+    models: [
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+    ],
+    position: 'start',
+  },
+  [ProviderName.Xai]: {
+    version: 1,
+    models: [
+      { id: 'grok-4.5', name: 'Grok 4.5', supportsImage: true, supportsThinking: true, contextWindow: 500_000 },
+    ],
+    position: 'start',
+  },
+};
+
 const markCurrentProviderModelMigrationsApplied = (
   versions: AppConfig['providerModelMigrationVersions'],
 ): NonNullable<AppConfig['providerModelMigrationVersions']> => {
@@ -335,16 +376,25 @@ const markCurrentProviderModelMigrationsApplied = (
       ADDED_PROVIDER_MODELS_MIGRATION_VERSION,
     );
   });
+  Object.entries(RECENT_PROVIDER_MODEL_MIGRATIONS).forEach(([providerKey, migration]) => {
+    nextVersions[providerKey] = Math.max(
+      nextVersions[providerKey] ?? 0,
+      migration.version,
+    );
+  });
   return nextVersions;
 };
 
 const getNewlyAppliedProviderModelMigrations = (
   previousVersions: AppConfig['providerModelMigrationVersions'],
   nextVersions: AppConfig['providerModelMigrationVersions'],
-): string[] => Object.keys(ADDED_PROVIDER_MODELS).filter(
-  providerKey => (previousVersions?.[providerKey] ?? 0) < ADDED_PROVIDER_MODELS_MIGRATION_VERSION
-    && (nextVersions?.[providerKey] ?? 0) >= ADDED_PROVIDER_MODELS_MIGRATION_VERSION
-);
+): string[] => {
+  const latestVersions = markCurrentProviderModelMigrationsApplied(undefined);
+  return Object.entries(latestVersions)
+    .filter(([providerKey, version]) => (previousVersions?.[providerKey] ?? 0) < version
+      && (nextVersions?.[providerKey] ?? 0) >= version)
+    .map(([providerKey]) => providerKey);
+};
 
 const PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES: Record<string, Record<string, number>> = {
   [ProviderName.Minimax]: {
@@ -401,10 +451,12 @@ const alignProviderModelOrder = (
     return models;
   }
 
-  const defaultOrder = new Map(defaultModels.map((model, index) => [model.id, index]));
+  const defaultOrder = new Map(
+    defaultModels.map((model, index) => [getProviderModelIdentity(model.id), index]),
+  );
   return [...models].sort((a, b) => {
-    const aOrder = defaultOrder.get(a.id);
-    const bOrder = defaultOrder.get(b.id);
+    const aOrder = defaultOrder.get(getProviderModelIdentity(a.id));
+    const bOrder = defaultOrder.get(getProviderModelIdentity(b.id));
     if (aOrder === undefined && bOrder === undefined) return 0;
     if (aOrder === undefined) return 1;
     if (bOrder === undefined) return -1;
@@ -446,14 +498,19 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
             // Inject added models (for existing users who already have saved config)
             const addedConfig = ADDED_PROVIDER_MODELS[providerKey];
             const existingIds = new Set(
-              (mergedProvider.models as Array<{ id: string }> | undefined)?.map(model => model.id) ?? []
+              (mergedProvider.models as Array<{ id: string }> | undefined)
+                ?.map(model => getProviderModelIdentity(model.id)) ?? []
             );
-            const hasAnyAddedModel = addedConfig?.models.some(model => existingIds.has(model.id)) ?? false;
+            const hasAnyAddedModel = addedConfig?.models.some(
+              model => existingIds.has(getProviderModelIdentity(model.id)),
+            ) ?? false;
             const hasAppliedAddedModelsMigration =
               (providerModelMigrationVersions[providerKey] ?? 0) >= ADDED_PROVIDER_MODELS_MIGRATION_VERSION
               || hasAnyAddedModel;
             if (addedConfig && mergedProvider.models && !hasAppliedAddedModelsMigration) {
-              const newModels = addedConfig.models.filter(m => !existingIds.has(m.id));
+              const newModels = addedConfig.models.filter(
+                model => !existingIds.has(getProviderModelIdentity(model.id)),
+              );
               if (newModels.length > 0) {
                 mergedProvider.models = addedConfig.position === 'start'
                   ? [...newModels, ...mergedProvider.models]
@@ -461,7 +518,32 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
               }
             }
             if (addedConfig && mergedProvider.models) {
-              providerModelMigrationVersions[providerKey] = ADDED_PROVIDER_MODELS_MIGRATION_VERSION;
+              providerModelMigrationVersions[providerKey] = Math.max(
+                providerModelMigrationVersions[providerKey] ?? 0,
+                ADDED_PROVIDER_MODELS_MIGRATION_VERSION,
+              );
+            }
+            const recentMigration = RECENT_PROVIDER_MODEL_MIGRATIONS[providerKey];
+            const hasAppliedRecentMigration = recentMigration
+              && (providerModelMigrationVersions[providerKey] ?? 0) >= recentMigration.version;
+            if (recentMigration && mergedProvider.models && !hasAppliedRecentMigration) {
+              const recentExistingIds = new Set(
+                (mergedProvider.models as Array<{ id: string }>).map(
+                  model => getProviderModelIdentity(model.id),
+                ),
+              );
+              const newModels = recentMigration.models.filter(
+                model => !recentExistingIds.has(getProviderModelIdentity(model.id)),
+              );
+              if (newModels.length > 0) {
+                mergedProvider.models = recentMigration.position === 'start'
+                  ? [...newModels, ...mergedProvider.models]
+                  : [...mergedProvider.models, ...newModels];
+              }
+              providerModelMigrationVersions[providerKey] = Math.max(
+                providerModelMigrationVersions[providerKey] ?? 0,
+                recentMigration.version,
+              );
             }
             if (mergedProvider.models) {
               mergedProvider.models = applyProviderModelContextWindowOverrides(

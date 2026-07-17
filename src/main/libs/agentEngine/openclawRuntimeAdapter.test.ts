@@ -24,6 +24,7 @@ import {
 import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
+  buildOpenClawRuntimeErrorDetail,
   ensurePlanModeProposedPlanBlock,
   estimateOpenClawChatSendFrameBytes,
   isPlanModeResponseComplete,
@@ -312,6 +313,83 @@ test('resolveOpenClawRuntimeErrorMessage keeps generic error when safe metadata 
     providerRuntimeFailureKind: 'unclassified',
     rawErrorPreview: 'provider returned a surprising response',
   })).toBe('LLM request failed.');
+});
+
+test('buildOpenClawRuntimeErrorDetail preserves safe metadata behind the normalized copy', () => {
+  const metadata = {
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+    rawErrorHash: 'abc123hash',
+  };
+  const displayMessage = resolveOpenClawRuntimeErrorMessage('LLM request failed.', metadata);
+  const detail = buildOpenClawRuntimeErrorDetail('LLM request failed.', displayMessage, metadata);
+
+  expect(detail).toEqual({
+    rawErrorMessage: 'LLM request failed.',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail returns undefined when the error passed through unchanged', () => {
+  expect(buildOpenClawRuntimeErrorDetail(
+    'session file locked (timeout after 10000ms)',
+    'session file locked (timeout after 10000ms)',
+    undefined,
+  )).toBeUndefined();
+});
+
+test('buildOpenClawRuntimeErrorDetail annotates the model source from gateway provider metadata', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'LLM request failed.',
+    '请求过于频繁，请稍后再试。',
+    { provider: 'custom', model: 'kimi-k2.5', httpCode: '429' },
+    {
+      resolveModelSource: (providerId) => (providerId === 'custom'
+        ? { source: 'custom-provider', providerName: 'custom', providerDisplayName: '我的中转' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'custom',
+    model: 'kimi-k2.5',
+    modelSource: 'custom-provider',
+    providerDisplayName: '我的中转',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail falls back to the turn model ref when metadata lacks provider info', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'Agent failed before reply: something broke.',
+    '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
+    undefined,
+    {
+      fallbackModelRef: 'zai/glm-5',
+      resolveModelSource: (providerId) => (providerId === 'zai'
+        ? { source: 'coding-plan', providerName: 'zhipu' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'zai',
+    model: 'glm-5',
+    modelSource: 'coding-plan',
+  });
+  expect(detail?.providerDisplayName).toBeUndefined();
 });
 
 test('estimateOpenClawChatSendFrameBytes measures the full RPC frame as UTF-8 JSON', () => {
@@ -1556,6 +1634,288 @@ test('pollChannelSessions does not complete a channel session while a local acti
   expect(statusEvents).toEqual([]);
 });
 
+test('sessions.changed drives IM loading status without creating a local active turn', () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const statusEvents: Array<{ sessionId: string; status: string }> = [];
+  adapter.on('sessionStatus', (sessionId: string, status: string) => {
+    statusEvents.push({ sessionId, status });
+  });
+  adapter.channelSessionSync = {
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-1',
+      phase: 'start',
+      status: 'running',
+    },
+  });
+
+  expect(session.status).toBe('running');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
+  expect(adapter.knownChannelSessionIds.has(session.id)).toBe(false);
+  expect(adapter.channelLifecycleRunBySessionKey.get(sessionKey)?.runId).toBe('im-run-1');
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-1',
+      phase: 'end',
+      status: 'done',
+    },
+  });
+
+  expect(session.status).toBe('completed');
+  expect(adapter.channelLifecycleRunBySessionKey.has(sessionKey)).toBe(false);
+  expect(getUpdateSessionCalls().filter((call) => 'status' in call.patch)).toEqual([
+    {
+      sessionId: session.id,
+      patch: { status: 'running' },
+      options: undefined,
+    },
+    {
+      sessionId: session.id,
+      patch: { status: 'completed' },
+      options: undefined,
+    },
+  ]);
+  expect(statusEvents).toEqual([
+    { sessionId: session.id, status: 'running' },
+    { sessionId: session.id, status: 'completed' },
+  ]);
+});
+
+test('sessions.changed IM status handling excludes desktop, cron, main, subagent, and stale bindings', () => {
+  const validSessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const resolveOrCreateSession = vi.fn(() => session.id);
+  adapter.channelSessionSync = {
+    isCurrentBindingKey: (key: string) => key !== validSessionKey,
+    resolveOrCreateSession,
+  };
+
+  for (const sessionKey of [
+    `agent:main:lobsterai:${session.id}`,
+    'agent:main:cron:job-1:run:run-1',
+    'agent:main:main',
+    'agent:main:subagent:run-1',
+    validSessionKey,
+  ]) {
+    adapter.handleGatewayEvent({
+      event: 'sessions.changed',
+      payload: {
+        sessionKey,
+        runId: 'run-ignored',
+        phase: 'start',
+        status: 'running',
+      },
+    });
+  }
+
+  expect(session.status).toBe('completed');
+  expect(resolveOrCreateSession).not.toHaveBeenCalled();
+  expect(getUpdateSessionCalls().some((call) => 'status' in call.patch)).toBe(false);
+});
+
+test('explicit IM lifecycle start prevents polling from clearing loading mid-run', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store, getUpdateSessionCalls } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+        status: 'running',
+      }],
+    }),
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-1',
+      phase: 'start',
+      status: 'running',
+    },
+  });
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('running');
+  expect(getUpdateSessionCalls().filter((call) => 'status' in call.patch)).toEqual([
+    {
+      sessionId: session.id,
+      patch: { status: 'running' },
+      options: undefined,
+    },
+  ]);
+});
+
+test('polling terminal status recovers when an IM lifecycle terminal event is missed', async () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isChannelSessionKey: (key: string) => key === sessionKey,
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      sessions: [{
+        key: sessionKey,
+        hasActiveRun: false,
+        status: 'done',
+      }],
+    }),
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-1',
+      phase: 'start',
+      status: 'running',
+    },
+  });
+  await adapter.pollChannelSessions();
+
+  expect(session.status).toBe('completed');
+  expect(adapter.channelLifecycleRunBySessionKey.has(sessionKey)).toBe(false);
+});
+
+test('a stale IM terminal event cannot clear a newer run loading state', () => {
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const { session, store } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.channelSessionSync = {
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-new',
+      phase: 'start',
+      status: 'running',
+    },
+  });
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      sessionKey,
+      runId: 'im-run-old',
+      phase: 'end',
+      status: 'done',
+    },
+  });
+
+  expect(session.status).toBe('running');
+  expect(adapter.channelLifecycleRunBySessionKey.get(sessionKey)?.runId).toBe('im-run-new');
+});
+
+test('gateway session lifecycle subscription uses the existing sessions.subscribe RPC', async () => {
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  const request = vi.fn().mockResolvedValue({ subscribed: true });
+
+  adapter.subscribeToGatewaySessionEvents({
+    start: () => {},
+    stop: () => {},
+    request,
+  });
+
+  await vi.waitFor(() => {
+    expect(request).toHaveBeenCalledWith(
+      'sessions.subscribe',
+      {},
+      { timeoutMs: 5_000 },
+    );
+  });
+});
+
+test('stale IM lifecycle markers are pruned without allocating per-run timers', () => {
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  const sessionKey = 'agent:main:feishu:dm:ou_123';
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    adapter.agentTimeoutSeconds = 1;
+    adapter.channelLifecycleRunBySessionKey.set(sessionKey, {
+      runId: 'lost-terminal-run',
+      observedAtMs: Date.now() - 61_001,
+    });
+
+    adapter.pruneStaleChannelLifecycleRuns();
+
+    expect(adapter.channelLifecycleRunBySessionKey.has(sessionKey)).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      '[ChannelSync] discarded stale IM lifecycle run marker.',
+      `SessionKey ${sessionKey}.`,
+      'Run lost-terminal-run.',
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('malformed IM lifecycle mapping errors stay isolated from the gateway event loop', () => {
+  const adapter = new OpenClawRuntimeAdapter({} as never, {} as never);
+  const mappingError = new Error('mapping unavailable');
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  adapter.channelSessionSync = {
+    isCurrentBindingKey: () => {
+      throw mappingError;
+    },
+  };
+  try {
+    expect(() => adapter.handleGatewayEvent({
+      event: 'sessions.changed',
+      payload: {
+        sessionKey: 'agent:main:feishu:dm:ou_123',
+        runId: 'im-run-1',
+        phase: 'start',
+        status: 'running',
+      },
+    })).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(
+      '[ChannelSync] failed to process gateway session lifecycle event:',
+      mappingError,
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});
+
 function createRunTurnAdapter(options: {
   sessionModelOverride?: string;
   agentModel?: string;
@@ -1742,6 +2102,23 @@ test('normal conversation does not receive plan mode instructions', async () => 
   expect(chatSendRequests[0].params.message).not.toContain('[Plan Mode recovery instruction]');
 });
 
+test('continueSession strips NUL characters from the persisted message and chat.send payload', async () => {
+  const nul = String.fromCharCode(0);
+  const { adapter, requests, session } = createRunTurnAdapter();
+
+  await adapter.continueSession('session-1', `请分析${nul}这段${nul}${nul}文本`);
+
+  const chatSendRequests = requests.filter((request) => request.method === 'chat.send');
+  expect(chatSendRequests).toHaveLength(1);
+  const outbound = chatSendRequests[0].params.message as string;
+  expect(outbound).not.toContain(nul);
+  expect(outbound).toContain('请分析这段文本');
+
+  const userMessages = session.messages.filter((message) => message.type === 'user');
+  expect(userMessages).toHaveLength(1);
+  expect(userMessages[0].content).toBe('请分析这段文本');
+});
+
 test('continueSession patches a session override before chat.send even when the model cache matches', async () => {
   const model = 'lobsterai-server/qwen3.6-plus-YoudaoInner';
   const { adapter, requests } = createRunTurnAdapter({
@@ -1759,6 +2136,7 @@ test('continueSession patches a session override before chat.send even when the 
   expect(requests[0].params).toEqual({
     key: 'agent:main:lobsterai:session-1',
     model,
+    reasoningLevel: 'stream',
   });
 });
 
@@ -1967,6 +2345,8 @@ function createReconcileStore(
   let nextId = session.messages.length + 1;
   let replaceCallCount = 0;
   let lastReplaceArgs: { sessionId: string; authoritative: Array<Record<string, unknown>> } | null = null;
+  let replaceSessionCallCount = 0;
+  let lastReplaceSessionArgs: { sessionId: string; messages: Array<Record<string, unknown>> } | null = null;
   const updateSessionCalls: Array<{
     sessionId: string;
     patch: Record<string, unknown>;
@@ -1977,6 +2357,8 @@ function createReconcileStore(
     session,
     getReplaceCallCount: () => replaceCallCount,
     getLastReplaceArgs: () => lastReplaceArgs,
+    getReplaceSessionCallCount: () => replaceSessionCallCount,
+    getLastReplaceSessionArgs: () => lastReplaceSessionArgs,
     getUpdateSessionCalls: () => updateSessionCalls,
     store: {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
@@ -1995,6 +2377,26 @@ function createReconcileStore(
           ...message,
         };
         session.messages.push(created);
+        return created;
+      },
+      insertMessageBeforeId: (
+        sessionId: string,
+        beforeMessageId: string,
+        message: Record<string, unknown>,
+      ) => {
+        expect(sessionId).toBe(session.id);
+        const created = {
+          id: `msg-${nextId++}`,
+          timestamp: nextId,
+          metadata: {},
+          ...message,
+        };
+        const targetIndex = session.messages.findIndex((entry) => entry.id === beforeMessageId);
+        if (targetIndex < 0) {
+          session.messages.push(created);
+        } else {
+          session.messages.splice(targetIndex, 0, created);
+        }
         return created;
       },
       updateSession: (sessionId: string, patch: Record<string, unknown>, updateOptions?: Record<string, unknown>) => {
@@ -2022,6 +2424,38 @@ function createReconcileStore(
             type: entry.role,
             content: entry.text,
             metadata: { isStreaming: false, isFinal: true, ...(entry.metadata ?? {}) },
+            timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : nextId,
+          });
+        }
+      },
+      replaceSessionMessages: (sessionId: string, messages: Array<Record<string, unknown>>) => {
+        replaceSessionCallCount++;
+        lastReplaceSessionArgs = { sessionId, messages };
+        lastReplaceArgs = {
+          sessionId,
+          authoritative: messages
+            .filter((entry) => entry.type === 'user' || entry.type === 'assistant')
+            .map((entry) => {
+              const authoritative: Record<string, unknown> = {
+                role: entry.type,
+                text: entry.content,
+              };
+              if (typeof entry.timestamp === 'number') {
+                authoritative.timestamp = entry.timestamp;
+              }
+              if (entry.type === 'user' && entry.metadata !== undefined) {
+                authoritative.metadata = entry.metadata;
+              }
+              return authoritative;
+            }),
+        };
+        session.messages = session.messages.filter((m) => m.type === 'system');
+        for (const entry of messages) {
+          session.messages.push({
+            id: `msg-${nextId++}`,
+            type: entry.type,
+            content: entry.content,
+            metadata: entry.metadata,
             timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : nextId,
           });
         }
@@ -2063,6 +2497,7 @@ function createActiveTurn(sessionId: string, sessionKey: string, runId: string) 
     mediaStatusPollCountByTaskId: new Map(),
     mediaStatusPollBaseByToolCallId: new Map(),
     contextMaintenanceToolCallIds: new Set(),
+    thinking: { messageId: null, currentText: '', messageIdByKey: new Map() },
     stopRequested: false,
     pendingUserSync: false,
     bufferedChatPayloads: [],
@@ -2695,6 +3130,40 @@ test('reconcileWithHistory: content mismatch — triggers replace', async () => 
   expect((args.authoritative[1] as Record<string, unknown>).text).toBe('Full complete response from the model.');
 });
 
+test('subagent history sync preserves visible local user text instead of raw outbound prompt', async () => {
+  const rawOutboundPrompt = `[LobsterAI system instructions]
+hidden setup
+
+[Context bridge from previous LobsterAI conversation]
+previous context
+
+[Current user request]
+换一颗树再来一次`;
+  const { session, store, getLastReplaceArgs } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: rawOutboundPrompt, timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'assistant', content: '新的作文内容', timestamp: 2, metadata: {} },
+  ]);
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: rawOutboundPrompt, timestamp: 10 },
+        { role: 'assistant', content: '新的作文内容', timestamp: 20 },
+      ],
+    }),
+  };
+
+  await adapter.syncSessionHistoryFromGateway(session.id, 'agent:writer:subagent:abc');
+
+  expect(getLastReplaceArgs()?.authoritative).toEqual([
+    { role: 'user', text: '换一颗树再来一次', timestamp: 1, metadata: {} },
+    { role: 'assistant', text: '新的作文内容', timestamp: 20 },
+  ]);
+});
+
 test('lifecycle fallback repairs managed session assistant text from history', async () => {
   const brokenTable = [
     'OpenClaw 优缺点总结',
@@ -2750,6 +3219,7 @@ test('lifecycle fallback repairs managed session assistant text from history', a
     mediaStatusPollCountByTaskId: new Map(),
     mediaStatusPollBaseByToolCallId: new Map(),
     contextMaintenanceToolCallIds: new Set(),
+    thinking: { messageId: null, currentText: '', messageIdByKey: new Map() },
     stopRequested: false,
     pendingUserSync: false,
     bufferedChatPayloads: [],
@@ -2805,6 +3275,19 @@ test('lifecycle fallback backfills missing tool result for the current turn', as
     && message.metadata?.toolUseId === 'call-read'
   ));
   expect(resultMessage?.content).toBe('gateway log output');
+  const thinkingIndex = session.messages.findIndex((message) => message.metadata?.isThinking === true);
+  const toolUseIndex = session.messages.findIndex((message) => (
+    message.type === 'tool_use' && message.metadata?.toolUseId === 'call-read'
+  ));
+  expect(thinkingIndex).toBeGreaterThan(0);
+  expect(thinkingIndex).toBeLessThan(toolUseIndex);
+  expect(session.messages[thinkingIndex].metadata).toMatchObject({
+    isThinking: true,
+    isStreaming: false,
+    isFinal: true,
+    openclawThinkingAnchorToolCallId: 'call-read',
+    openclawThinkingKey: 'tool:call-read:thinking:0',
+  });
   expect(session.status).toBe('completed');
 });
 
@@ -3382,69 +3865,195 @@ test('chat final reuses committed assistant segment after sessions_yield history
   }
 });
 
-test('chat final reuses identical finalized thinking from the current turn', async () => {
+test('chat history sync reconstructs missed sessions_spawn tools after yield', async () => {
   vi.useFakeTimers();
   try {
-    const thinkingText = 'The user wants me to spawn two subagents to test. Let me do that.';
-    const finalText = 'fibonacci 也完成了。两个 subagent 测试都正常完成。';
+    const startupText = 'product-analyst completed. Now starting ts-engineer and qa-reviewer.';
     const { session, store } = createReconcileStore([
-      { id: 'msg-1', type: 'user', content: '起两个subagent 随便做点什么，用于测试', timestamp: 1, metadata: {} },
-      {
-        id: 'msg-2',
-        type: 'assistant',
-        content: thinkingText,
-        timestamp: 2,
-        metadata: { isThinking: true, isStreaming: false, isFinal: true },
-      },
-      {
-        id: 'msg-3',
-        type: 'assistant',
-        content: 'summer-poem 已完成，还在等 fibonacci 的结果...',
-        timestamp: 3,
-        metadata: { isStreaming: false, isFinal: true },
-      },
+      { id: 'msg-1', type: 'user', content: 'coordinate a small change', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: startupText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+      { id: 'msg-3', type: 'tool_use', content: 'Using tool: sessions_spawn', timestamp: 3, metadata: { toolUseId: 'call-product', toolName: 'sessions_spawn' } },
+      { id: 'msg-4', type: 'tool_result', content: '{"status":"accepted","childSessionKey":"agent:product-analyst:subagent:one"}', timestamp: 4, metadata: { toolUseId: 'call-product' } },
     ]);
 
-    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
     const sessionKey = `agent:main:lobsterai:${session.id}`;
     adapter.gatewayClient = {
       start: () => {},
       stop: () => {},
       request: async () => ({
         messages: [
-          { role: 'user', content: '起两个subagent 随便做点什么，用于测试' },
+          { role: 'user', content: 'coordinate a small change' },
           {
             role: 'assistant',
             content: [
-              { type: 'thinking', thinking: thinkingText },
-              { type: 'text', text: finalText },
+              { type: 'text', text: startupText },
+              {
+                type: 'toolCall',
+                id: 'call-ts',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'ts-engineer',
+                  task: 'implement the change',
+                },
+              },
+              {
+                type: 'toolCall',
+                id: 'call-qa',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'qa-reviewer',
+                  task: 'review the diff',
+                },
+              },
             ],
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-qa',
+            content: '{"status":"accepted","childSessionKey":"agent:qa-reviewer:subagent:three"}',
           },
         ],
       }),
     };
 
-    const turn = createActiveTurn(session.id, sessionKey, 'run-final');
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
     adapter.activeTurns.set(session.id, turn);
     adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
 
     adapter.handleChatEvent({
       state: 'final',
-      runId: 'run-final',
+      runId: 'run-yield-final',
+      sessionKey,
+      message: { role: 'assistant', content: startupText },
+    }, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolInput?.agentId === 'ts-engineer'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-qa'
+      && String(message.content).includes('agent:qa-reviewer:subagent:three')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+        task: 'implement the change',
+      }),
+      expect.objectContaining({
+        id: 'call-qa',
+        parentSessionId: session.id,
+        sessionKey: 'agent:qa-reviewer:subagent:three',
+        agentId: 'qa-reviewer',
+        task: 'review the diff',
+      }),
+    ]));
+
+    await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('chat history sync materializes missed backfillable tool results by result toolName', async () => {
+  vi.useFakeTimers();
+  try {
+    const finalText = 'ts-engineer is running, waiting for completion.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'coordinate implementation', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: finalText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+    ]);
+
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async () => ({
+        messages: [
+          { role: 'user', content: 'coordinate implementation' },
+          { role: 'assistant', content: finalText },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            toolName: 'sessions_spawn',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-yield',
+            toolName: 'sessions_yield',
+            content: '{"status":"yielded","message":"wait for ts-engineer"}',
+          },
+        ],
+      }),
+    };
+
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-yield-final',
       sessionKey,
       message: { role: 'assistant', content: finalText },
     }, 1);
     await Promise.resolve();
     await Promise.resolve();
 
-    const thinkingMessages = session.messages.filter((message) => message.metadata?.isThinking === true);
-    expect(thinkingMessages.map((message) => message.id)).toEqual(['msg-2']);
-    expect(thinkingMessages[0].content).toBe(thinkingText);
     expect(session.messages.some((message) => (
-      message.type === 'assistant'
-      && message.metadata?.isThinking !== true
-      && message.content === finalText
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolName === 'sessions_spawn'
     ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-yield'
+      && message.metadata?.toolName === 'sessions_yield'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-yield'
+      && String(message.content).includes('wait for ts-engineer')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+      }),
+    ]));
 
     await vi.advanceTimersByTimeAsync(800);
   } finally {
@@ -3548,6 +4157,58 @@ test('late lifecycle fallback event does not reopen a completed managed session'
   expect(session.status).toBe('completed');
   expect(adapter.activeTurns.has(session.id)).toBe(false);
   expect(adapter.sessionIdByRunId.has('late-run')).toBe(false);
+});
+
+test('delivered cron event syncs the resolved delivery mirror conversation', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const mirrorSessionKey =
+      'agent:agent-feishu-bot-1:feishu:feishu-bot-1:direct:oc_zhangsan_group';
+    const resolveMirrorConversation = vi.fn(() => ({
+      sessionId: session.id,
+      sessionKey: mirrorSessionKey,
+    }));
+    const syncSessionHistory = vi.fn().mockResolvedValue(undefined);
+
+    adapter.channelSessionSync = {
+      resolveOrCreateConversationForDeliveryMirror: resolveMirrorConversation,
+    } as never;
+    adapter.syncSessionHistoryFromGateway = syncSessionHistory;
+
+    adapter.handleGatewayEvent({
+      event: 'cron',
+      payload: {
+        action: 'finished',
+        delivered: true,
+        job: { agentId: 'agent-feishu-bot-1' },
+        sessionKey: 'agent:agent-feishu-bot-1:cron:job-1:run:run-1',
+        delivery: {
+          delivered: true,
+          resolved: {
+            channel: 'feishu',
+            to: 'oc_zhangsan_group',
+            accountId: 'feishu-bot-1',
+          },
+        },
+      },
+    });
+
+    expect(resolveMirrorConversation).toHaveBeenCalledWith(
+      'feishu',
+      'oc_zhangsan_group',
+      'feishu-bot-1',
+      'agent-feishu-bot-1',
+    );
+    expect(syncSessionHistory).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(syncSessionHistory).toHaveBeenCalledWith(session.id, mirrorSessionKey);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('late event for a closed run does not recreate a managed session turn', () => {
@@ -4159,6 +4820,51 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(adapter.activeTurns.get(session.id)?.hasContextCompactionEvent).toBe(false);
   expect(adapter.activeTurns.get(session.id)?.pendingRecoverableFollowup).toBe(true);
   expect(adapter.activeTurns.has(session.id)).toBe(true);
+});
+
+test('compaction retry wait clears context maintenance when no follow-up arrives', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const maintenanceSpy = vi.fn();
+    const completeSpy = vi.fn();
+
+    session.status = 'running';
+    adapter.on('contextMaintenance', maintenanceSpy);
+    adapter.on('complete', completeSpy);
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction-timeout'));
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'start' },
+    }, 1);
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'end', completed: true, willRetry: true },
+    }, 2);
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, true);
+    expect(adapter.activeTurns.has(session.id)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await Promise.resolve();
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-compaction-timeout');
+    expect(session.status).toBe('completed');
+    expect(adapter.activeTurns.has(session.id)).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('chat error clears context maintenance after compaction starts', () => {
@@ -6213,7 +6919,7 @@ test('prefetchChannelUserMessages uses latest user only for recreated channel se
 
   await adapter.prefetchChannelUserMessages(
     session.id,
-    'agent:main:feishu:3e462f80:direct:ou_ca9972aed8fa926570225cf3714aa63a',
+    'agent:main:feishu:feishu-bot-1:direct:ou_zhangsan',
   );
 
   expect(getReplaceCallCount()).toBe(0);
@@ -6232,7 +6938,7 @@ test('onSessionDeleted deletes gateway transcripts for all session keys', async 
     deleteSubagentRunsByParent: vi.fn(),
   };
   const adapter = new OpenClawRuntimeAdapter({} as never, {}, {}, subagentRunStore as never);
-  const channelSessionKey = 'agent:main:feishu:3e462f80:direct:ou_ca9972aed8fa926570225cf3714aa63a';
+  const channelSessionKey = 'agent:main:feishu:feishu-bot-1:direct:ou_zhangsan';
   const managedSessionKey = 'agent:main:lobsterai:session-1';
   adapter.gatewayClient = {
     start: () => {},

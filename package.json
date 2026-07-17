@@ -6,7 +6,7 @@
     "email": "lobsterai.project@rd.netease.com"
   },
   "license": "MIT",
-  "version": "2026.7.3",
+  "version": "2026.7.16",
   "openclaw": {
     "version": "v2026.6.1",
     "repo": "https://github.com/openclaw/openclaw.git",
@@ -101,6 +101,7 @@
     "dist:mac:universal": "npm run build && npm run compile:electron && npm run build:skills && electron-builder --mac --universal --config scripts/electron-builder-config.cjs",
     "predist:win": "npm run openclaw:runtime:win-x64",
     "dist:win": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && electron-builder --win --x64 --config scripts/electron-builder-config.cjs",
+    "dist:win:web": "cross-env LOBSTERAI_WEB_INSTALLER=1 npm run dist:win",
     "predist:linux": "npm run openclaw:runtime:linux-x64",
     "dist:linux": "npm run build && npm run compile:electron && npm run build:skills && electron-builder --linux --config scripts/electron-builder-config.cjs",
     "clean:release": "rimraf release",
@@ -146,6 +147,9 @@
     "@codemirror/merge": "^6.12.1",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@corbe30/fortune-excel": "^2.3.2",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@electron/remote": "^2.0.12",
     "@fortune-sheet/core": "^1.0.4",
     "@fortune-sheet/react": "^1.0.4",

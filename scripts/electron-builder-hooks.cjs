@@ -599,6 +599,11 @@ async function afterPack(context) {
       console.warn(`[electron-builder-hooks] App not found at ${appPath}, skipping icon fix`);
     }
   }
+
+  // Windows binaries need no extra handling here: with win.sign configured,
+  // electron-builder routes the app exe, uninstaller and installer through
+  // scripts/win-sign.cjs, and the NSIS target's CopyElevateHelper signs
+  // resources/elevate.exe itself (see app-builder-lib nsisUtil.js).
 }
 
 module.exports = {

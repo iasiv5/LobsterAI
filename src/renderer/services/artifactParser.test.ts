@@ -4,6 +4,8 @@ import { ShareDeploymentCandidateSource } from '../../shared/shareDeployment/con
 import {
   dedupeArtifactsForDisplay,
   hasToolResultMediaAssets,
+  isIgnoredArtifactPath,
+  isPathInsideDirectory,
   normalizeArtifactFilePath,
   normalizeFilePathForDedup,
   parseFileLinksFromMessage,
@@ -13,6 +15,7 @@ import {
   parseToolArtifact,
   parseToolResultMediaArtifacts,
   shouldParseFilePathsFromToolResult,
+  toAbsoluteArtifactPath,
 } from './artifactParser';
 
 describe('normalizeArtifactFilePath', () => {
@@ -94,6 +97,45 @@ describe('parseFileLinksFromMessage', () => {
     expect(artifacts[0].type).toBe('video');
     expect(artifacts[0].filePath).toBe('/home/user/project/generated-video.mp4');
   });
+
+  test('accepts plain absolute POSIX path links without file:// scheme', () => {
+    const content = '改好了：[随便写一个 Markdown.md](/Users/admin/project012/随便写一个 Markdown.md)';
+    const artifacts = parseFileLinksFromMessage(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('markdown');
+    expect(artifacts[0].filePath).toBe('/Users/admin/project012/随便写一个 Markdown.md');
+  });
+
+  test('accepts Windows absolute path links with backslashes', () => {
+    const content = '[周报.docx](D:\\工作文档\\周报.docx)';
+    const artifacts = parseFileLinksFromMessage(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('document');
+    expect(artifacts[0].filePath).toBe('D:\\工作文档\\周报.docx');
+  });
+
+  test('accepts relative path links with a separator', () => {
+    const content = '[报告](./output/report.html)';
+    const artifacts = parseFileLinksFromMessage(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('html');
+    expect(artifacts[0].filePath).toBe('./output/report.html');
+  });
+
+  test('ignores web, mailto, anchor, and localhost links', () => {
+    const content = [
+      '[文档](https://example.com/report.pdf)',
+      '[邮件](mailto:user@example.com)',
+      '[章节](#section)',
+      '[预览](http://localhost:3000/index.html)',
+    ].join('\n');
+    expect(parseFileLinksFromMessage(content, 'msg1', 'sess1')).toHaveLength(0);
+  });
+
+  test('ignores bare-name links without any separator', () => {
+    const content = '[a.md](a.md)';
+    expect(parseFileLinksFromMessage(content, 'msg1', 'sess1')).toHaveLength(0);
+  });
 });
 
 describe('parseFilePathsFromText', () => {
@@ -118,6 +160,27 @@ describe('parseFilePathsFromText', () => {
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].type).toBe('video');
     expect(artifacts[0].filePath).toBe('/home/user/project/generated-video.webm');
+  });
+
+  test('detects bare html file paths', () => {
+    const content = '页面已生成 /home/user/project/dist/index.html 完成';
+    const artifacts = parseFilePathsFromText(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('html');
+    expect(artifacts[0].filePath).toBe('/home/user/project/dist/index.html');
+  });
+
+  test('detects bare Windows backslash paths', () => {
+    const content = '文件已保存到 D:\\工作文档\\月报\\使用Agent.html';
+    const artifacts = parseFilePathsFromText(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].type).toBe('html');
+    expect(artifacts[0].filePath).toBe('D:\\工作文档\\月报\\使用Agent.html');
+  });
+
+  test('does not detect remote https image URLs as local paths', () => {
+    const content = '图片在 https://example.com/assets/generated.png 上';
+    expect(parseFilePathsFromText(content, 'msg1', 'sess1')).toHaveLength(0);
   });
 });
 
@@ -739,6 +802,149 @@ describe('parseToolArtifact', () => {
 
     expect(normalizeFilePathForDedup(toolPath))
       .toBe(normalizeFilePathForDedup(linkArtifacts[0].filePath!));
+  });
+
+  test('extracts file path from Edit tool input', () => {
+    const toolUseMsg = {
+      id: 'tool1',
+      type: 'tool_use' as const,
+      content: '',
+      timestamp: Date.now(),
+      metadata: {
+        toolName: 'Edit',
+        toolUseId: 'tu1',
+        toolInput: { file_path: '/Users/admin/project012/随便写一个 Markdown.md', old_string: 'a', new_string: 'b' },
+      },
+    };
+    const artifact = parseToolArtifact(toolUseMsg, undefined, 'sess1');
+    expect(artifact).not.toBeNull();
+    expect(artifact!.type).toBe('markdown');
+    expect(artifact!.filePath).toBe('/Users/admin/project012/随便写一个 Markdown.md');
+    expect(artifact!.messageId).toBe('tool1');
+  });
+
+  test('extracts file path from lowercase edit tool with path key', () => {
+    const toolUseMsg = {
+      id: 'tool2',
+      type: 'tool_use' as const,
+      content: '',
+      timestamp: Date.now(),
+      metadata: {
+        toolName: 'edit',
+        toolUseId: 'tu2',
+        toolInput: { path: 'D:\\workspace\\notes.md' },
+      },
+    };
+    const artifact = parseToolArtifact(toolUseMsg, undefined, 'sess1');
+    expect(artifact).not.toBeNull();
+    expect(artifact!.filePath).toBe('D:\\workspace\\notes.md');
+  });
+
+  test('supports MultiEdit and create_file tool names', () => {
+    for (const toolName of ['MultiEdit', 'create_file', 'multi_edit']) {
+      const artifact = parseToolArtifact({
+        id: `tool-${toolName}`,
+        type: 'tool_use' as const,
+        content: '',
+        timestamp: Date.now(),
+        metadata: {
+          toolName,
+          toolUseId: `tu-${toolName}`,
+          toolInput: { file_path: '/tmp/out/report.md' },
+        },
+      }, undefined, 'sess1');
+      expect(artifact, toolName).not.toBeNull();
+    }
+  });
+
+  test('returns null for edit tool when the tool result errored', () => {
+    const toolUseMsg = {
+      id: 'tool3',
+      type: 'tool_use' as const,
+      content: '',
+      timestamp: Date.now(),
+      metadata: {
+        toolName: 'Edit',
+        toolUseId: 'tu3',
+        toolInput: { file_path: '/tmp/out/report.md' },
+      },
+    };
+    const toolResultMsg = {
+      id: 'result3',
+      type: 'tool_result' as const,
+      content: 'failed',
+      timestamp: Date.now(),
+      metadata: { toolUseId: 'tu3', isError: true },
+    };
+    expect(parseToolArtifact(toolUseMsg, toolResultMsg, 'sess1')).toBeNull();
+  });
+
+  test('returns null for delete-style and shell tools', () => {
+    for (const toolName of ['delete_file', 'remove', 'Bash', 'exec', 'Read']) {
+      const artifact = parseToolArtifact({
+        id: `tool-${toolName}`,
+        type: 'tool_use' as const,
+        content: '',
+        timestamp: Date.now(),
+        metadata: {
+          toolName,
+          toolUseId: `tu-${toolName}`,
+          toolInput: { file_path: '/tmp/out/report.md' },
+        },
+      }, undefined, 'sess1');
+      expect(artifact, toolName).toBeNull();
+    }
+  });
+});
+
+describe('toAbsoluteArtifactPath', () => {
+  test('keeps absolute POSIX and Windows paths unchanged', () => {
+    expect(toAbsoluteArtifactPath('/home/user/a.md', '/cwd')).toBe('/home/user/a.md');
+    expect(toAbsoluteArtifactPath('D:\\ws\\a.md', '/cwd')).toBe('D:\\ws\\a.md');
+  });
+
+  test('strips file:// prefixes and Windows leading slash', () => {
+    expect(toAbsoluteArtifactPath('file:///D:/ws/a.md', '/cwd')).toBe('D:/ws/a.md');
+    expect(toAbsoluteArtifactPath('file:///home/user/a.md', '/cwd')).toBe('/home/user/a.md');
+  });
+
+  test('joins relative paths to the session cwd', () => {
+    expect(toAbsoluteArtifactPath('output/report.html', '/Users/admin/project')).toBe('/Users/admin/project/output/report.html');
+    expect(toAbsoluteArtifactPath('./output/report.html', '/Users/admin/project/')).toBe('/Users/admin/project/output/report.html');
+  });
+
+  test('returns relative path unchanged without a cwd', () => {
+    expect(toAbsoluteArtifactPath('output/report.html')).toBe('output/report.html');
+  });
+});
+
+describe('isIgnoredArtifactPath', () => {
+  test('ignores .cowork-temp, node_modules, .git, and hidden segments', () => {
+    expect(isIgnoredArtifactPath('/cwd/.cowork-temp/draft.md')).toBe(true);
+    expect(isIgnoredArtifactPath('D:\\ws\\.cowork-temp\\draft.md')).toBe(true);
+    expect(isIgnoredArtifactPath('/cwd/node_modules/pkg/readme.md')).toBe(true);
+    expect(isIgnoredArtifactPath('/cwd/.git/config.md')).toBe(true);
+    expect(isIgnoredArtifactPath('/cwd/sub/.hidden/report.md')).toBe(true);
+    expect(isIgnoredArtifactPath('/cwd/sub/.env.md')).toBe(true);
+  });
+
+  test('keeps normal deliverable paths', () => {
+    expect(isIgnoredArtifactPath('/cwd/output/report.md')).toBe(false);
+    expect(isIgnoredArtifactPath('./output/report.md')).toBe(false);
+    expect(isIgnoredArtifactPath('~/Desktop/report.md')).toBe(false);
+    expect(isIgnoredArtifactPath('D:\\工作文档\\周报.docx')).toBe(false);
+  });
+});
+
+describe('isPathInsideDirectory', () => {
+  test('detects containment case-insensitively across separators', () => {
+    expect(isPathInsideDirectory('/Users/Admin/Project/a.md', '/users/admin/project')).toBe(true);
+    expect(isPathInsideDirectory('D:\\ws\\out\\a.md', 'D:/WS')).toBe(true);
+  });
+
+  test('rejects paths outside the directory and prefix collisions', () => {
+    expect(isPathInsideDirectory('/Users/admin/other/a.md', '/Users/admin/project')).toBe(false);
+    expect(isPathInsideDirectory('/Users/admin/project2/a.md', '/Users/admin/project')).toBe(false);
   });
 });
 

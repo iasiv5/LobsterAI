@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, 
 import { delimiter, dirname, join } from 'path';
 
 import { buildSessionTitleFromInput } from '../../common/sessionTitle';
+import { COWORK_TEMP_DIR_NAME } from '../../shared/cowork/constants';
 import { buildEnvForConfig, getCurrentApiConfig, resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
 import { coworkLog } from './coworkLogger';
 import {
@@ -1401,7 +1402,7 @@ export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'):
  * @returns Path to the temp directory
  */
 export function ensureCoworkTempDir(cwd: string): string {
-  const tempDir = join(cwd, '.cowork-temp');
+  const tempDir = join(cwd, COWORK_TEMP_DIR_NAME);
   if (!existsSync(tempDir)) {
     try {
       mkdirSync(tempDir, { recursive: true });
@@ -1413,26 +1414,6 @@ export function ensureCoworkTempDir(cwd: string): string {
     }
   }
   return tempDir;
-}
-
-/**
- * Get enhanced environment variables with TMPDIR set to the cowork temp directory
- * This ensures Claude Agent SDK creates temporary files in the user's working directory
- * @param cwd Working directory path
- */
-export async function getEnhancedEnvWithTmpdir(
-  cwd: string,
-  target: OpenAICompatProxyTarget = 'local'
-): Promise<Record<string, string | undefined>> {
-  const env = await getEnhancedEnv(target);
-  const tempDir = ensureCoworkTempDir(cwd);
-
-  // Set temp directory environment variables for all platforms
-  env.TMPDIR = tempDir;  // macOS, Linux
-  env.TMP = tempDir;     // Windows
-  env.TEMP = tempDir;    // Windows
-
-  return env;
 }
 
 const SESSION_TITLE_FALLBACK = 'New Chat';

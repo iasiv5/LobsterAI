@@ -339,6 +339,11 @@ interface ArtifactPreviewCardProps {
   onOpenLocalService?: (artifact: Artifact) => void;
   onDeployLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
+  /**
+   * Overrides the default preview-tab behavior for contexts without the
+   * artifact panel (e.g. the scheduled task run modal).
+   */
+  onOpenPreview?: (artifact: Artifact) => void;
 }
 
 const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
@@ -347,6 +352,7 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   onOpenLocalService,
   onDeployLocalService,
   onOpenHtmlFile,
+  onOpenPreview,
 }) => {
   const dispatch = useDispatch();
   const artifactFileShare = useOptionalArtifactFileShare();
@@ -372,8 +378,12 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
       onOpenHtmlFile(artifact);
       return;
     }
+    if (onOpenPreview) {
+      onOpenPreview(artifact);
+      return;
+    }
     dispatch(openArtifactPreviewTab({ sessionId: artifact.sessionId, artifactId: artifact.id }));
-  }, [artifact, dispatch, onOpenHtmlFile, onOpenLocalService]);
+  }, [artifact, dispatch, onOpenHtmlFile, onOpenLocalService, onOpenPreview]);
 
   const handleShareClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();

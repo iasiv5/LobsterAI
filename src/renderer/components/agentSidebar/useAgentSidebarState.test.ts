@@ -5,9 +5,11 @@ import {
   CoworkSessionStatusValue,
   type CoworkSessionSummary,
 } from '../../types/cowork';
+import { AgentSidebarIndicator } from './constants';
 import type { AgentSidebarAgentSummary } from './types';
 import {
   collapseAgentSidebarTaskList,
+  deriveAgentSidebarIndicator,
   removeAgentSidebarAgentTaskPreviews,
   removeAgentSidebarTaskPreviews,
   sortAgentSidebarAgents,
@@ -36,6 +38,7 @@ const makeAgent = (
   id: string,
   pinned = false,
   pinOrder: number | null = null,
+  sortOrder: number | null = null,
 ): AgentSidebarAgentSummary => ({
   id,
   name: id,
@@ -43,6 +46,7 @@ const makeAgent = (
   enabled: true,
   pinned,
   pinOrder,
+  sortOrder,
 });
 
 test('sortAgentSidebarTasks keeps unpinned tasks ordered by last update time', () => {
@@ -89,6 +93,32 @@ test('sortAgentSidebarAgents keeps pinned agents in first-pinned-first order', (
     'regular',
     'another-regular',
   ]);
+});
+
+test('sortAgentSidebarAgents orders agents within pin groups by explicit sort order', () => {
+  const sorted = sortAgentSidebarAgents([
+    makeAgent('regular-second', false, null, 4),
+    makeAgent('pinned-second', true, 2, 2),
+    makeAgent('regular-first', false, null, 3),
+    makeAgent('pinned-first', true, 1, 1),
+  ]);
+
+  expect(sorted.map((agent) => agent.id)).toEqual([
+    'pinned-first',
+    'pinned-second',
+    'regular-first',
+    'regular-second',
+  ]);
+});
+
+test('deriveAgentSidebarIndicator prioritizes pending permission state', () => {
+  const session = makeSession('pending-session', 100, 200, CoworkSessionStatusValue.Running);
+
+  expect(deriveAgentSidebarIndicator(
+    session,
+    new Set([session.id]),
+    new Set([session.id]),
+  )).toBe(AgentSidebarIndicator.PendingPermission);
 });
 
 test('collapseAgentSidebarTaskList resets one agent history list to preview mode', () => {

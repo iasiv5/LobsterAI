@@ -1,7 +1,7 @@
 import { ArrowPathIcon, ChevronDownIcon, ExclamationTriangleIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useState } from 'react';
 
-import { OpenClawGatewayRepairErrorCode } from '../../../shared/openclawEngine/constants';
+import { OpenClawEngineErrorCode, OpenClawGatewayRepairErrorCode } from '../../../shared/openclawEngine/constants';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { LogReporterAction, reportYdAnalyzer } from '../../services/logReporter';
@@ -107,6 +107,11 @@ const EngineFailureOverlay: React.FC<EngineFailureOverlayProps> = ({
     return null;
   }
 
+  // Incomplete installation (runtime files missing): rebuilding the OpenClaw
+  // config cannot help. Quick repair still retries recovery from leftover
+  // installer resources, but the honest fix is allowlist + reinstall.
+  const isRuntimeMissing = status.errorCode === OpenClawEngineErrorCode.RuntimeEntryMissing;
+
   if (isDeferred) {
     return (
       <div className="pointer-events-none fixed inset-x-0 top-4 z-[90] flex justify-center px-4">
@@ -151,11 +156,16 @@ const EngineFailureOverlay: React.FC<EngineFailureOverlayProps> = ({
             <ExclamationTriangleIcon className="h-6 w-6" />
           </span>
           <h3 id="openclaw-gateway-failure-title" className="mt-3 text-base font-semibold text-foreground">
-            {i18nService.t('coworkOpenClawError')}
+            {i18nService.t(isRuntimeMissing ? 'coworkOpenClawRuntimeMissingError' : 'coworkOpenClawError')}
           </h3>
           <p className="mt-2 text-[13px] leading-5 text-secondary">
-            {i18nService.t('coworkOpenClawErrorRepairHint')}
+            {i18nService.t(isRuntimeMissing ? 'coworkOpenClawRuntimeMissingRepairHint' : 'coworkOpenClawErrorRepairHint')}
           </p>
+          {isRuntimeMissing && status.message && (
+            <p className="mt-2 max-w-full break-all text-xs leading-4 text-secondary/80">
+              {status.message}
+            </p>
+          )}
           {gatewayRepairError && (
             <p className="mt-2 text-[13px] leading-5 text-red-600 dark:text-red-400">
               {gatewayRepairError}

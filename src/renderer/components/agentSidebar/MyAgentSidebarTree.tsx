@@ -1,3 +1,19 @@
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -57,6 +73,39 @@ interface MyAgentSidebarTreeProps {
   onBatchSelectableItemsChange: (items: AgentSidebarBatchItem[]) => void;
 }
 
+const SortableAgentNode: React.FC<{
+  agent: AgentSidebarAgentNode;
+  disabled: boolean;
+  children: React.ReactNode;
+}> = ({ agent, disabled, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: agent.id, disabled });
+  const verticalTransform = transform
+    ? `translate3d(0, ${Math.round(transform.y)}px, 0)`
+    : undefined;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: verticalTransform,
+        transition,
+      }}
+      className={`${disabled ? '' : 'cursor-grab active:cursor-grabbing'} ${isDragging ? 'relative z-50 opacity-80' : ''}`}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+};
+
 const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
   isBatchMode,
   batchAgentId,
@@ -77,6 +126,14 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     'home_agent_sidebar',
   );
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
   const {
     agentNodes,
     patchTaskPreview,
@@ -303,65 +360,112 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     }
   };
 
-  const renderAgentNode = (agent: AgentSidebarAgentNode) => (
-    <AgentTreeNode
-      key={agent.id}
-      agent={agent}
-      isBatchMode={isBatchMode}
-      batchAgentId={batchAgentId}
-      selectedKeys={selectedKeys}
-      showBatchOption
-      onToggleExpanded={toggleAgentExpanded}
-      onEditAgent={(agent) => {
-        onSidebarAction?.('agent_edit', {
-          agentType: getAgentType(agent.id),
-          isExpanded: agent.isExpanded,
-          isPinned: agent.pinned,
-        });
-        setSettingsAgentId(agent.id);
-      }}
-      onCreateTask={(agent) => void handleCreateTask(agent)}
-      onDeleteAgent={handleDeleteAgent}
-      onToggleAgentPin={handleToggleAgentPin}
-      onRetryLoadTasks={(agentId) => {
-        const targetAgent = agentNodes.find((item) => item.id === agentId);
-        onSidebarAction?.('task_list_retry_load', {
-          agentType: getAgentType(agentId),
-          visibleTaskCount: targetAgent?.tasks.length,
-        });
-        void retryLoadTasks(agentId);
-      }}
-      onLoadMoreTasks={(agentId) => {
-        const targetAgent = agentNodes.find((item) => item.id === agentId);
-        onSidebarAction?.('task_list_expand_more', {
-          agentType: getAgentType(agentId),
-          visibleTaskCount: targetAgent?.tasks.length,
-        });
-        void loadMoreTasks(agentId);
-      }}
-      onCollapseTasks={(agentId) => {
-        const targetAgent = agentNodes.find((item) => item.id === agentId);
-        onSidebarAction?.('task_list_collapse', {
-          agentType: getAgentType(agentId),
-          visibleTaskCount: targetAgent?.tasks.length,
-        });
-        collapseTasks(agentId);
-      }}
-      onSelectTask={(task) => void handleSelectTask(task)}
-      onDeleteTask={handleDeleteTask}
-      onShareTask={handleShareTask}
-      onToggleTaskPin={handleToggleTaskPin}
-      onRenameTask={handleRenameTask}
-      onToggleSelection={onToggleSelection}
-      onEnterBatchMode={handleEnterBatchMode}
-      onSidebarAction={onSidebarAction}
-      getTaskActionParams={getTaskActionParams}
-    />
-  );
-
   const pinnedAgentNodes = agentNodes.filter((agent) => agent.pinned);
   const projectAgentNodes = agentNodes.filter((agent) => !agent.pinned);
   const hasPinnedAgents = pinnedAgentNodes.length > 0;
+
+  const handleReorderAgents = useCallback(async (
+    activeId: string,
+    overId: string,
+    groupAgents: AgentSidebarAgentNode[],
+  ) => {
+    const oldIndex = groupAgents.findIndex((agent) => agent.id === activeId);
+    const newIndex = groupAgents.findIndex((agent) => agent.id === overId);
+    if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+
+    const reorderedGroupIds = arrayMove(groupAgents.map((agent) => agent.id), oldIndex, newIndex);
+    const pinnedIds = groupAgents[0]?.pinned
+      ? reorderedGroupIds
+      : pinnedAgentNodes.map((agent) => agent.id);
+    const projectIds = groupAgents[0]?.pinned
+      ? projectAgentNodes.map((agent) => agent.id)
+      : reorderedGroupIds;
+    const updated = await agentService.reorderAgents([...pinnedIds, ...projectIds]);
+    if (!updated) {
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('agentReorderFailed') }));
+    }
+  }, [pinnedAgentNodes, projectAgentNodes]);
+
+  const renderAgentNode = (agent: AgentSidebarAgentNode) => (
+    <SortableAgentNode
+      key={agent.id}
+      agent={agent}
+      disabled={agent.isExpanded || isBatchMode}
+    >
+      <AgentTreeNode
+        agent={agent}
+        isBatchMode={isBatchMode}
+        batchAgentId={batchAgentId}
+        selectedKeys={selectedKeys}
+        showBatchOption
+        onToggleExpanded={toggleAgentExpanded}
+        onEditAgent={(agent) => {
+          onSidebarAction?.('agent_edit', {
+            agentType: getAgentType(agent.id),
+            isExpanded: agent.isExpanded,
+            isPinned: agent.pinned,
+          });
+          setSettingsAgentId(agent.id);
+        }}
+        onCreateTask={(agent) => void handleCreateTask(agent)}
+        onDeleteAgent={handleDeleteAgent}
+        onToggleAgentPin={handleToggleAgentPin}
+        onRetryLoadTasks={(agentId) => {
+          const targetAgent = agentNodes.find((item) => item.id === agentId);
+          onSidebarAction?.('task_list_retry_load', {
+            agentType: getAgentType(agentId),
+            visibleTaskCount: targetAgent?.tasks.length,
+          });
+          void retryLoadTasks(agentId);
+        }}
+        onLoadMoreTasks={(agentId) => {
+          const targetAgent = agentNodes.find((item) => item.id === agentId);
+          onSidebarAction?.('task_list_expand_more', {
+            agentType: getAgentType(agentId),
+            visibleTaskCount: targetAgent?.tasks.length,
+          });
+          void loadMoreTasks(agentId);
+        }}
+        onCollapseTasks={(agentId) => {
+          const targetAgent = agentNodes.find((item) => item.id === agentId);
+          onSidebarAction?.('task_list_collapse', {
+            agentType: getAgentType(agentId),
+            visibleTaskCount: targetAgent?.tasks.length,
+          });
+          collapseTasks(agentId);
+        }}
+        onSelectTask={(task) => void handleSelectTask(task)}
+        onDeleteTask={handleDeleteTask}
+        onShareTask={handleShareTask}
+        onToggleTaskPin={handleToggleTaskPin}
+        onRenameTask={handleRenameTask}
+        onToggleSelection={onToggleSelection}
+        onEnterBatchMode={handleEnterBatchMode}
+        onSidebarAction={onSidebarAction}
+        getTaskActionParams={getTaskActionParams}
+      />
+    </SortableAgentNode>
+  );
+
+  const renderSortableAgentGroup = (agents: AgentSidebarAgentNode[]) => (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={(event: DragEndEvent) => {
+        const activeId = String(event.active.id);
+        const overId = event.over?.id ? String(event.over.id) : '';
+        if (!overId) return;
+        void handleReorderAgents(activeId, overId, agents);
+      }}
+    >
+      <SortableContext
+        items={agents.map((agent) => agent.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        {agents.map(renderAgentNode)}
+      </SortableContext>
+    </DndContext>
+  );
 
   useEffect(() => {
     if (deletedSessionIds.length === 0) return;
@@ -393,7 +497,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
               {i18nService.t('myAgentSidebarPinned')}
             </h2>
           </div>
-          {pinnedAgentNodes.map(renderAgentNode)}
+          {renderSortableAgentGroup(pinnedAgentNodes)}
         </div>
       )}
 
@@ -422,7 +526,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
         </div>
       ) : projectAgentNodes.length > 0 ? (
         <div className="space-y-0.5 px-0">
-          {projectAgentNodes.map(renderAgentNode)}
+          {renderSortableAgentGroup(projectAgentNodes)}
         </div>
       ) : null}
 

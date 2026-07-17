@@ -20,7 +20,7 @@ export interface UserQuota {
 }
 
 export interface CreditItem {
-  type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation';
+  type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation' | 'campaign';
   label: string;
   labelEn: string;
   creditsRemaining: number;
@@ -43,6 +43,32 @@ export interface CreditsResetCampaignStatus {
   endAt: string;
   registeredBefore: string;
   reason: string;
+  resetEntitlements: CreditsResetEntitlement[];
+  availableFreeCreditsRewardCount: number;
+  freeCreditsReward: FreeCreditsReward | null;
+  freeCreditsRewards?: FreeCreditsReward[];
+}
+
+export interface CreditsResetEntitlement {
+  campaignCode: string;
+  expiresAt: string;
+}
+
+export interface FreeCreditsReward {
+  campaignCode: string;
+  credits: number;
+  claimDeadline: string;
+  validityDays: number;
+  presentation?: CampaignPresentation | null;
+}
+
+export interface CampaignPresentation {
+  titleZh?: string | null;
+  titleEn?: string | null;
+  actionTextZh?: string | null;
+  actionTextEn?: string | null;
+  posterUrl?: string | null;
+  iconUrl?: string | null;
 }
 
 export interface ProfileSummary {

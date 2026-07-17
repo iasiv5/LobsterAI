@@ -74,6 +74,21 @@ const MEDIA_ICON_HINTS: Array<{ pattern: RegExp; iconKey: MediaIconKey }> = [
   { pattern: /happyhorse|happy.horse/i, iconKey: ProviderIconId.HappyHorse },
 ];
 
+interface MediaPricingTierConfig {
+  label?: string;
+  resolution?: string;
+  duration?: number;
+  audio?: boolean;
+  hasVideoInput?: boolean;
+  outputPixelsMin?: number | string;
+  outputPixelsMax?: number | string;
+  costYuan?: number | string;
+  outputCostYuan?: number | string;
+  credits?: number | string;
+  outputCredits?: number | string;
+  pricePerMillionTokens?: number | string;
+}
+
 interface MediaPricingConfig {
   billingUnit?: string;
   adapterType?: string;
@@ -82,17 +97,17 @@ interface MediaPricingConfig {
   usdToCny?: number | string;
   unitLabel?: string;
   upstreamModelId?: string;
+  inputCostYuan?: number | string;
+  inputCredits?: number | string;
+  freeInputImageCount?: number | string;
+  inputFreeCount?: number | string;
+  freeInputImages?: number | string;
+  outputCostYuan?: number | string;
+  outputCredits?: number | string;
   usagePricing?: TokenUsagePricing;
   estimatedUsage?: EstimatedTokenUsage;
   defaultParams?: Record<string, unknown>;
-  tiers?: Array<{
-    resolution?: string;
-    duration?: number;
-    audio?: boolean;
-    hasVideoInput?: boolean;
-    costYuan?: number;
-    pricePerMillionTokens?: number;
-  }>;
+  tiers?: MediaPricingTierConfig[];
 }
 
 interface TokenUsagePricing {
@@ -217,6 +232,10 @@ const isTokenBillingModel = (model: MediaModel): boolean => {
   return getPricingConfig(model)?.billingUnit === 'per_token';
 };
 
+const isImageIoBillingModel = (model: MediaModel): boolean => {
+  return getPricingConfig(model)?.billingUnit === 'per_image_io';
+};
+
 const getNormalizedClientEstimateKeys = (model: MediaModel): string[] => {
   const pricing = getPricingConfig(model);
   return [
@@ -314,12 +333,88 @@ const formatEstimatedCredits = (credits: number): string => {
   return Math.max(1, Math.round(credits)).toString();
 };
 
+const pricingCredits = (creditsValue: unknown, costYuanValue: unknown): number | undefined => {
+  const directCredits = toFiniteNumber(creditsValue);
+  if (directCredits != null) return directCredits;
+  const costYuan = toFiniteNumber(costYuanValue);
+  if (costYuan != null) return costYuan * CREDITS_PER_CNY;
+  return undefined;
+};
+
+const tierCredits = (tier: MediaPricingTierConfig): number => {
+  const credits = pricingCredits(tier.outputCredits ?? tier.credits, tier.outputCostYuan ?? tier.costYuan);
+  if (credits != null) return credits;
+  const pricePerMillionTokens = toFiniteNumber(tier.pricePerMillionTokens);
+  if (pricePerMillionTokens != null) return pricePerMillionTokens * CREDITS_PER_CNY;
+  return 0;
+};
+
+const formatPixelCount = (pixels: number): string => {
+  if (i18nService.getLanguage() === 'zh') {
+    if (pixels >= 10_000) return `${formatCreditAmount(pixels / 10_000)}万`;
+    return formatCreditAmount(pixels);
+  }
+  if (pixels >= 1_000_000) return `${formatCreditAmount(pixels / 1_000_000)}M`;
+  if (pixels >= 1_000) return `${formatCreditAmount(pixels / 1_000)}K`;
+  return formatCreditAmount(pixels);
+};
+
+const formatOutputPixelTierLabel = (tier: MediaPricingTierConfig): string => {
+  if (tier.label) return tier.label;
+  const min = toFiniteNumber(tier.outputPixelsMin);
+  const max = toFiniteNumber(tier.outputPixelsMax);
+  const isZh = i18nService.getLanguage() === 'zh';
+  if (min != null && max != null) {
+    return isZh
+      ? `输出图${formatPixelCount(min)}-${formatPixelCount(max)}像素`
+      : `Output ${formatPixelCount(min)}-${formatPixelCount(max)} pixels`;
+  }
+  if (max != null) {
+    return isZh
+      ? `输出图≤${formatPixelCount(max)}像素`
+      : `Output ≤ ${formatPixelCount(max)} pixels`;
+  }
+  if (min != null) {
+    return isZh
+      ? `输出图>${formatPixelCount(min - 1)}像素`
+      : `Output > ${formatPixelCount(min - 1)} pixels`;
+  }
+  return isZh ? '输出图' : 'Output image';
+};
+
+const getImageIoOutputTierCredits = (pricing?: MediaPricingConfig): number[] => {
+  const tierCreditsList = pricing?.tiers
+    ?.map(tier => tierCredits(tier))
+    .filter(credits => credits > 0) ?? [];
+  if (tierCreditsList.length > 0) return tierCreditsList;
+  const outputCredits = pricingCredits(pricing?.outputCredits, pricing?.outputCostYuan);
+  return outputCredits != null && outputCredits > 0 ? [outputCredits] : [];
+};
+
+const getFreeInputImageCount = (pricing?: MediaPricingConfig): number => {
+  const freeCount = toFiniteNumber(
+    pricing?.freeInputImageCount ?? pricing?.inputFreeCount ?? pricing?.freeInputImages,
+  );
+  if (freeCount == null || freeCount <= 0) return 0;
+  return Math.floor(freeCount);
+};
+
 const getModelPriceLabel = (model: MediaModel): string | null => {
   if (model.mediaType !== 'image') return null;
   if (isTokenBillingModel(model)) {
     const estimatedCredits = getEstimatedRequestCredits(model);
     if (!estimatedCredits) return null;
     return `≈${formatEstimatedCredits(estimatedCredits)} ${i18nService.t('authCreditsUnit')}/${model.unitLabel || '次'}`;
+  }
+  if (isImageIoBillingModel(model)) {
+    const outputTierCredits = getImageIoOutputTierCredits(getPricingConfig(model));
+    if (outputTierCredits.length === 0) return null;
+    const minCredits = Math.min(...outputTierCredits);
+    const maxCredits = Math.max(...outputTierCredits);
+    const creditRange = minCredits === maxCredits
+      ? formatCreditAmount(minCredits)
+      : `${formatCreditAmount(minCredits)}-${formatCreditAmount(maxCredits)}`;
+    return `x${creditRange} ${i18nService.t('authCreditsUnit')}/${model.unitLabel || '张输出图'}`;
   }
   const unitCredits = toFiniteNumber(model.unitCredits);
   if (!unitCredits || unitCredits <= 0) return null;
@@ -350,6 +445,51 @@ const getTokenPricingRows = (model: MediaModel): Array<{ label: string; creditsP
       };
     })
     .filter((row): row is { label: string; creditsPerMillion: number } => row !== null);
+};
+
+const getImageIoPricingRows = (model: MediaModel): Array<{ label: string; credits: number; unitLabel: string }> => {
+  const pricing = getPricingConfig(model);
+  if (pricing?.billingUnit !== 'per_image_io') return [];
+  const rows: Array<{ label: string; credits: number; unitLabel: string }> = [];
+  const inputCredits = pricingCredits(pricing.inputCredits, pricing.inputCostYuan);
+  if (inputCredits != null && inputCredits > 0) {
+    const freeInputImageCount = getFreeInputImageCount(pricing);
+    rows.push({
+      label: (() => {
+        const isZh = i18nService.getLanguage() === 'zh';
+        if (freeInputImageCount === 1) return isZh ? '输入图（首张免费）' : 'Input image (first free)';
+        if (freeInputImageCount > 1) return isZh
+          ? `输入图（前${freeInputImageCount}张免费）`
+          : `Input image (first ${freeInputImageCount} free)`;
+        return isZh ? '输入图' : 'Input image';
+      })(),
+      credits: inputCredits,
+      unitLabel: i18nService.getLanguage() === 'zh' ? '张输入图' : 'input image',
+    });
+  }
+
+  const outputUnitLabel = model.unitLabel || pricing.unitLabel || (i18nService.getLanguage() === 'zh' ? '张输出图' : 'output image');
+  pricing.tiers?.forEach((tier) => {
+    const credits = tierCredits(tier);
+    if (credits <= 0) return;
+    rows.push({
+      label: formatOutputPixelTierLabel(tier),
+      credits,
+      unitLabel: outputUnitLabel,
+    });
+  });
+
+  if (!pricing.tiers || pricing.tiers.length === 0) {
+    const outputCredits = pricingCredits(pricing.outputCredits, pricing.outputCostYuan);
+    if (outputCredits != null && outputCredits > 0) {
+      rows.push({
+        label: i18nService.getLanguage() === 'zh' ? '输出图' : 'Output image',
+        credits: outputCredits,
+        unitLabel: outputUnitLabel,
+      });
+    }
+  }
+  return rows;
 };
 
 const formatChineseEstimateScope = (config: ClientEstimateConfig): string => {
@@ -669,9 +809,12 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled 
     const tiers = pricing?.tiers;
     const billingUnit = pricing?.billingUnit;
     const tokenPricingRows = getTokenPricingRows(hoveredModel);
+    const imageIoPricingRows = getImageIoPricingRows(hoveredModel);
     const tokenBillingEstimateNotes = getTokenBillingEstimateNotes(hoveredModel);
 
-    const formatTierLabel = (tier: { resolution?: string; duration?: number; audio?: boolean; hasVideoInput?: boolean }) => {
+    const formatTierLabel = (tier: MediaPricingTierConfig) => {
+      if (tier.label) return tier.label;
+      if (tier.outputPixelsMin != null || tier.outputPixelsMax != null) return formatOutputPixelTierLabel(tier);
       const parts: string[] = [];
       if (tier.resolution) parts.push(tier.resolution);
       if (tier.duration) parts.push(`${tier.duration}秒`);
@@ -679,12 +822,6 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled 
       if (tier.hasVideoInput === true) parts.push('含视频输入');
       if (tier.hasVideoInput === false) parts.push('不含视频输入');
       return parts.join(' ') || '-';
-    };
-
-    const tierCredits = (tier: { costYuan?: number; pricePerMillionTokens?: number }) => {
-      if (tier.pricePerMillionTokens != null) return Math.round(tier.pricePerMillionTokens * 100);
-      if (tier.costYuan != null) return Math.round(tier.costYuan * 100);
-      return 0;
     };
 
     const tierUnitSuffix = billingUnit === 'per_second' ? '秒'
@@ -719,7 +856,33 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled 
             {desc}
           </div>
         )}
-        {tokenPricingRows.length > 0 ? (
+        {imageIoPricingRows.length > 0 ? (
+          <>
+            <table className="mt-2 w-full text-[10px] text-secondary border-collapse">
+              <thead>
+                <tr className="border-b border-border/50">
+                  <th className="text-left font-medium py-0.5 pr-2">{i18nService.t('mediaTierSpecLabel')}</th>
+                  <th className="text-right font-medium py-0.5">{i18nService.t('authCreditsUnit')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {imageIoPricingRows.map((row) => (
+                  <tr key={`${row.label}-${row.unitLabel}`}>
+                    <td className="py-0.5 pr-2">{row.label}</td>
+                    <td className="text-right py-0.5">
+                      {formatCreditAmount(row.credits)}/{row.unitLabel}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-1.5 text-[9px] leading-3 text-tertiary">
+              {i18nService.getLanguage() === 'zh'
+                ? '输出图按实际返回的图片尺寸分层计费。'
+                : 'Output image billing is tiered by the actual returned image size.'}
+            </div>
+          </>
+        ) : tokenPricingRows.length > 0 ? (
           <>
             <table className="mt-2 w-full text-[10px] text-secondary border-collapse">
               <thead>

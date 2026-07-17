@@ -23,6 +23,7 @@ const log = (level: string, msg: string) => {
 
 export type AskUserRequest = {
   requestId: string;
+  sessionKey?: string;
   questions: Array<{
     question: string;
     header?: string;
@@ -125,8 +126,13 @@ export class McpBridgeServer {
    * Reuses the same pending/resolve/callback infrastructure as the HTTP endpoint
    * but skips HTTP and authentication.
    */
-  async askUserInternal(questions: AskUserRequest['questions'], timeoutMs = 120_000): Promise<AskUserResponse> {
+  async askUserInternal(
+    questions: AskUserRequest['questions'],
+    timeoutMs = 120_000,
+    options: { sessionKey?: string } = {},
+  ): Promise<AskUserResponse> {
     const requestId = crypto.randomUUID();
+    const sessionKey = options.sessionKey?.trim() || undefined;
     log('INFO', `AskUser (internal) request, requestId=${requestId}`);
 
     return new Promise<AskUserResponse>((resolve) => {
@@ -140,7 +146,7 @@ export class McpBridgeServer {
       this.pendingAskUser.set(requestId, { requestId, resolve, timer });
 
       if (this.onAskUserCallback) {
-        this.onAskUserCallback({ requestId, questions });
+        this.onAskUserCallback({ requestId, questions, sessionKey });
       } else {
         log('WARN', 'AskUser callback not registered, denying (internal)');
         clearTimeout(timer);
@@ -242,7 +248,10 @@ export class McpBridgeServer {
 
     try {
       const body = await this.readBody(req);
-      const input = JSON.parse(body) as { questions?: unknown[] };
+      const input = JSON.parse(body) as { questions?: unknown[]; sessionKey?: unknown };
+      const sessionKey = typeof input.sessionKey === 'string' && input.sessionKey.trim()
+        ? input.sessionKey.trim()
+        : undefined;
       log('INFO', `AskUser request received, questions=${Array.isArray(input.questions) ? input.questions.length : 0}`);
 
       if (!Array.isArray(input.questions) || input.questions.length === 0) {
@@ -269,6 +278,7 @@ export class McpBridgeServer {
         if (this.onAskUserCallback) {
           this.onAskUserCallback({
             requestId,
+            sessionKey,
             questions: input.questions as AskUserRequest['questions'],
           });
         } else {

@@ -29,3 +29,16 @@ export const OpenClawGatewayRepairErrorCode = {
 
 export type OpenClawGatewayRepairErrorCode =
   typeof OpenClawGatewayRepairErrorCode[keyof typeof OpenClawGatewayRepairErrorCode];
+
+export const OpenClawEngineErrorCode = {
+  /**
+   * resources/cfmind has no runtime entry file. On packaged Windows builds
+   * this means the installer never finished unpacking win-resources.tar
+   * (typically killed or frozen by security software) and automatic recovery
+   * from the leftover archive was not possible.
+   */
+  RuntimeEntryMissing: 'runtime_entry_missing',
+} as const;
+
+export type OpenClawEngineErrorCode =
+  typeof OpenClawEngineErrorCode[keyof typeof OpenClawEngineErrorCode];

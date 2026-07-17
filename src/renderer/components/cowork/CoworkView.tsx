@@ -8,11 +8,8 @@ import { buildCoworkImageAttachmentPreviews } from '../../../shared/cowork/image
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import { agentService } from '../../services/agent';
 import { coworkService } from '../../services/cowork';
+import { buildCoworkCapabilitySelection } from '../../services/coworkCapabilitySelection';
 import { i18nService } from '../../services/i18n';
-import {
-  buildKitReferences,
-  resolveSelectedKitCapabilities,
-} from '../../services/kitCapability';
 import { quickActionService } from '../../services/quickAction';
 import { RootState } from '../../store';
 import {
@@ -24,7 +21,15 @@ import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitId
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus } from '../../types/cowork';
+import {
+  CoworkCollaborationMode,
+  type CoworkCollaborationMode as CoworkCollaborationModeType,
+  type CoworkImageAttachment,
+  type CoworkPermissionRequest,
+  type CoworkPermissionResult,
+  type CoworkSession,
+  type OpenClawEngineStatus,
+} from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -33,7 +38,6 @@ import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel, QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
-import WindowTitleBar from '../window/WindowTitleBar';
 import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
@@ -64,11 +68,26 @@ export interface CoworkViewProps {
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
+  minimizedPermission?: CoworkPermissionRequest | null;
+  onRestorePermission?: () => void;
+  onRespondToPermission?: (result: CoworkPermissionResult) => void;
 }
 
-const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, onShowKits, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const CoworkView: React.FC<CoworkViewProps> = ({
+  onRequestAppSettings,
+  onShowSkills,
+  onShowKits,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onNewChat,
+  updateBadge,
+  minimizedPermission,
+  onRestorePermission,
+  onRespondToPermission,
+}) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
   const [isInitialized, setIsInitialized] = useState(false);
   const [openClawStatus, setOpenClawStatus] = useState<OpenClawEngineStatus | null>(null);
   const [isRestartingGateway, setIsRestartingGateway] = useState(false);
@@ -87,6 +106,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   const currentSession = useSelector(selectCurrentSession);
   const isStreaming = useSelector(selectIsStreaming);
+  const currentSessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    currentSessionIdRef.current = currentSession?.id ?? null;
+  }, [currentSession?.id]);
   const config = useSelector(selectCoworkConfig);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
@@ -109,35 +133,15 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     return state.cowork.mediaSelection[key];
   });
 
-  const resolveRoutableSkillIds = useCallback((skillIds: string[]): string[] => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const skillId of skillIds) {
-      if (seen.has(skillId)) continue;
-      seen.add(skillId);
-      const skill = skills.find(s => s.id === skillId);
-      if (!skill?.enabled || !skill.skillPath.trim()) continue;
-      result.push(skillId);
-    }
-    return result;
-  }, [skills]);
-
   const buildCapabilitySelection = useCallback((skillIds: string[], kitIds: string[]) => {
-    const directSkillIds = resolveRoutableSkillIds(skillIds);
-    const resolvedKitCapabilities = resolveSelectedKitCapabilities(kitIds, installedKits);
-    const runtimeSkillIds = resolveRoutableSkillIds([
-      ...directSkillIds,
-      ...resolvedKitCapabilities.skillIds,
-    ]);
-    const kitReferences = buildKitReferences(kitIds, marketplaceKits);
-
-    return {
-      directSkillIds,
-      runtimeSkillIds,
-      kitReferences,
-      resolvedKitCapabilities,
-    };
-  }, [installedKits, marketplaceKits, resolveRoutableSkillIds]);
+    return buildCoworkCapabilitySelection(
+      skillIds,
+      kitIds,
+      skills,
+      installedKits,
+      marketplaceKits,
+    );
+  }, [installedKits, marketplaceKits, skills]);
 
   const buildApiConfigNotice = (error?: string): { noticeI18nKey: string; noticeExtra?: string } => {
     const key = 'coworkModelSettingsRequired';
@@ -361,6 +365,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       // Immediately show the session detail page with user message
       dispatch(setCurrentSession(tempSession));
+      currentSessionIdRef.current = tempSessionId;
       if (isPlanMode) {
         dispatch(setDraftCollaborationMode({
           draftKey: tempSessionId,
@@ -423,6 +428,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       }
       if (!startedSession) {
         return false;
+      }
+      if (currentSessionIdRef.current === tempSessionId) {
+        logCoworkViewModel(`replacing temp session ${tempSessionId} with started session ${startedSession.id}`);
+        dispatch(setCurrentSession(startedSession));
+        dispatch(setStreaming(startedSession.status === 'running'));
+        currentSessionIdRef.current = startedSession.id;
+      } else {
+        logCoworkViewModel(
+          `skipped temp session replacement for ${startedSession.id}; `
+          + `current=${currentSessionIdRef.current ?? 'none'} temp=${tempSessionId}`,
+        );
       }
       if (optimisticGoal !== undefined) {
         const startedGoal = applyOptimisticGoalCommand(prompt, null, startedSession.id, Date.now());
@@ -545,8 +561,22 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     return quickActions.find(action => action.id === selectedActionId);
   }, [quickActions, selectedActionId]);
 
-  // Handle quick action button click: select action + activate skill in one batch
+  // Deselect quick action: restore the chip bar and deactivate the auto-enabled skill
+  const handleQuickActionDeselect = () => {
+    const action = quickActions.find(a => a.id === selectedActionId);
+    dispatch(clearSelection());
+    if (action && activeSkillIds.includes(action.skillMapping)) {
+      dispatch(setActiveSkillIds(activeSkillIds.filter(id => id !== action.skillMapping)));
+    }
+  };
+
+  // Handle quick action button click: select action + activate skill in one batch.
+  // Clicking the selected chip again collapses the prompt panel.
   const handleActionSelect = (actionId: string) => {
+    if (actionId === selectedActionId) {
+      handleQuickActionDeselect();
+      return;
+    }
     dispatch(selectAction(actionId));
     const action = quickActions.find(a => a.id === actionId);
     if (action) {
@@ -575,17 +605,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     }
   };
 
-  // When the mapped skill is deactivated from input area, restore the QuickActionBar
+  // When the mapped skill is deactivated from input area, restore the QuickActionBar.
+  // Only applies when the mapped skill exists (and thus was auto-enabled on select);
+  // otherwise a missing skill would make the prompt panel impossible to open.
   useEffect(() => {
     if (!selectedActionId) return;
     const action = quickActions.find(a => a.id === selectedActionId);
     if (action) {
-      const skillStillActive = activeSkillIds.includes(action.skillMapping);
-      if (!skillStillActive) {
+      const mappedSkillExists = skills.some(s => s.id === action.skillMapping);
+      if (mappedSkillExists && !activeSkillIds.includes(action.skillMapping)) {
         dispatch(clearSelection());
       }
     }
-  }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
+  }, [activeSkillIds, dispatch, quickActions, selectedActionId, skills]);
 
   // Handle prompt selection from QuickAction
   const handleQuickActionPromptSelect = (prompt: string, promptId?: string) => {
@@ -663,9 +695,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   if (!isInitialized) {
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
-        <div className="draggable flex h-12 items-center justify-end px-4 border-b border-border shrink-0">
-          <WindowTitleBar inline />
-        </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-secondary">
             {i18nService.t('loading')}
@@ -682,7 +711,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const homeHeader = (
     <div className="draggable flex h-12 items-center justify-between px-4 shrink-0">
       <div className="non-draggable h-8 flex items-center">
-        {isSidebarCollapsed && (
+        {isSidebarCollapsed && !isWindows && (
           <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
             <button
               type="button"
@@ -709,7 +738,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             {i18nService.t('lobsterGuardEnabled')}
           </span>
         </div>
-        <WindowTitleBar inline />
       </div>
     </div>
   );
@@ -773,6 +801,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           onToggleSidebar={onToggleSidebar}
           onNewChat={onNewChat}
           updateBadge={updateBadge}
+          minimizedPermission={minimizedPermission}
+          onRestorePermission={onRestorePermission}
+          onRespondToPermission={onRespondToPermission}
         />
       </div>
     );
@@ -846,13 +877,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             className="relative z-0 mt-8 flex w-full max-w-3xl flex-col items-center animate-fade-in-up"
             style={{ animationDelay: '260ms', animationFillMode: 'both' }}
           >
-            {selectedAction ? (
-              <PromptPanel
-                action={selectedAction}
-                onPromptSelect={handleQuickActionPromptSelect}
-              />
-            ) : (
-              <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
+            <QuickActionBar
+              actions={quickActions}
+              selectedActionId={selectedActionId}
+              onActionSelect={handleActionSelect}
+            />
+            {selectedAction && (
+              <div className="mt-4 w-full">
+                <PromptPanel
+                  action={selectedAction}
+                  onPromptSelect={handleQuickActionPromptSelect}
+                  onClose={handleQuickActionDeselect}
+                />
+              </div>
             )}
             <CreditsResetCampaignFloat />
           </div>

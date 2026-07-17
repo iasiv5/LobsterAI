@@ -1,0 +1,59 @@
+diff --git a/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js b/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
+index 9b75baa..e018ea7 100644
+--- a/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
++++ b/node_modules/app-builder-lib/out/targets/nsis/WebInstallerTarget.js
+@@ -23,8 +23,11 @@ class WebInstallerTarget extends NsisTarget_1.NsisTarget {
+                 throw new Error("Cannot compute app package download URL");
+             }
+             appPackageUrl = (0, PublishManager_1.computeDownloadUrl)(publishConfigs[0], null, packager);
++            // Computed URLs point at a directory, so the NSIS template appends the
++            // package file name. An explicit appPackageUrl is used verbatim, as the
++            // option documentation states ("it is full URL").
++            defines.APP_PACKAGE_URL_IS_INCOMPLETE = null;
+         }
+-        defines.APP_PACKAGE_URL_IS_INCOMPLETE = null;
+         defines.APP_PACKAGE_URL = appPackageUrl;
+     }
+     get installerFilenamePattern() {
+diff --git a/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh b/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh
+index 8ec0be3..f48db67 100644
+--- a/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh
+@@ -39,8 +39,15 @@
+     StrCpy $packageArch "32"
+   ${endif}
+ 
++  # The page's own progress bar (IDC_PROGRESS = 1004) stays frozen during the
++  # plugin call, so hide it while downloading: the inetc panel is then the only
++  # progress bar on the page. Restored after the transfer for the install phase.
++  FindWindow $R8 "#32770" "" $HWNDPARENT
++  GetDlgItem $R9 $R8 1004
++  ShowWindow $R9 0
++
+   download:
+-  inetc::get /USERAGENT "electron-builder (Mozilla)" /HEADER "X-Arch: $packageArch" /RESUME "" "$packageUrl" "$PLUGINSDIR\package.7z" /END
++  inetc::get /USERAGENT "electron-builder (Mozilla)" /HEADER "X-Arch: $packageArch" /CANCELTEXT "${U+53D6}${U+6D88}" /QUESTION "${U+786E}${U+5B9A}${U+8981}${U+53D6}${U+6D88}${U+4E0B}${U+8F7D}${U+5417}${U+FF1F}" /RESUME "${U+7F51}${U+7EDC}${U+8FDE}${U+63A5}${U+4E2D}${U+65AD}${U+FF0C}${U+8BF7}${U+68C0}${U+67E5}${U+7F51}${U+7EDC}${U+540E}${U+70B9}${U+51FB}${U+201C}${U+91CD}${U+8BD5}${U+201D}${U+7EE7}${U+7EED}${U+4E0B}${U+8F7D}${U+3002}" /TRANSLATE "${U+6B63}${U+5728}${U+4E0B}${U+8F7D} LobsterAI ${U+5B89}${U+88C5}${U+5305}" "${U+6B63}${U+5728}${U+8FDE}${U+63A5}${U+670D}${U+52A1}${U+5668}${U+2026}" "${U+79D2}" "${U+5206}${U+949F}" "${U+5C0F}${U+65F6}" "" "${U+5DF2}${U+4E0B}${U+8F7D} %dkB${U+FF08}%d%%${U+FF09}${U+FF0C}${U+5171} %dkB ${U+2014} %d.%01dkB/s" "${U+FF0C}${U+5269}${U+4F59}${U+7EA6} %d %s" "$packageUrl" "$PLUGINSDIR\package.7z" /END
+   Pop $0
+ 
+   ${if} $0 == "Cancelled"
+@@ -49,16 +56,18 @@
+ 
+   ${if} $0 != "OK"
+     # try without proxy
+-    inetc::get /NOPROXY /USERAGENT "electron-builder (Mozilla)" /HEADER "X-Arch: $packageArch" /RESUME "" "$packageUrl" "$PLUGINSDIR\package.7z" /END
++    inetc::get /NOPROXY /USERAGENT "electron-builder (Mozilla)" /HEADER "X-Arch: $packageArch" /CANCELTEXT "${U+53D6}${U+6D88}" /QUESTION "${U+786E}${U+5B9A}${U+8981}${U+53D6}${U+6D88}${U+4E0B}${U+8F7D}${U+5417}${U+FF1F}" /RESUME "${U+7F51}${U+7EDC}${U+8FDE}${U+63A5}${U+4E2D}${U+65AD}${U+FF0C}${U+8BF7}${U+68C0}${U+67E5}${U+7F51}${U+7EDC}${U+540E}${U+70B9}${U+51FB}${U+201C}${U+91CD}${U+8BD5}${U+201D}${U+7EE7}${U+7EED}${U+4E0B}${U+8F7D}${U+3002}" /TRANSLATE "${U+6B63}${U+5728}${U+4E0B}${U+8F7D} LobsterAI ${U+5B89}${U+88C5}${U+5305}" "${U+6B63}${U+5728}${U+8FDE}${U+63A5}${U+670D}${U+52A1}${U+5668}${U+2026}" "${U+79D2}" "${U+5206}${U+949F}" "${U+5C0F}${U+65F6}" "" "${U+5DF2}${U+4E0B}${U+8F7D} %dkB${U+FF08}%d%%${U+FF09}${U+FF0C}${U+5171} %dkB ${U+2014} %d.%01dkB/s" "${U+FF0C}${U+5269}${U+4F59}${U+7EA6} %d %s" "$packageUrl" "$PLUGINSDIR\package.7z" /END
+     Pop $0
+   ${endif}
+ 
+   ${if} $0 == "Cancelled"
+     quit
+   ${elseif} $0 != "OK"
+-    Messagebox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Unable to download application package from $packageUrl (status: $0).$\r$\n$\r$\nPlease check your internet connection and retry." IDRETRY download
++    Messagebox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${U+4E0B}${U+8F7D}${U+5B89}${U+88C5}${U+7EC4}${U+4EF6}${U+5931}${U+8D25}${U+FF08}${U+72B6}${U+6001}${U+FF1A}$0${U+FF09}${U+3002}$\r$\n$\r$\n${U+8BF7}${U+68C0}${U+67E5}${U+7F51}${U+7EDC}${U+8FDE}${U+63A5}${U+540E}${U+70B9}${U+51FB}${U+201C}${U+91CD}${U+8BD5}${U+201D}${U+3002}" IDRETRY download
+     Quit
+   ${endif}
+ 
++  ShowWindow $R9 5
++
+   StrCpy $packageFile "$PLUGINSDIR\package.7z"
+ !macroend

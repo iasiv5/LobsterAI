@@ -52,6 +52,45 @@ function findDingtalkDistMessageHandlers(pluginDir) {
     .map(entry => path.join(distDir, entry.name));
 }
 
+function findDingtalkDistRuntimeBundles(pluginDir) {
+  const distDir = path.join(pluginDir, 'dist');
+  if (!fs.existsSync(distDir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(distDir, { withFileTypes: true })
+    .filter(entry => entry.isFile() && /^runtime-.*\.mjs$/.test(entry.name))
+    .map(entry => path.join(distDir, entry.name));
+}
+
+function patchDingtalkOutboundErrorPropagation(channelPath, label, log) {
+  if (!fs.existsSync(channelPath)) {
+    return;
+  }
+
+  let src = fs.readFileSync(channelPath, 'utf8');
+  const patchMarker = 'dingtalk_outbound_error_propagation_patch';
+  if (src.includes(patchMarker)) {
+    log(`${label} outbound error propagation patch already applied, skipping`);
+    return;
+  }
+
+  const pattern = /(const result = await sendTextToDingTalk\(\{[\s\S]*?\n\s*\}\);\r?\n)([ \t]*)(?=return \{\r?\n[ \t]*channel: CHANNEL_ID,)/;
+  if (!pattern.test(src)) {
+    log(`${label}: sendText outbound pattern not found, skipping error propagation patch`);
+    return;
+  }
+
+  src = src.replace(pattern, (_match, sendCall, indent) => (
+    `${sendCall}${indent}if (!result.ok) {\n` +
+    `${indent}  throw new Error(/* ${patchMarker} */ result.error || 'DingTalk outbound send failed');\n` +
+    `${indent}}\n${indent}`
+  ));
+  fs.writeFileSync(channelPath, src);
+  log(`Patched ${label}: outbound text sends now propagate DingTalk API failures`);
+}
+
 function patchDingtalkAgentWorkspaceResolver(resolverPath, label, log) {
   if (!fs.existsSync(resolverPath)) {
     return;
@@ -197,9 +236,23 @@ function patchDingtalk({ runtimeExtensionsDir, log }) {
       log
     );
   }
+
+  patchDingtalkOutboundErrorPropagation(
+    path.join(pluginDir, 'src', 'channel.ts'),
+    'dingtalk-connector/src/channel.ts',
+    log
+  );
+  for (const runtimeBundlePath of findDingtalkDistRuntimeBundles(pluginDir)) {
+    patchDingtalkOutboundErrorPropagation(
+      runtimeBundlePath,
+      `dingtalk-connector/dist/${path.basename(runtimeBundlePath)}`,
+      log
+    );
+  }
 }
 
 module.exports = {
   findDingtalkDistMessageHandlers,
+  findDingtalkDistRuntimeBundles,
   patchDingtalk,
 };

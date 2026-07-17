@@ -681,6 +681,35 @@ export type ProviderRawConfig = {
   models: ProviderModelConfig[];
 };
 
+export type ProviderSourceEntry = {
+  providerName: string;
+  codingPlanEnabled: boolean;
+  authType?: ProviderConfig['authType'];
+  displayName?: string;
+};
+
+/**
+ * Lightweight view of every configured provider (enabled or not) for
+ * classifying which Settings entry a runtime error's provider id belongs to.
+ */
+export function listProviderSourceEntries(): ProviderSourceEntry[] {
+  const sqliteStore = getStore();
+  const appConfig = sqliteStore?.get<AppConfig>('app_config');
+  if (!appConfig?.providers) return [];
+
+  const entries: ProviderSourceEntry[] = [];
+  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+    if (!providerConfig) continue;
+    entries.push({
+      providerName,
+      codingPlanEnabled: !!providerConfig.codingPlanEnabled,
+      authType: providerConfig.authType,
+      displayName: providerConfig.displayName?.trim() || undefined,
+    });
+  }
+  return entries;
+}
+
 export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
   const sqliteStore = getStore();
   if (!sqliteStore) return [];

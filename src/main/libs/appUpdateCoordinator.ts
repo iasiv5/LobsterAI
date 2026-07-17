@@ -13,7 +13,12 @@ import {
   isManualDownloadUrl,
 } from '../../shared/appUpdate/constants';
 import type { SqliteStore } from '../sqliteStore';
-import { cancelActiveDownload, downloadUpdate, installUpdate } from './appUpdateInstaller';
+import {
+  cancelActiveDownload,
+  downloadUpdate,
+  installUpdate,
+  MAC_UPDATE_MOUNT_DIR_PREFIX,
+} from './appUpdateInstaller';
 import { getFallbackDownloadUrl, getManualUpdateCheckUrl, getUpdateCheckUrl } from './endpoints';
 import { getKeyfromAttribution } from './keyfromAttribution';
 
@@ -700,6 +705,13 @@ export class AppUpdateCoordinator {
     try {
       const entries = await fs.promises.readdir(cacheDir, { withFileTypes: true });
       for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith(MAC_UPDATE_MOUNT_DIR_PREFIX)) {
+          // Explicit mount point dir left behind by a failed macOS install.
+          // rmdir only succeeds once nothing is mounted there, so a live
+          // mount is never disturbed.
+          await fs.promises.rmdir(path.resolve(cacheDir, entry.name)).catch(() => {});
+          continue;
+        }
         if (!entry.isFile()) {
           continue;
         }

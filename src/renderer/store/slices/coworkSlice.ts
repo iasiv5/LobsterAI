@@ -8,6 +8,11 @@ import {
 } from '../../../shared/cowork/rail';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import {
+  type CoworkPendingSteer,
+  CoworkSteerStatus,
+  type CoworkSteerStatus as CoworkSteerStatusType,
+} from '../../../shared/cowork/steer';
+import {
   CoworkCollaborationMode,
   type CoworkCollaborationMode as CoworkCollaborationModeType,
   type CoworkConfig,
@@ -26,6 +31,7 @@ export interface DraftAttachment {
   path: string;
   name: string;
   isImage?: boolean;
+  isDirectory?: boolean;
   dataUrl?: string;
 }
 
@@ -62,6 +68,12 @@ interface CoworkState {
   draftCollaborationModes: Record<string, CoworkCollaborationModeType>;
   /** Keyed by sessionId, stores the latest proposed plan confirmation UI state. */
   planConfirmations: Record<string, PlanConfirmationStatus>;
+  /** Keyed by sessionId, stores steer drafts separately from normal/Plan/Goal drafts. */
+  steerDrafts: Record<string, string>;
+  /** Keyed by sessionId, stores follow-up inputs queued while a turn is active. */
+  pendingSteers: Record<string, CoworkPendingSteer[]>;
+  /** Keyed by sessionId, stores steer requests rejected by the runtime. */
+  rejectedSteers: Record<string, CoworkPendingSteer[]>;
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
@@ -93,6 +105,9 @@ const initialState: CoworkState = {
   draftSkillIds: {},
   draftCollaborationModes: {},
   planConfirmations: {},
+  steerDrafts: {},
+  pendingSteers: {},
+  rejectedSteers: {},
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
@@ -135,6 +150,9 @@ const initialState: CoworkState = {
   mediaSelection: {},
   pendingMediaStatusUpdates: {},
 };
+
+export const COWORK_STEER_QUEUE_LIMIT = 20;
+const COWORK_STEER_REJECTED_PREVIEW_LIMIT = 20;
 
 const markSessionRead = (state: CoworkState, sessionId: string | null) => {
   if (!sessionId) return;
@@ -452,6 +470,119 @@ const coworkSlice = createSlice({
       }
     },
 
+    setSteerDraft(state, action: PayloadAction<{ sessionId: string; draft: string }>) {
+      const { sessionId, draft } = action.payload;
+      if (draft) {
+        state.steerDrafts[sessionId] = draft;
+      } else {
+        delete state.steerDrafts[sessionId];
+      }
+    },
+
+    addPendingSteer(state, action: PayloadAction<CoworkPendingSteer>) {
+      const steer = action.payload;
+      const pending = state.pendingSteers[steer.sessionId] ?? [];
+      const existingIndex = pending.findIndex(item => item.id === steer.id);
+      if (existingIndex >= 0) {
+        pending[existingIndex] = steer;
+      } else {
+        if (pending.length >= COWORK_STEER_QUEUE_LIMIT) {
+          return;
+        }
+        pending.push(steer);
+      }
+      state.pendingSteers[steer.sessionId] = pending;
+    },
+
+    updateSteerStatus(
+      state,
+      action: PayloadAction<{
+        sessionId: string;
+        steerId: string;
+        status: CoworkSteerStatusType;
+        error?: string;
+        reason?: CoworkPendingSteer['reason'];
+      }>,
+    ) {
+      const { sessionId, steerId, status, error, reason } = action.payload;
+      const pending = state.pendingSteers[sessionId] ?? [];
+      const pendingIndex = pending.findIndex(item => item.id === steerId);
+      const existing = pendingIndex >= 0
+        ? pending[pendingIndex]
+        : (state.rejectedSteers[sessionId] ?? []).find(item => item.id === steerId);
+      if (!existing) return;
+
+      const next: CoworkPendingSteer = {
+        ...existing,
+        status,
+        updatedAt: Date.now(),
+        ...(error ? { error } : {}),
+        ...(reason ? { reason } : {}),
+      };
+
+      if (pendingIndex >= 0) {
+        pending.splice(pendingIndex, 1);
+        if (pending.length > 0) {
+          state.pendingSteers[sessionId] = pending;
+        } else {
+          delete state.pendingSteers[sessionId];
+        }
+      }
+
+      if (status === CoworkSteerStatus.Rejected) {
+        const rejected = state.rejectedSteers[sessionId] ?? [];
+        const rejectedIndex = rejected.findIndex(item => item.id === steerId);
+        if (rejectedIndex >= 0) {
+          rejected[rejectedIndex] = next;
+        } else {
+          rejected.push(next);
+        }
+        state.rejectedSteers[sessionId] = rejected.slice(-COWORK_STEER_REJECTED_PREVIEW_LIMIT);
+        return;
+      }
+
+      if (status !== CoworkSteerStatus.Pending) {
+        const rejected = state.rejectedSteers[sessionId] ?? [];
+        state.rejectedSteers[sessionId] = rejected.filter(item => item.id !== steerId);
+        if (state.rejectedSteers[sessionId].length === 0) {
+          delete state.rejectedSteers[sessionId];
+        }
+      }
+    },
+
+    removePendingSteer(
+      state,
+      action: PayloadAction<{ sessionId: string; steerId: string }>,
+    ) {
+      const { sessionId, steerId } = action.payload;
+      const pending = state.pendingSteers[sessionId] ?? [];
+      const nextPending = pending.filter(item => item.id !== steerId);
+      if (nextPending.length > 0) {
+        state.pendingSteers[sessionId] = nextPending;
+      } else {
+        delete state.pendingSteers[sessionId];
+      }
+    },
+
+    removeRejectedSteer(
+      state,
+      action: PayloadAction<{ sessionId: string; steerId: string }>,
+    ) {
+      const { sessionId, steerId } = action.payload;
+      const rejected = state.rejectedSteers[sessionId] ?? [];
+      const nextRejected = rejected.filter(item => item.id !== steerId);
+      if (nextRejected.length > 0) {
+        state.rejectedSteers[sessionId] = nextRejected;
+      } else {
+        delete state.rejectedSteers[sessionId];
+      }
+    },
+
+    clearSteerQueue(state, action: PayloadAction<string>) {
+      delete state.pendingSteers[action.payload];
+      delete state.rejectedSteers[action.payload];
+    },
+
     addSession(state, action: PayloadAction<CoworkSession>) {
       const summary = toSessionSummary(action.payload);
       state.sessions.unshift(summary);
@@ -507,6 +638,9 @@ const coworkSlice = createSlice({
     deleteSession(state, action: PayloadAction<string>) {
       removeSessionFromState(state, action.payload);
       delete state.planConfirmations[action.payload];
+      delete state.steerDrafts[action.payload];
+      delete state.pendingSteers[action.payload];
+      delete state.rejectedSteers[action.payload];
       delete state.messageRailIndexBySessionId[action.payload];
       delete state.messageRailIndexLoadingBySessionId[action.payload];
     },
@@ -515,6 +649,9 @@ const coworkSlice = createSlice({
       removeSessionsFromState(state, action.payload);
       for (const sessionId of action.payload) {
         delete state.planConfirmations[sessionId];
+        delete state.steerDrafts[sessionId];
+        delete state.pendingSteers[sessionId];
+        delete state.rejectedSteers[sessionId];
         delete state.messageRailIndexBySessionId[sessionId];
         delete state.messageRailIndexLoadingBySessionId[sessionId];
       }
@@ -896,6 +1033,12 @@ export const {
   setCurrentSessionId,
   setCurrentSession,
   setDraftPrompt,
+  setSteerDraft,
+  addPendingSteer,
+  updateSteerStatus,
+  removePendingSteer,
+  removeRejectedSteer,
+  clearSteerQueue,
   setDraftAttachments,
   addDraftAttachment,
   clearDraftAttachments,

@@ -278,7 +278,7 @@ describe('CronJobService delivery cache', () => {
       delivery: {
         mode: DeliveryMode.Announce,
         channel: 'openclaw-weixin',
-        to: 'o9cq809ZEC25-4jLkdw3AHTKPE9c@im.wechat',
+        to: 'WxId_ZhangSan@im.wechat',
       },
     });
     const updated = makeGatewayJob({ id: 'wx-job', delivery: { mode: DeliveryMode.None } });
@@ -430,7 +430,7 @@ describe('mapGatewayJob', () => {
         delivery: {
           mode: DeliveryMode.None,
           channel: 'moltbot-popo',
-          to: 'liucong03@corp.netease.com',
+          to: 'zhangsan@corp.example.com',
           accountId: 'acc-1',
           bestEffort: true,
         },

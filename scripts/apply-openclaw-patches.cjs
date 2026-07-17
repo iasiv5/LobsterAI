@@ -63,6 +63,65 @@ if (patchFiles.length === 0) {
 console.log(`[apply-openclaw-patches] Applying patches for openclaw ${openclawVersion} (${patchFiles.length} file(s))`);
 
 const strongPatchValidators = {
+  'openclaw-terminate-run-on-critical-tool-loop.patch': [
+    {
+      file: 'packages/agent-core/src/agent.ts',
+      snippets: [
+        'ShouldStopAfterTurnContext',
+        'this.shouldStopAfterTurn = options.shouldStopAfterTurn',
+        'shouldStopAfterTurn: this.shouldStopAfterTurn',
+      ],
+    },
+    {
+      file: 'src/agents/agent-tools.before-tool-call.ts',
+      snippets: [
+        'const terminateRun = deniedReason === "tool-loop"',
+        '...(terminateRun ? { terminate: true } : {})',
+      ],
+    },
+    {
+      file: 'src/agents/sessions/sdk.ts',
+      snippets: [
+        'shouldStopAfterTurn: (context) => {',
+        'details?.deniedReason === "tool-loop"',
+      ],
+    },
+    {
+      file: 'packages/agent-core/src/agent.critical-tool-loop.test.ts',
+      snippets: [
+        'stops a mixed parallel batch after normal sibling tools finish',
+        'expect(providerTurns).toBe(1)',
+        'expect(shouldStopCalls).toBe(1)',
+      ],
+    },
+    {
+      file: 'src/agents/agent-tools.before-tool-call.blocked-result.test.ts',
+      snippets: [
+        'terminates critical tool-loop vetoes',
+        'keeps %s vetoes non-terminating',
+        'expect(result.terminate).toBe(true)',
+      ],
+    },
+  ],
+  'openclaw-stop-loop-after-aborted-tool-run.patch': [
+    {
+      file: 'packages/agent-core/src/agent-loop.ts',
+      snippets: [
+        'const stopIfAborted = async (): Promise<boolean> => {',
+        'signal.reason instanceof Error ? signal.reason : new Error("Agent run aborted")',
+        'await emit({ type: "turn_end", message: abortedMessage, toolResults: [] });',
+        'if (await stopIfAborted())',
+      ],
+    },
+    {
+      file: 'packages/agent-core/src/agent-loop.test.ts',
+      snippets: [
+        'does not request another model turn after a tool aborts the run',
+        'does not request another model turn when an async turn hook aborts the run',
+        'expect(streamCalls).toBe(1)',
+      ],
+    },
+  ],
   'openclaw-dashscope-context-cache.patch': [
     {
       file: 'src/agents/embedded-agent-runner/prompt-cache-retention.ts',

@@ -487,8 +487,11 @@ const PROVIDER_DEFINITIONS = [
     region: 'global',
     enPriority: 1,
     defaultModels: [
-      { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true, supportsThinking: true },
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
       { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true, supportsThinking: true },
+      { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true, supportsThinking: true },
     ],
   },
   {
@@ -519,10 +522,10 @@ const PROVIDER_DEFINITIONS = [
     codingPlanSupported: false,
     region: 'global',
     enPriority: 4,
-    // Model IDs must stay within the pinned OpenClaw xai extension's selectable
-    // catalog (extensions/xai/model-definitions.ts); retired IDs are pruned by
-    // the runtime on config sync.
+    // The pinned OpenClaw xai extension forward-resolves new grok-4.* IDs even
+    // before they enter its built-in catalog; retired IDs are still pruned.
     defaultModels: [
+      { id: 'grok-4.5', name: 'Grok 4.5', supportsImage: true, supportsThinking: true, contextWindow: 500_000 },
       { id: 'grok-4.3', name: 'Grok 4.3', supportsImage: true, supportsThinking: true, contextWindow: 1_000_000 },
       { id: 'grok-build-0.1', name: 'Grok Build 0.1', supportsImage: true, supportsThinking: true, contextWindow: 256_000 },
     ],

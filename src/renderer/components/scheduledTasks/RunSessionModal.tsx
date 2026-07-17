@@ -1,12 +1,16 @@
 import { ArrowPathIcon,XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 
+import { collectSessionArtifacts, loadDetectedFileArtifact } from '../../services/artifactDetection';
 import { i18nService } from '../../services/i18n';
+import { type Artifact, PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
 import type { CoworkMessage, CoworkSession } from '../../types/cowork';
+import { showShellFailureToast } from '../../utils/localFileActions';
 import AssistantTurnBlock from '../cowork/AssistantTurnBlock';
 import {
   buildConversationTurns,
   buildDisplayItems,
+  getTurnMessageIds,
 } from '../cowork/messageDisplayUtils';
 import UserMessageItem from '../cowork/UserMessageItem';
 import { formatDateTime, stripCronMetadataPrefix } from './utils';
@@ -197,6 +201,53 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
   const displayItems = useMemo(() => buildDisplayItems(cleanedMessages), [cleanedMessages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
 
+  // Detect deliverable file artifacts from the run transcript so the modal
+  // shows the same end-of-turn file cards as the main session view.
+  const [runArtifacts, setRunArtifacts] = useState<Artifact[]>([]);
+  const sessionForArtifacts = session?.id ?? null;
+  const sessionCwd = session?.cwd;
+  useEffect(() => {
+    if (!sessionForArtifacts || cleanedMessages.length === 0) {
+      setRunArtifacts([]);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const detected = collectSessionArtifacts(cleanedMessages, sessionForArtifacts, sessionCwd);
+        const loaded: Artifact[] = [];
+        for (const artifact of detected) {
+          if (cancelled) return;
+          if (!artifact.filePath || !PREVIEWABLE_ARTIFACT_TYPES.has(artifact.type)) continue;
+          const hydrated = await loadDetectedFileArtifact(artifact, sessionCwd);
+          if (hydrated) loaded.push(hydrated);
+        }
+        if (!cancelled) setRunArtifacts(loaded);
+      } catch {
+        if (!cancelled) setRunArtifacts([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cleanedMessages, sessionCwd, sessionForArtifacts]);
+
+  // The modal has no artifact preview panel, so open files with the system
+  // default application instead.
+  const handleOpenArtifactPreview = useCallback((artifact: Artifact) => {
+    if (!artifact.filePath) return;
+    void (async () => {
+      try {
+        const result = await window.electron?.shell?.openPath(artifact.filePath!);
+        if (!result?.success) {
+          showShellFailureToast(result, 'openFileFailed');
+        }
+      } catch {
+        showShellFailureToast(null, 'openFileFailed');
+      }
+    })();
+  }, []);
+
   const runTimeLabel = useMemo(() => {
     if (!runStartedAt) return null;
     const date = new Date(runStartedAt);
@@ -287,6 +338,10 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
             <div className="py-2">
               {turns.map((turn) => {
                 const showAssistantBlock = turn.assistantItems.length > 0;
+                const turnMessageIds = getTurnMessageIds(turn);
+                const turnArtifacts = runArtifacts.filter(
+                  artifact => turnMessageIds.has(artifact.messageId),
+                );
 
                 return (
                   <React.Fragment key={turn.id}>
@@ -296,6 +351,9 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
                     {showAssistantBlock && (
                       <AssistantTurnBlock
                         turn={turn}
+                        artifacts={turnArtifacts}
+                        localServiceDirectory={sessionCwd}
+                        onOpenArtifactPreview={handleOpenArtifactPreview}
                         showTypingIndicator={false}
                         showCopyButtons={true}
                       />

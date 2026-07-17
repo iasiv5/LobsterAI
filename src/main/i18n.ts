@@ -26,6 +26,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     taskCompletionNotificationTitle: '任务已完成',
     taskCompletionNotificationBody: '有任务已完成，点击查看结果',
     taskCompletionOverlayDescription: '有任务已完成',
+    permissionNotificationTitle: '等待你的确认',
+    permissionNotificationBody: 'Agent 请求执行 {toolName}，等待你的确认',
+    permissionNotificationBodyGeneric: 'Agent 请求执行操作，等待你的确认',
+    questionNotificationTitle: '等待你的回答',
+    questionNotificationBody: '需要你回答问题后才能继续',
 
     // Session titles (created by ChannelSessionSync)
     coworkDefaultSessionTitle: '新对话',
@@ -305,6 +310,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     taskCompletionNotificationTitle: 'Task Complete',
     taskCompletionNotificationBody: 'A task has finished. Click to view the result.',
     taskCompletionOverlayDescription: 'Task complete',
+    permissionNotificationTitle: 'Waiting for Your Confirmation',
+    permissionNotificationBody: 'The agent requests to run {toolName} and is waiting for your confirmation.',
+    permissionNotificationBodyGeneric: 'The agent requests to run an action and is waiting for your confirmation.',
+    questionNotificationTitle: 'Waiting for Your Answer',
+    questionNotificationBody: 'Waiting for your answer to continue.',
 
     // Session titles
     coworkDefaultSessionTitle: 'New Chat',

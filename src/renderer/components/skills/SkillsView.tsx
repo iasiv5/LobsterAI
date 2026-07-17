@@ -3,7 +3,6 @@ import React from 'react';
 import { i18nService } from '../../services/i18n';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import WindowTitleBar from '../window/WindowTitleBar';
 import SkillsManager from './SkillsManager';
 
 interface SkillsViewProps {
@@ -17,11 +16,12 @@ interface SkillsViewProps {
 
 const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSidebar, onNewChat, onCreateSkillByChat, updateBadge, readOnly }) => {
   const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
   return (
     <div className="flex-1 flex flex-col bg-background h-full">
       <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
         <div className="flex items-center space-x-3 h-8">
-          {isSidebarCollapsed && (
+          {isSidebarCollapsed && !isWindows && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
               <button
                 type="button"
@@ -44,7 +44,6 @@ const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSid
             {i18nService.t('skills')}
           </h1>
         </div>
-        <WindowTitleBar inline />
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]">

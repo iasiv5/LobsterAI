@@ -1,3 +1,4 @@
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { getPortalInvitationUrl } from '../services/endpoints';
@@ -10,7 +11,11 @@ import {
   shouldShowSidebarBanner,
 } from './sidebarAdBannerState';
 
-const SidebarAdBanner: React.FC = () => {
+interface SidebarAdBannerProps {
+  onVisibleChange?: (visible: boolean) => void;
+}
+
+const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) => {
   const [banners, setBanners] = useState<ClientBanner[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [hiddenKey, setHiddenKey] = useState<string | null | undefined>(undefined);
@@ -74,9 +79,19 @@ const SidebarAdBanner: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [banners.length, hiddenKey, storageKey]);
 
-  const banner = banners.length > 0 ? banners[currentIndex % banners.length] : null;
+  const currentBannerIndex = banners.length > 0 ? currentIndex % banners.length : 0;
+  const banner = banners.length > 0 ? banners[currentBannerIndex] : null;
+  const hasMultipleBanners = banners.length > 1;
+  const visibleIndicatorCount = Math.min(banners.length, 3);
+  const activeIndicatorIndex = Math.min(currentBannerIndex, visibleIndicatorCount - 1);
+  const isVisible = Boolean(banner && storageKey && hiddenKey !== undefined && hiddenKey !== storageKey);
 
-  if (!banner || !storageKey || hiddenKey === undefined || hiddenKey === storageKey) {
+  useEffect(() => {
+    onVisibleChange?.(isVisible);
+    return () => onVisibleChange?.(false);
+  }, [isVisible, onVisibleChange]);
+
+  if (!banner || !storageKey || !isVisible) {
     return null;
   }
 
@@ -97,7 +112,7 @@ const SidebarAdBanner: React.FC = () => {
     : '16 / 5';
 
   return (
-    <div className="pb-1">
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[18px] pr-3.5">
       <div
         role="button"
         tabIndex={0}
@@ -108,8 +123,10 @@ const SidebarAdBanner: React.FC = () => {
             void openBanner();
           }
         }}
-        className="group relative block w-full overflow-hidden rounded-none transition-opacity hover:opacity-95"
-        style={{ aspectRatio: imageAspectRatio }}
+        className="pointer-events-auto group relative block w-full overflow-visible rounded-lg bg-transparent drop-shadow-[0_4px_4px_rgba(227,227,228,0.5)] transition-opacity hover:opacity-95 dark:drop-shadow-none"
+        style={{
+          aspectRatio: imageAspectRatio,
+        }}
         aria-label={banner.activityDescription}
       >
         <img
@@ -118,14 +135,29 @@ const SidebarAdBanner: React.FC = () => {
           className="absolute inset-0 h-full w-full object-cover"
           aria-hidden="true"
         />
+        {hasMultipleBanners && (
+          <div
+            aria-hidden="true"
+            className="absolute left-3 top-3 z-20 flex w-2 flex-col items-center gap-1"
+          >
+            {Array.from({ length: visibleIndicatorCount }, (_, index) => (
+              <span
+                key={index}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  index === activeIndicatorIndex ? 'bg-[#656877]' : 'bg-[#D9D9D9]'
+                }`}
+              />
+            ))}
+          </div>
+        )}
         <button
           type="button"
           aria-label={i18nService.t('close')}
           onClick={dismiss}
           onKeyDown={(event) => event.stopPropagation()}
-          className="absolute right-1 top-1 z-20 hidden h-5 w-5 items-center justify-center rounded-full bg-black/20 text-xs leading-none text-white transition-colors hover:bg-black/35 group-hover:flex group-focus-within:flex"
+          className="absolute right-2 top-2 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-[#D9D9DB]/80 text-white transition-colors hover:bg-[#CFCFD2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
         >
-          ×
+          <XMarkIcon className="h-3 w-3" />
         </button>
       </div>
     </div>

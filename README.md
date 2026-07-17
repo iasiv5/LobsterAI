@@ -238,7 +238,7 @@ Please use the repository issue templates for bugs and feature requests. For pul
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=netease-youdao/LobsterAI&type=date&legend=top-left)](https://www.star-history.com/#netease-youdao/LobsterAI&type=date&legend=top-left)
+[![Star History Chart](docs/res/star-history-202677.png)](https://www.star-history.com/?repos=netease-youdao%2Flobsterai&type=date&legend=bottom-right)
 
 ## License
 

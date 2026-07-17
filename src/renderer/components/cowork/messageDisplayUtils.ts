@@ -48,6 +48,23 @@ export type ConversationTurn = {
   assistantItems: AssistantTurnItem[];
 };
 
+export const getTurnMessageIds = (turn: ConversationTurn): Set<string> => {
+  const messageIds = new Set<string>();
+  for (const item of turn.assistantItems) {
+    if (item.type === 'assistant' || item.type === 'system' || item.type === 'tool_result') {
+      messageIds.add(item.message.id);
+      continue;
+    }
+    if (item.type === 'tool_group') {
+      messageIds.add(item.group.toolUse.id);
+      if (item.group.toolResult) {
+        messageIds.add(item.group.toolResult.id);
+      }
+    }
+  }
+  return messageIds;
+};
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const COWORK_DETAIL_CONTENT_CLASS = 'mx-auto w-full max-w-[760px]';

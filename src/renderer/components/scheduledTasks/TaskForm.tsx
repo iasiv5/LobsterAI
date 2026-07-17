@@ -419,8 +419,9 @@ const TaskForm: React.FC<TaskFormProps> = ({
       setConversations(result);
       setConversationsLoading(false);
 
-        // The target conversation is not user-selectable: default to the most
-        // recent DM with the selected bot instance.
+        // Pre-select a sensible default (most recent DM with the selected bot)
+        // when nothing is chosen yet; the user can still override the target via
+        // the conversation dropdown below.
         const defaultConversation = pickDefaultConversation(result);
         if (defaultConversation && !form.notifyTo) {
           setForm(current => ({ ...current, notifyTo: defaultConversation.conversationId }));
@@ -1208,6 +1209,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
 
   const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
   const channelDropdownRef = React.useRef<HTMLDivElement>(null);
+  const [convDropdownOpen, setConvDropdownOpen] = useState(false);
+  const convDropdownRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1216,6 +1219,12 @@ const TaskForm: React.FC<TaskFormProps> = ({
         !channelDropdownRef.current.contains(event.target as Node)
       ) {
         setChannelDropdownOpen(false);
+      }
+      if (
+        convDropdownRef.current &&
+        !convDropdownRef.current.contains(event.target as Node)
+      ) {
+        setConvDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -1243,9 +1252,9 @@ const TaskForm: React.FC<TaskFormProps> = ({
 
   const renderNotifyRow = () => {
     const selectedLogo = getChannelLogo(form.notifyChannel);
-    // The notify target is resolved automatically (most recent DM with the
-    // selected bot); the label below the selector tells the user where the
-    // notification will go.
+    // The notify target is a user-selectable conversation (group or DM) for the
+    // chosen bot instance. pickDefaultConversation pre-selects the most recent
+    // DM, but the user can switch to any conversation via the dropdown below.
     const selectedConversation = conversations.find(
       (conv) => conversationOptionMatchesValue(form.notifyChannel, conv.conversationId, form.notifyTo),
     );
@@ -1370,24 +1379,100 @@ const TaskForm: React.FC<TaskFormProps> = ({
             )}
         </div>
         {showConversationSelector ? (
-          errors.notifyTo ? (
-            <p className={errorClass}>{errors.notifyTo}</p>
-          ) : conversationsLoading ? (
-            <p className={hintClass}>
-              {i18nService.t('scheduledTasksFormNotifyConversationLoading')}
-            </p>
-          ) : resolvedTargetLabel ? (
-            <p
-              className={hintClass}
-              title={selectedConversation?.conversationId ?? form.notifyTo}
-            >
-              {`${i18nService.t('scheduledTasksFormNotifyResolvedTo')}${resolvedTargetLabel}`}
-            </p>
-          ) : (
-            <p className={hintClass}>
-              {i18nService.t('scheduledTasksFormNotifyNoConversationHint')}
-            </p>
-          )
+          <div className="mt-2">
+            <div className="relative w-full" ref={convDropdownRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!conversationsLoading) setConvDropdownOpen(!convDropdownOpen);
+                }}
+                disabled={conversationsLoading}
+                title={selectedConversation?.conversationId ?? form.notifyTo}
+                className={`${inputClass} w-full flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <span className="truncate">
+                  {conversationsLoading
+                    ? i18nService.t('scheduledTasksFormNotifyConversationLoading')
+                    : resolvedTargetLabel ||
+                      i18nService.t('scheduledTasksFormNotifySelectConversation')}
+                </span>
+                <svg
+                  className={`w-4 h-4 ml-2 flex-shrink-0 transition-transform ${
+                    convDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </button>
+
+              {convDropdownOpen && !conversationsLoading && (
+                <div className="absolute bottom-full z-50 mb-1 w-full rounded-xl border border-border bg-surface shadow-popover popover-enter overflow-hidden">
+                  <div className="max-h-72 overflow-y-auto py-1">
+                    {conversations.length === 0 ? (
+                      <div className="px-3 py-2 text-[13px] text-secondary">
+                        {i18nService.t('scheduledTasksFormNotifyNoConversationHint')}
+                      </div>
+                    ) : (
+                      conversations.map(conv => {
+                        const isActive = conversationOptionMatchesValue(
+                          form.notifyChannel,
+                          conv.conversationId,
+                          form.notifyTo,
+                        );
+                        return (
+                          <button
+                            type="button"
+                            key={conv.conversationId}
+                            className={`w-full flex items-center gap-2 px-3 py-2 text-left text-foreground hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${
+                              isActive
+                                ? 'bg-claude-surfaceHover/50 dark:bg-claude-darkSurfaceHover/50'
+                                : ''
+                            }`}
+                            title={conv.conversationId}
+                            onClick={() => {
+                              updateForm({ notifyTo: conv.conversationId });
+                              setConvDropdownOpen(false);
+                              setErrors(current => {
+                                if (!current.notifyTo) return current;
+                                const { notifyTo: _ignored, ...rest } = current;
+                                return rest;
+                              });
+                            }}
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-normal leading-5">
+                              {formatConversationOptionLabel(conv)}
+                            </span>
+                            {isActive && (
+                              <CheckIcon className="h-4 w-4 shrink-0 text-emerald-500" />
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            {errors.notifyTo ? (
+              <p className={errorClass}>{errors.notifyTo}</p>
+            ) : conversations.length === 0 && !conversationsLoading ? (
+              <p className={hintClass}>
+                {i18nService.t('scheduledTasksFormNotifyNoConversationHint')}
+              </p>
+            ) : (
+              <p className={hintClass}>
+                {i18nService.t('scheduledTasksFormNotifySelectConversationHint')}
+              </p>
+            )}
+          </div>
         ) : (
           <p className={hintClass}>
             {i18nService.t('scheduledTasksFormNotifyChannelHint')}

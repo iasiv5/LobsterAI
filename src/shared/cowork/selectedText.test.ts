@@ -66,6 +66,26 @@ test('rejects selected text snippet limits', () => {
   });
 });
 
+test('strips NUL characters from selected text snippets', () => {
+  const nul = String.fromCharCode(0);
+  expect(normalizeCoworkSelectedTextSnippets([
+    createSnippet(`quo${nul}ted${nul}`, { id: 'nul-text' }),
+  ])).toEqual({
+    success: true,
+    snippets: [
+      {
+        id: 'nul-text',
+        text: 'quoted',
+        sourceMessageId: 'assistant-1',
+        sourceMessageType: CoworkSelectedTextSource.AssistantMessage,
+        sourceId: 'assistant-1',
+        sourceType: CoworkSelectedTextSource.AssistantMessage,
+        createdAt: 1,
+      },
+    ],
+  });
+});
+
 test('rejects duplicate selected text snippets from the same source', () => {
   expect(normalizeCoworkSelectedTextSnippets([
     createSnippet('same', { id: 'one' }),

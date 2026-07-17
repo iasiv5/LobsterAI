@@ -46,9 +46,11 @@ class AgentService {
           enabled: a.enabled,
           pinned: a.pinned ?? false,
           pinOrder: a.pinOrder ?? null,
+          sortOrder: a.sortOrder ?? null,
           isDefault: a.isDefault,
           source: a.source,
           skillIds: a.skillIds ?? [],
+          subagentAllowAgentIds: a.subagentAllowAgentIds ?? [],
         }));
         store.dispatch(setAgents(mappedAgents));
       }
@@ -68,6 +70,7 @@ class AgentService {
     workingDirectory?: string;
     icon?: string;
     skillIds?: string[];
+    subagentAllowAgentIds?: string[];
   }): Promise<Agent | null> {
     try {
       const agent = await window.electron?.agents?.create(request);
@@ -82,9 +85,11 @@ class AgentService {
           enabled: agent.enabled,
           pinned: agent.pinned ?? false,
           pinOrder: agent.pinOrder ?? null,
+          sortOrder: agent.sortOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],
+          subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
         return agent;
       }
@@ -104,8 +109,10 @@ class AgentService {
     workingDirectory?: string;
     icon?: string;
     skillIds?: string[];
+    subagentAllowAgentIds?: string[];
     enabled?: boolean;
     pinned?: boolean;
+    sortOrder?: number | null;
   }): Promise<Agent | null> {
     try {
       const agent = await window.electron?.agents?.update(id, updates);
@@ -122,7 +129,9 @@ class AgentService {
             enabled: agent.enabled,
             pinned: agent.pinned ?? false,
             pinOrder: agent.pinOrder ?? null,
+            sortOrder: agent.sortOrder ?? null,
             skillIds,
+            subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
           },
         }));
         // Only sync active skills when skillIds were explicitly updated,
@@ -137,6 +146,34 @@ class AgentService {
     } catch (error) {
       console.error('Failed to update agent:', error);
       return null;
+    }
+  }
+
+  async reorderAgents(agentIds: string[]): Promise<boolean> {
+    try {
+      const agents = await window.electron?.agents?.reorder(agentIds);
+      if (!agents) return false;
+      const mappedAgents = agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        icon: agent.icon,
+        model: agent.model ?? '',
+        workingDirectory: agent.workingDirectory ?? '',
+        enabled: agent.enabled,
+        pinned: agent.pinned ?? false,
+        pinOrder: agent.pinOrder ?? null,
+        sortOrder: agent.sortOrder ?? null,
+        isDefault: agent.isDefault,
+        source: agent.source,
+        skillIds: agent.skillIds ?? [],
+        subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
+      }));
+      store.dispatch(setAgents(mappedAgents));
+      return true;
+    } catch (error) {
+      console.error('Failed to reorder agents:', error);
+      return false;
     }
   }
 
@@ -214,9 +251,11 @@ class AgentService {
           enabled: agent.enabled,
           pinned: agent.pinned ?? false,
           pinOrder: agent.pinOrder ?? null,
+          sortOrder: agent.sortOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],
+          subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
         return agent;
       }

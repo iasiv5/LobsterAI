@@ -17,7 +17,6 @@ import { getAgentDisplayNameById } from '../utils/agentDisplay';
 import {
   type AgentSidebarBatchItem,
   AgentSidebarBatchItemKind,
-  type AgentSidebarSubagentBatchItem,
   createSessionBatchKey,
 } from './agentSidebar/batchSelection';
 import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
@@ -48,7 +47,11 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  updateBadge?: React.ReactNode;
+  onWidthChange?: (width: number) => void;
+  updateNotice?: React.ReactNode;
+  /** The expanded update card owns the sidebar bottom; suppress the promo
+   * banner while it shows so the two never stack. */
+  hideAdBanner?: boolean;
   hideLogin?: boolean;
 }
 
@@ -135,7 +138,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
-  updateBadge,
+  onWidthChange,
+  updateNotice,
+  hideAdBanner,
   hideLogin,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
@@ -152,12 +157,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [agentScrollEdges, setAgentScrollEdges] = useState({ top: false, bottom: false });
+  const [isSidebarBannerVisible, setIsSidebarBannerVisible] = useState(false);
   const [showKitsNewBadge, setShowKitsNewBadge] = useState(false);
   const isResizingRef = useRef(false);
   const resizeStartXRef = useRef(0);
   const resizeStartWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const agentScrollContainerRef = useRef<HTMLDivElement>(null);
-  const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
+  const showHeaderRow = !isWindows;
   const batchSelectableKeySet = useMemo(
     () => new Set(batchSelectableItems.map((item) => item.key)),
     [batchSelectableItems],
@@ -181,13 +188,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     const selectedSessionCount = selectedItems.filter(
       (item) => item.kind === AgentSidebarBatchItemKind.Session,
     ).length;
-    const selectedSubagentCount = selectedItems.filter(
-      (item) => item.kind === AgentSidebarBatchItemKind.Subagent,
-    ).length;
     return {
       selectedCount: selectedItems.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     };
   }, [batchSelectableItemByKey, batchSelectableItems.length, batchSelectableKeySet, selectedKeys]);
@@ -383,45 +387,33 @@ const Sidebar: React.FC<SidebarProps> = ({
       .filter((item): item is AgentSidebarBatchItem => Boolean(item));
     if (items.length === 0) return;
 
-    const subagentItems = items.filter(
-      (item): item is AgentSidebarSubagentBatchItem => item.kind === AgentSidebarBatchItemKind.Subagent,
-    );
     const sessionIds = items
       .filter((item) => item.kind === AgentSidebarBatchItemKind.Session)
       .map((item) => item.sessionId);
     const selectedSessionCount = sessionIds.length;
-    const selectedSubagentCount = subagentItems.length;
 
     reportSidebarAction('batch_delete_submit', {
       source: 'home_agent_sidebar',
       agentType: batchAgentId === AgentId.Main ? 'main' : 'custom',
       selectedCount: items.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     });
-
-    const deletedSubagents: AgentSidebarSubagentBatchItem[] = [];
-    for (const item of subagentItems) {
-      const deleted = await coworkService.deleteSubagentSession(item.parentSessionId, item.runId);
-      if (deleted) {
-        deletedSubagents.push(item);
-      }
-    }
 
     let deletedSessions = false;
     if (sessionIds.length > 0) {
       deletedSessions = await coworkService.deleteSessions(sessionIds);
     }
 
-    if (!deletedSessions && deletedSubagents.length === 0) {
+    if (!deletedSessions) {
       reportSidebarAction('batch_delete_failed', {
         source: 'home_agent_sidebar',
         agentType: batchAgentId === AgentId.Main ? 'main' : 'custom',
         result: 'failed',
         selectedCount: items.length,
         selectedSessionCount,
-        selectedSubagentCount,
+        selectedSubagentCount: 0,
         selectableCount: batchSelectableItems.length,
       });
       return;
@@ -432,7 +424,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       result: 'success',
       selectedCount: items.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     });
     if (deletedSessions) {
@@ -469,7 +461,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         onToggleCollapse();
         return;
       }
-      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, nextWidth));
+      const clampedWidth = Math.min(MAX_SIDEBAR_WIDTH, nextWidth);
+      setSidebarWidth(clampedWidth);
+      onWidthChange?.(clampedWidth);
     };
 
     const handleMouseUp = () => {
@@ -482,7 +476,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [isCollapsed, onToggleCollapse, sidebarWidth]);
+  }, [isCollapsed, onToggleCollapse, onWidthChange, sidebarWidth]);
 
   useEffect(() => {
     return () => {
@@ -524,17 +518,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
       <div className="pt-3 pb-3">
-        <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
-          <div className={`${isMac ? 'pl-[68px]' : ''}`}>{updateBadge}</div>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-            aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
-          >
-            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
-          </button>
-        </div>
+        {showHeaderRow && (
+          <div className="draggable sidebar-header-drag h-8 flex items-center justify-end px-3">
+            {!isWindows && (
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+                aria-label={isCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
+              </button>
+            )}
+          </div>
+        )}
         <div className="mt-[5px] space-y-0.5 px-3">
           <button
             type="button"
@@ -622,7 +619,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="relative min-h-0 flex-1">
         <div
           ref={agentScrollContainerRef}
-          className="scrollbar-hidden h-full overflow-y-auto px-2.5 pb-10"
+          className={`scrollbar-hidden h-full overflow-y-auto px-2.5 ${
+            isSidebarBannerVisible && !isBatchMode ? 'pb-[104px]' : 'pb-10'
+          }`}
           onScroll={handleAgentScroll}
         >
           <MyAgentSidebarTree
@@ -652,6 +651,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             onBatchSelectableItemsChange={handleBatchSelectableItemsChange}
           />
         </div>
+        {!isBatchMode && !hideAdBanner && (
+          <SidebarAdBanner onVisibleChange={setIsSidebarBannerVisible} />
+        )}
         <div
           className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-surface-raised to-transparent transition-opacity duration-150 ${
             agentScrollEdges.top ? 'opacity-100' : 'opacity-0'
@@ -660,11 +662,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div
           className={`pointer-events-none absolute inset-x-0 top-[68px] z-10 h-3 bg-gradient-to-b from-surface-raised to-transparent transition-opacity duration-150 ${
             agentScrollEdges.top ? 'opacity-40' : 'opacity-0'
-          }`}
-        />
-        <div
-          className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 h-3 bg-gradient-to-t from-surface-raised to-transparent transition-opacity duration-150 ${
-            agentScrollEdges.bottom ? 'opacity-40' : 'opacity-0'
           }`}
         />
       </div>
@@ -681,6 +678,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
       />
+      {!isBatchMode && updateNotice && (
+        <div className="non-draggable px-3 pt-1.5">{updateNotice}</div>
+      )}
       {isBatchMode ? (
         <div className="border-t border-border/60 px-3 pb-3 pt-2">
           <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
@@ -726,11 +726,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       ) : (
         <div className="pb-2 pt-2">
-          <SidebarAdBanner />
           <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
             {!hideLogin && (
               <div className="flex-1 min-w-0">
-                <LoginButton />
+                <LoginButton contentLeftOffset={isCollapsed ? 0 : sidebarWidth} />
               </div>
             )}
             <button

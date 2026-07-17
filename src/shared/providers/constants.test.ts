@@ -67,6 +67,25 @@ describe('ProviderRegistry', () => {
     ]);
   });
 
+  test('OpenAI defaults include the GPT-5.6 family with official context windows', () => {
+    const openai = ProviderRegistry.get(ProviderName.OpenAI);
+    expect(openai?.defaultModels.slice(0, 3)).toEqual([
+      { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+      { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', supportsImage: true, supportsThinking: true, contextWindow: 1_050_000 },
+    ]);
+  });
+
+  test('xAI defaults include Grok 4.5 with its official context window', () => {
+    expect(ProviderRegistry.get(ProviderName.Xai)?.defaultModels[0]).toEqual({
+      id: 'grok-4.5',
+      name: 'Grok 4.5',
+      supportsImage: true,
+      supportsThinking: true,
+      contextWindow: 500_000,
+    });
+  });
+
   test('get returns undefined for unknown provider', () => {
     expect(ProviderRegistry.get('nonexistent')).toBeUndefined();
     expect(ProviderRegistry.get(ProviderName.Custom)).toBeUndefined();
@@ -117,6 +136,10 @@ describe('ProviderRegistry', () => {
       [ProviderName.Xiaomi, 'mimo-v2.5'],
       [ProviderName.OpenAI, 'gpt-5.4'],
       [ProviderName.OpenAI, 'gpt-5.5'],
+      [ProviderName.OpenAI, 'gpt-5.6-sol'],
+      [ProviderName.OpenAI, 'gpt-5.6-terra'],
+      [ProviderName.OpenAI, 'gpt-5.6-luna'],
+      [ProviderName.Xai, 'grok-4.5'],
       [ProviderName.Gemini, 'gemini-3.1-pro-preview'],
       [ProviderName.Anthropic, 'claude-opus-4-7'],
       [ProviderName.OpenRouter, 'openai/gpt-5.5'],
@@ -140,6 +163,8 @@ describe('ProviderRegistry', () => {
     expect(ProviderRegistry.resolveModelContextWindow(ProviderName.DeepSeek, 'deepseek-v4-flash')).toBe(1_000_000);
     expect(ProviderRegistry.resolveModelContextWindow('custom_0', 'deepseek-v4-pro')).toBe(1_000_000);
     expect(ProviderRegistry.resolveModelContextWindow(ProviderName.DeepSeek, 'deepseek-v4-pro', 200_000)).toBe(200_000);
+    expect(ProviderRegistry.resolveModelContextWindow(ProviderName.OpenAI, 'gpt-5.6-sol')).toBe(1_050_000);
+    expect(ProviderRegistry.resolveModelContextWindow(ProviderName.Xai, 'grok-4.5')).toBe(500_000);
   });
 
   test('supportsCodingPlan is true for moonshot, qwen, zhipu, volcengine, qianfan, xiaomi', () => {

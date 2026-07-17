@@ -7,6 +7,7 @@ import { RootState } from '../../store';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
+  selectPendingPermissionSessionIds,
   selectUnreadSessionIds,
 } from '../../store/selectors/coworkSelectors';
 import type { CoworkSessionSummary } from '../../types/cowork';
@@ -51,7 +52,11 @@ const mergeSessions = (
 export const deriveAgentSidebarIndicator = (
   session: CoworkSessionSummary,
   unreadSessionIds: Set<string>,
+  pendingPermissionSessionIds: Set<string>,
 ) => {
+  if (pendingPermissionSessionIds.has(session.id)) {
+    return AgentSidebarIndicator.PendingPermission;
+  }
   if (session.status === CoworkSessionStatusValue.Running) {
     return AgentSidebarIndicator.Running;
   }
@@ -86,11 +91,9 @@ export const sortAgentSidebarAgents = (
 ): AgentSidebarAgentSummary[] => {
   return [...agents].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    if (a.pinned && b.pinned) {
-      const aPinOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
-      const bPinOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
-      if (aPinOrder !== bPinOrder) return aPinOrder - bPinOrder;
-    }
+    const aSortOrder = a.sortOrder ?? (a.pinned ? a.pinOrder : null) ?? Number.MAX_SAFE_INTEGER;
+    const bSortOrder = b.sortOrder ?? (b.pinned ? b.pinOrder : null) ?? Number.MAX_SAFE_INTEGER;
+    if (aSortOrder !== bSortOrder) return aSortOrder - bSortOrder;
     return 0;
   });
 };
@@ -99,6 +102,7 @@ export const toAgentSidebarTaskNode = (
   session: CoworkSessionSummary,
   currentSessionId: string | null,
   unreadSessionIds: Set<string>,
+  pendingPermissionSessionIds: Set<string>,
 ): AgentSidebarTaskNode => {
   return {
     id: session.id,
@@ -109,7 +113,7 @@ export const toAgentSidebarTaskNode = (
     pinOrder: session.pinOrder ?? null,
     updatedAt: session.updatedAt,
     createdAt: session.createdAt,
-    indicator: deriveAgentSidebarIndicator(session, unreadSessionIds),
+    indicator: deriveAgentSidebarIndicator(session, unreadSessionIds, pendingPermissionSessionIds),
     isSelected: session.id === currentSessionId,
   };
 };
@@ -161,9 +165,11 @@ export const useAgentSidebarState = () => {
   const currentSessionId = useSelector(selectCurrentSessionId);
   const sessions = useSelector(selectCoworkSessions);
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
+  const pendingPermissionSessionIds = useSelector(selectPendingPermissionSessionIds);
 
   const [expandedAgentIds, setExpandedAgentIds] = useState<string[]>([]);
   const [expandedTaskListAgentIds, setExpandedTaskListAgentIds] = useState<string[]>([]);
+  const [visibleTaskLimitByAgentId, setVisibleTaskLimitByAgentId] = useState<Record<string, number>>({});
   const [taskPreviewsByAgentId, setTaskPreviewsByAgentId] = useState<Record<string, CoworkSessionSummary[]>>({});
   const [hasMoreTasksByAgentId, setHasMoreTasksByAgentId] = useState<Record<string, boolean>>({});
   const [loadingAgentIds, setLoadingAgentIds] = useState<string[]>([]);
@@ -184,6 +190,7 @@ export const useAgentSidebarState = () => {
         enabled: agent.enabled,
         pinned: agent.pinned ?? false,
         pinOrder: agent.pinOrder ?? null,
+        sortOrder: agent.sortOrder ?? null,
       }));
   }, [agents]);
 
@@ -192,6 +199,10 @@ export const useAgentSidebarState = () => {
   }, [enabledAgents]);
 
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
+  const pendingPermissionSessionIdSet = useMemo(
+    () => new Set(pendingPermissionSessionIds),
+    [pendingPermissionSessionIds],
+  );
   const expandedAgentIdSet = useMemo(() => new Set(expandedAgentIds), [expandedAgentIds]);
   const expandedTaskListAgentIdSet = useMemo(
     () => new Set(expandedTaskListAgentIds),
@@ -355,6 +366,18 @@ export const useAgentSidebarState = () => {
     setFailedAgentIds((previous) => previous.filter((id) => activeAgentIds.has(id)));
     setExpandedAgentIds((previous) => previous.filter((id) => activeAgentIds.has(id)));
     setExpandedTaskListAgentIds((previous) => previous.filter((id) => activeAgentIds.has(id)));
+    setVisibleTaskLimitByAgentId((previous) => {
+      let changed = false;
+      const next: Record<string, number> = {};
+      Object.entries(previous).forEach(([agentId, limit]) => {
+        if (activeAgentIds.has(agentId)) {
+          next[agentId] = limit;
+          return;
+        }
+        changed = true;
+      });
+      return changed ? next : previous;
+    });
   }, [agents.length, enabledAgents]);
 
   useEffect(() => {
@@ -390,7 +413,6 @@ export const useAgentSidebarState = () => {
   }, [sessions]);
 
   const toggleAgentExpanded = useCallback((agentId: string) => {
-    setExpandedTaskListAgentIds((previous) => collapseAgentSidebarTaskList(previous, agentId));
     setExpandedAgentIds((previous) => {
       return previous.includes(agentId)
         ? previous.filter((id) => id !== agentId)
@@ -400,64 +422,66 @@ export const useAgentSidebarState = () => {
 
   const loadMoreTasks = useCallback((agentId: string) => {
     const loadedTasks = taskPreviewsByAgentId[agentId] ?? [];
+    const currentVisibleLimit =
+      visibleTaskLimitByAgentId[agentId]
+      ?? (expandedTaskListAgentIdSet.has(agentId)
+        ? AgentSidebarPageSize.Preview + AgentSidebarPageSize.ExpandBatch
+        : AgentSidebarPageSize.Preview);
+    const nextVisibleLimit = currentVisibleLimit + AgentSidebarPageSize.ExpandBatch;
     setExpandedTaskListAgentIds((previous) => {
       return previous.includes(agentId) ? previous : [...previous, agentId];
     });
-    if (
-      loadedTasks.length > AgentSidebarPageSize.Preview
-      && !(hasMoreTasksByAgentId[agentId] ?? false)
-    ) {
+    setVisibleTaskLimitByAgentId((previous) => ({
+      ...previous,
+      [agentId]: nextVisibleLimit,
+    }));
+
+    if (loadedTasks.length >= nextVisibleLimit || !(hasMoreTasksByAgentId[agentId] ?? false)) {
       return Promise.resolve();
     }
 
-    const loadingKey = `${agentId}:all`;
+    const offset = loadedTasks.length;
+    const limit = Math.max(
+      AgentSidebarPageSize.ExpandBatch,
+      nextVisibleLimit - loadedTasks.length,
+    );
+    const loadingKey = `${agentId}:${offset}:${limit}`;
     if (loadingKeysRef.current.has(loadingKey)) return Promise.resolve();
 
     loadingKeysRef.current.add(loadingKey);
     setAgentLoading(agentId, true);
     setAgentFailed(agentId, false);
 
-    const loadAll = async () => {
-      const sessions: CoworkSessionSummary[] = [];
-      let offset = 0;
-      let hasMore = true;
-
-      while (hasMore) {
-        const result = await coworkService.listSessionsForAgentPreview(
-          agentId,
-          AgentSidebarPageSize.AllBatch,
-          offset,
-        );
-        if (!result.success) {
-          setAgentFailed(agentId, true);
-          return;
-        }
-
-        const batch = result.sessions ?? [];
-        sessions.push(...batch);
-        hasMore = result.hasMore ?? false;
-        offset += batch.length;
-        if (batch.length === 0) {
-          break;
-        }
+    const loadNextPage = async () => {
+      const result = await coworkService.listSessionsForAgentPreview(agentId, limit, offset);
+      if (!result.success) {
+        setAgentFailed(agentId, true);
+        return;
       }
 
       loadedAgentIdsRef.current.add(agentId);
       setTaskPreviewsByAgentId((previous) => ({
         ...previous,
-        [agentId]: mergeSessions([], sessions),
+        [agentId]: mergeSessions(previous[agentId] ?? [], result.sessions ?? []),
       }));
       setHasMoreTasksByAgentId((previous) => ({
         ...previous,
-        [agentId]: false,
+        [agentId]: result.hasMore ?? false,
       }));
     };
 
-    return loadAll().finally(() => {
+    return loadNextPage().finally(() => {
       loadingKeysRef.current.delete(loadingKey);
       setAgentLoading(agentId, false);
     });
-  }, [hasMoreTasksByAgentId, setAgentFailed, setAgentLoading, taskPreviewsByAgentId]);
+  }, [
+    expandedTaskListAgentIdSet,
+    hasMoreTasksByAgentId,
+    setAgentFailed,
+    setAgentLoading,
+    taskPreviewsByAgentId,
+    visibleTaskLimitByAgentId,
+  ]);
 
   const expandAgent = useCallback((agentId: string) => {
     setExpandedAgentIds((previous) => {
@@ -473,6 +497,12 @@ export const useAgentSidebarState = () => {
   const collapseTasks = useCallback((agentId: string) => {
     setExpandedTaskListAgentIds((previous) => {
       return collapseAgentSidebarTaskList(previous, agentId);
+    });
+    setVisibleTaskLimitByAgentId((previous) => {
+      if (!Object.prototype.hasOwnProperty.call(previous, agentId)) return previous;
+      const next = { ...previous };
+      delete next[agentId];
+      return next;
     });
   }, []);
 
@@ -538,6 +568,12 @@ export const useAgentSidebarState = () => {
     setFailedAgentIds((previous) => previous.filter((id) => id !== agentId));
     setExpandedAgentIds((previous) => previous.filter((id) => id !== agentId));
     setExpandedTaskListAgentIds((previous) => previous.filter((id) => id !== agentId));
+    setVisibleTaskLimitByAgentId((previous) => {
+      if (!Object.prototype.hasOwnProperty.call(previous, agentId)) return previous;
+      const next = { ...previous };
+      delete next[agentId];
+      return next;
+    });
   }, []);
 
   const agentNodes = useMemo<AgentSidebarAgentNode[]>(() => {
@@ -545,16 +581,23 @@ export const useAgentSidebarState = () => {
       const taskPreviews = taskPreviewsByAgentId[agent.id] ?? [];
       const sortedTaskPreviews = sortAgentSidebarTasks(taskPreviews);
       const isTaskListExpanded = expandedTaskListAgentIdSet.has(agent.id);
-      const hasMoreLoadedTasks = sortedTaskPreviews.length > AgentSidebarPageSize.Preview;
+      const visibleTaskLimit =
+        visibleTaskLimitByAgentId[agent.id]
+        ?? (isTaskListExpanded
+          ? AgentSidebarPageSize.Preview + AgentSidebarPageSize.ExpandBatch
+          : AgentSidebarPageSize.Preview);
+      const hasMoreLoadedTasks = sortedTaskPreviews.length > visibleTaskLimit;
       const canExpandTasks =
-        !isTaskListExpanded
-        && ((hasMoreTasksByAgentId[agent.id] ?? false) || hasMoreLoadedTasks);
-      const canCollapseTasks = isTaskListExpanded && hasMoreLoadedTasks;
-      const visibleTaskPreviews = isTaskListExpanded
-        ? sortedTaskPreviews
-        : sortedTaskPreviews.slice(0, AgentSidebarPageSize.Preview);
+        (hasMoreTasksByAgentId[agent.id] ?? false) || hasMoreLoadedTasks;
+      const canCollapseTasks = isTaskListExpanded;
+      const visibleTaskPreviews = sortedTaskPreviews.slice(0, visibleTaskLimit);
       const tasks = visibleTaskPreviews.map((session) => {
-        return toAgentSidebarTaskNode(session, currentSessionId, unreadSessionIdSet);
+        return toAgentSidebarTaskNode(
+          session,
+          currentSessionId,
+          unreadSessionIdSet,
+          pendingPermissionSessionIdSet,
+        );
       });
 
       return {
@@ -575,9 +618,11 @@ export const useAgentSidebarState = () => {
     failedAgentIdSet,
     hasMoreTasksByAgentId,
     loadingAgentIdSet,
+    pendingPermissionSessionIdSet,
     sortedEnabledAgents,
     taskPreviewsByAgentId,
     unreadSessionIdSet,
+    visibleTaskLimitByAgentId,
   ]);
 
   return {

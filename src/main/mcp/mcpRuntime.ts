@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
+import { ASK_USER_QUESTION_TOOL_NAME, SESSION_AGNOSTIC_PERMISSION_SESSION_ID } from '../../shared/cowork/constants';
 import { McpIpcChannel } from '../../shared/mcp/constants';
 import { isComputerUseKitInstalled } from '../computerUse/computerUseKit';
 import { resolveComputerUseMcpServer } from '../computerUse/computerUseMcpServer';
@@ -16,6 +17,7 @@ import {
 } from '../libs/mcpBridgeServer';
 import { OpenClawConfigImpact } from '../libs/openclawConfigImpact';
 import type { ResolvedMcpServer } from '../libs/openclawConfigSync';
+import { resolveLocalDesktopCoworkSessionIdByOpenClawSessionKey } from '../libs/openclawLocalSessionResolver';
 import { resolveStdioCommand } from '../libs/resolveStdioCommand';
 import type { SqliteStore } from '../sqliteStore';
 import { createMcpLaunchSourceFingerprint, McpLaunchResolutionStatus } from './mcpLaunchResolution';
@@ -31,6 +33,10 @@ export interface McpRuntimeDeps {
     restartGatewayIfRunning?: boolean;
     expectedImpact?: OpenClawConfigImpact;
   }) => Promise<{ success: boolean; changed: boolean }>;
+  /** Fired when an AskUserQuestion request is surfaced to the renderer. */
+  onAskUserRequested?: (sessionId: string, request: { requestId: string; toolName: string }) => void;
+  /** Fired when a pending AskUserQuestion request is dismissed upstream. */
+  onAskUserDismissed?: (requestId: string) => void;
 }
 
 export class McpRuntime {
@@ -116,21 +122,39 @@ export class McpRuntime {
     await this.bridgeServer.start();
 
     this.bridgeServer.onAskUser(request => {
+      const sessionId = request.sessionKey
+        ? resolveLocalDesktopCoworkSessionIdByOpenClawSessionKey(
+            this.deps.getStore().getDatabase(),
+            request.sessionKey,
+          )
+        : SESSION_AGNOSTIC_PERMISSION_SESSION_ID;
+      if (!sessionId) {
+        console.warn('[AskUser] denied request for non-desktop or unknown session:', request.sessionKey);
+        this.resolveAskUser(request.requestId, { behavior: 'deny' });
+        return;
+      }
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (win.isDestroyed()) return;
         try {
           win.webContents.send('cowork:stream:permission', {
-            sessionId: '__askuser__',
+            sessionId,
             request: {
               requestId: request.requestId,
-              toolName: 'AskUserQuestion',
-              toolInput: { questions: request.questions },
+              toolName: ASK_USER_QUESTION_TOOL_NAME,
+              toolInput: {
+                questions: request.questions,
+                ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+              },
             },
           });
         } catch (error) {
           console.error('[AskUser] failed to send permission request to window:', error);
         }
+      });
+      this.deps.onAskUserRequested?.(sessionId, {
+        requestId: request.requestId,
+        toolName: ASK_USER_QUESTION_TOOL_NAME,
       });
     });
 
@@ -144,6 +168,7 @@ export class McpRuntime {
           // ignore
         }
       });
+      this.deps.onAskUserDismissed?.(requestId);
     });
 
     this.bridgeServer.onMediaGeneration(async (request) => {
@@ -160,9 +185,10 @@ export class McpRuntime {
   async askUserInternal(
     questions: AskUserRequest['questions'],
     timeoutMs?: number,
+    options?: { sessionKey?: string },
   ): Promise<AskUserResponse | null> {
     if (!this.bridgeServer) return null;
-    return await this.bridgeServer.askUserInternal(questions, timeoutMs);
+    return await this.bridgeServer.askUserInternal(questions, timeoutMs, options);
   }
 
   resolveAskUser(requestId: string, response: AskUserResponse): void {

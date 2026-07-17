@@ -169,6 +169,109 @@ describe('buildAgentEntry', () => {
     expect(identity.name).toBe('Designer');
     expect(identity.emoji).toBeUndefined();
   });
+
+  test('emits display name both as top-level name and identity name', () => {
+    const result = buildAgentEntry({
+      id: 'writer',
+      name: '写作助手',
+      description: '',
+      systemPrompt: '',
+      identity: '',
+      model: '',
+      workingDirectory: '',
+      icon: '',
+      skillIds: [],
+      enabled: true,
+      isDefault: false,
+      source: 'custom',
+      presetId: '',
+      createdAt: 0,
+      updatedAt: 0,
+    }, 'anthropic/claude-sonnet-4');
+
+    expect(result).toMatchObject({
+      id: 'writer',
+      name: '写作助手',
+      identity: {
+        name: '写作助手',
+      },
+    });
+  });
+
+  test('emits subagent allowAgents for configured agent delegation', () => {
+    const result = buildAgentEntry({
+      id: 'main',
+      name: 'main',
+      description: '',
+      systemPrompt: '',
+      identity: '',
+      model: '',
+      workingDirectory: '',
+      icon: '',
+      skillIds: [],
+      subagentAllowAgentIds: ['writer', 'writer', 'researcher'],
+      enabled: true,
+      isDefault: true,
+      source: 'custom',
+      presetId: '',
+      createdAt: 0,
+      updatedAt: 0,
+    }, 'anthropic/claude-sonnet-4');
+
+    expect(result).toMatchObject({
+      id: 'main',
+      subagents: {
+        allowAgents: ['main', 'writer', 'researcher'],
+        requireAgentId: true,
+      },
+    });
+  });
+
+  test('omits subagent config when no collaborator agents are selected', () => {
+    const result = buildAgentEntry({
+      id: 'main',
+      name: 'main',
+      description: '',
+      systemPrompt: '',
+      identity: '',
+      model: '',
+      workingDirectory: '',
+      icon: '',
+      skillIds: [],
+      subagentAllowAgentIds: [],
+      enabled: true,
+      isDefault: true,
+      source: 'custom',
+      presetId: '',
+      createdAt: 0,
+      updatedAt: 0,
+    }, 'anthropic/claude-sonnet-4');
+
+    expect(result).not.toHaveProperty('subagents');
+  });
+
+  test('does not emit subagent config for self-only collaborator entries', () => {
+    const result = buildAgentEntry({
+      id: 'main',
+      name: 'main',
+      description: '',
+      systemPrompt: '',
+      identity: '',
+      model: '',
+      workingDirectory: '',
+      icon: '',
+      skillIds: [],
+      subagentAllowAgentIds: ['main'],
+      enabled: true,
+      isDefault: true,
+      source: 'custom',
+      presetId: '',
+      createdAt: 0,
+      updatedAt: 0,
+    }, 'anthropic/claude-sonnet-4');
+
+    expect(result).not.toHaveProperty('subagents');
+  });
 });
 
 describe('buildManagedAgentEntries', () => {

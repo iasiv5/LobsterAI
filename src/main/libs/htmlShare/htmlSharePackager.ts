@@ -5,6 +5,7 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import yazl from 'yazl';
 
+import { COWORK_TEMP_DIR_NAME } from '../../../shared/cowork/constants';
 import { scanHtmlDependencies } from './htmlDependencyScanner';
 
 const MAX_CLIENT_ARCHIVE_BYTES = 20 * 1024 * 1024;
@@ -25,7 +26,7 @@ const EXCLUDED_DIRECTORY_NAMES = new Set([
   'coverage',
 ]);
 
-const COWORK_TEMP_DIRECTORY_NAME = '.cowork-temp';
+const COWORK_TEMP_DIRECTORY_NAME = COWORK_TEMP_DIR_NAME;
 
 const SENSITIVE_DIRECTORY_NAMES = new Set([
   COWORK_TEMP_DIRECTORY_NAME,

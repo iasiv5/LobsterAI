@@ -2,6 +2,7 @@ import type { OpenClawSessionPatch } from '../../../common/openclawSession';
 import type { CoworkGoal } from '../../../shared/cowork/goal';
 import type { CoworkImageAttachmentPayload } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
+import type { CoworkSteerResponse } from '../../../shared/cowork/steer';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -41,6 +42,7 @@ export interface CoworkRuntimeEvents {
   contextUsageUpdate: (sessionId: string, usage: CoworkContextUsage) => void;
   contextMaintenance: (sessionId: string, active: boolean) => void;
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
+  permissionResolved: (sessionId: string, requestId: string) => void;
   complete: (sessionId: string, claudeSessionId: string | null) => void;
   error: (sessionId: string, error: string) => void;
   sessionStopped: (sessionId: string) => void;
@@ -142,6 +144,7 @@ export interface CoworkRuntime {
   ): this;
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;
   continueSession(sessionId: string, prompt: string, options?: CoworkContinueOptions): Promise<void>;
+  submitSteer?(sessionId: string, text: string, clientSteerId: string): Promise<CoworkSteerResponse>;
   runGoalCommand?(sessionId: string, command: string): Promise<CoworkGoal | null>;
   patchSession?(sessionId: string, patch: OpenClawSessionPatch): Promise<CoworkSessionPatchResult | void>;
   getContextUsage?(sessionId: string): Promise<CoworkContextUsage | null>;

@@ -10,9 +10,11 @@ export interface Agent {
   workingDirectory: string;
   icon: string;
   skillIds: string[];
+  subagentAllowAgentIds: string[];
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
+  sortOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -45,6 +47,7 @@ export interface CreateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   source?: string;
   presetId?: string;
 }
@@ -58,6 +61,8 @@ export interface UpdateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   enabled?: boolean;
   pinned?: boolean;
+  sortOrder?: number | null;
 }
