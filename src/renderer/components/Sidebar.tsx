@@ -49,8 +49,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onWidthChange?: (width: number) => void;
   updateNotice?: React.ReactNode;
-  /** The expanded update card owns the sidebar bottom; suppress the promo
-   * banner while it shows so the two never stack. */
+  /** The expanded update card owns the sidebar bottom; temporarily hide the
+   * promo banner while preserving it for a smooth return after collapse. */
   hideAdBanner?: boolean;
   hideLogin?: boolean;
 }
@@ -651,8 +651,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             onBatchSelectableItemsChange={handleBatchSelectableItemsChange}
           />
         </div>
-        {!isBatchMode && !hideAdBanner && (
-          <SidebarAdBanner onVisibleChange={setIsSidebarBannerVisible} />
+        {!isBatchMode && (
+          <SidebarAdBanner
+            hidden={hideAdBanner}
+            onVisibleChange={setIsSidebarBannerVisible}
+          />
         )}
         <div
           className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-surface-raised to-transparent transition-opacity duration-150 ${

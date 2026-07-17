@@ -1,5 +1,5 @@
 import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, ExclamationTriangleIcon, RocketLaunchIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 
 import { type AppUpdateRuntimeState, AppUpdateStatus } from '../../../shared/appUpdate/constants';
 import { i18nService } from '../../services/i18n';
@@ -82,7 +82,9 @@ const AppUpdateCard: React.FC<AppUpdateCardProps> = ({
     && updateInfo != null
     && shouldExpandUpdateCard(collapsedVersion, updateInfo.latestVersion);
 
-  useEffect(() => {
+  // The sidebar banner shares this bottom slot. Sync before paint so expanding
+  // the card never renders a frame with both elements competing for space.
+  useLayoutEffect(() => {
     onExpandedChange?.(isExpanded);
     return () => onExpandedChange?.(false);
   }, [isExpanded, onExpandedChange]);

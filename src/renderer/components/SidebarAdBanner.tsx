@@ -1,5 +1,5 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { getPortalInvitationUrl } from '../services/endpoints';
 import { i18nService } from '../services/i18n';
@@ -12,10 +12,11 @@ import {
 } from './sidebarAdBannerState';
 
 interface SidebarAdBannerProps {
+  hidden?: boolean;
   onVisibleChange?: (visible: boolean) => void;
 }
 
-const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) => {
+const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ hidden = false, onVisibleChange }) => {
   const [banners, setBanners] = useState<ClientBanner[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [hiddenKey, setHiddenKey] = useState<string | null | undefined>(undefined);
@@ -70,14 +71,14 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
   }, [storageKey]);
 
   useEffect(() => {
-    if (banners.length <= 1 || !storageKey || hiddenKey === undefined || hiddenKey === storageKey) {
+    if (hidden || banners.length <= 1 || !storageKey || hiddenKey === undefined || hiddenKey === storageKey) {
       return;
     }
     const timer = window.setInterval(() => {
       setCurrentIndex((index) => (index + 1) % banners.length);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [banners.length, hiddenKey, storageKey]);
+  }, [banners.length, hidden, hiddenKey, storageKey]);
 
   const currentBannerIndex = banners.length > 0 ? currentIndex % banners.length : 0;
   const banner = banners.length > 0 ? banners[currentBannerIndex] : null;
@@ -85,11 +86,12 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
   const visibleIndicatorCount = Math.min(banners.length, 3);
   const activeIndicatorIndex = Math.min(currentBannerIndex, visibleIndicatorCount - 1);
   const isVisible = Boolean(banner && storageKey && hiddenKey !== undefined && hiddenKey !== storageKey);
+  const isDisplayed = isVisible && !hidden;
 
-  useEffect(() => {
-    onVisibleChange?.(isVisible);
+  useLayoutEffect(() => {
+    onVisibleChange?.(isDisplayed);
     return () => onVisibleChange?.(false);
-  }, [isVisible, onVisibleChange]);
+  }, [isDisplayed, onVisibleChange]);
 
   if (!banner || !storageKey || !isVisible) {
     return null;
@@ -112,10 +114,17 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
     : '16 / 5';
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[18px] pr-3.5">
+    <div
+      aria-hidden={hidden || undefined}
+      className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[18px] pr-3.5 transition-[opacity,transform] motion-reduce:transition-none ${
+        hidden
+          ? 'translate-y-2 opacity-0 duration-0'
+          : 'translate-y-0 opacity-100 duration-200 ease-out'
+      }`}
+    >
       <div
         role="button"
-        tabIndex={0}
+        tabIndex={hidden ? -1 : 0}
         onClick={() => void openBanner()}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -123,7 +132,7 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
             void openBanner();
           }
         }}
-        className="pointer-events-auto group relative block w-full overflow-visible rounded-lg bg-transparent drop-shadow-[0_4px_4px_rgba(227,227,228,0.5)] transition-opacity hover:opacity-95 dark:drop-shadow-none"
+        className={`${hidden ? 'pointer-events-none' : 'pointer-events-auto'} group relative block w-full overflow-visible rounded-lg bg-transparent drop-shadow-[0_4px_4px_rgba(227,227,228,0.5)] transition-opacity hover:opacity-95 dark:drop-shadow-none`}
         style={{
           aspectRatio: imageAspectRatio,
         }}
@@ -152,6 +161,7 @@ const SidebarAdBanner: React.FC<SidebarAdBannerProps> = ({ onVisibleChange }) =>
         )}
         <button
           type="button"
+          tabIndex={hidden ? -1 : 0}
           aria-label={i18nService.t('close')}
           onClick={dismiss}
           onKeyDown={(event) => event.stopPropagation()}
