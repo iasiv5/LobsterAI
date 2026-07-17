@@ -4,6 +4,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { classifyErrorKey } from '../../../common/coworkErrorClassify';
 import { ContextCompactionStatus } from '../../../common/coworkSystemMessages';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
+import {
+  type CoworkErrorDetail,
+  CoworkErrorModelSource,
+  formatCoworkErrorDetailText,
+  parseCoworkErrorDetail,
+} from '../../../shared/cowork/errorDetail';
 import type { CoworkGoal } from '../../../shared/cowork/goal';
 import { dedupeArtifactsForDisplay } from '../../services/artifactParser';
 import { i18nService } from '../../services/i18n';
@@ -16,6 +22,7 @@ import InformationCircleIcon from '../icons/InformationCircleIcon';
 import MarkdownContent from '../MarkdownContent';
 import AssistantMessageItem from './AssistantMessageItem';
 import MediaPollingIndicator from './MediaPollingIndicator';
+import { MessageCopyButton } from './MessageActionButton';
 import {
   collectMediaPollCounts,
   consolidateMediaPolling,
@@ -133,6 +140,76 @@ const getSystemMessageDisplayContent = (message: CoworkMessage, content: string)
 
   const key = classifyErrorKey(errorText) ?? classifyErrorKey(content);
   return key ? i18nService.t(key) : content;
+};
+
+// ── SystemErrorTechnicalDetail ───────────────────────────────────────────────
+
+/**
+ * User-facing model source label. Users only need two buckets — the LobsterAI
+ * plan vs. a model they configured themselves; finer detail (provider name,
+ * Coding Plan, OAuth) goes into the parenthesized qualifier.
+ */
+const buildErrorModelSourceLabel = (detail: CoworkErrorDetail): string | null => {
+  if (!detail.modelSource) return null;
+  if (detail.modelSource === CoworkErrorModelSource.LobsterAIPlan) {
+    return i18nService.t('coworkErrorModelSourceLobsterAIPlan');
+  }
+
+  const qualifiers: string[] = [];
+  if (detail.providerDisplayName) qualifiers.push(detail.providerDisplayName);
+  if (detail.modelSource === CoworkErrorModelSource.CodingPlan) qualifiers.push('Coding Plan');
+  if (detail.modelSource === CoworkErrorModelSource.BuiltinOAuth) qualifiers.push('OAuth');
+
+  const base = i18nService.t('coworkErrorModelSourceCustomModel');
+  return qualifiers.length > 0 ? `${base} (${qualifiers.join(' · ')})` : base;
+};
+
+/** "Model: glm-5 · Custom model (Zhipu · Coding Plan)" line shown without expanding details. */
+const buildErrorModelLine = (detail: CoworkErrorDetail): string | null => {
+  const sourceLabel = buildErrorModelSourceLabel(detail);
+  if (!detail.model && !sourceLabel) return null;
+
+  const parts: string[] = [];
+  if (detail.model) {
+    parts.push(`${i18nService.t('coworkErrorModelLabel')}: ${detail.model}`);
+  }
+  if (sourceLabel) {
+    parts.push(sourceLabel);
+  }
+  return parts.join(' · ');
+};
+
+const SystemErrorTechnicalDetail: React.FC<{ detail: CoworkErrorDetail }> = ({ detail }) => {
+  const [expanded, setExpanded] = useState(false);
+  const detailText = useMemo(() => formatCoworkErrorDetailText(detail), [detail]);
+  if (!detailText) return null;
+
+  return (
+    <div className="mt-1.5 pl-6">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex items-center gap-1 text-xs text-muted transition-colors hover:text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
+        aria-expanded={expanded}
+      >
+        {expanded
+          ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0" />
+          : <ChevronDownIcon className="h-3 w-3 flex-shrink-0" />
+        }
+        <span>{i18nService.t('coworkErrorTechnicalDetails')}</span>
+      </button>
+      {expanded && (
+        <div className="relative mt-1.5 rounded-md bg-surface-raised px-3 py-2">
+          <div className="absolute right-1 top-1">
+            <MessageCopyButton content={detailText} />
+          </div>
+          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words pr-8 font-mono text-code text-secondary">
+            {detailText}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
 };
 
 // ── VideoArtifactPathList ────────────────────────────────────────────────────
@@ -294,6 +371,9 @@ const AssistantTurnBlock: React.FC<{
       );
     }
 
+    const errorDetail = parseCoworkErrorDetail(message.metadata?.errorDetail);
+    const errorModelLine = errorDetail ? buildErrorModelLine(errorDetail) : null;
+
     return (
       <div className="rounded-lg border border-border bg-background px-3 py-2">
         <div className="flex items-center gap-2">
@@ -308,6 +388,10 @@ const AssistantTurnBlock: React.FC<{
             />
           </div>
         </div>
+        {errorModelLine && (
+          <div className="mt-1 pl-6 text-xs text-muted">{errorModelLine}</div>
+        )}
+        {errorDetail && <SystemErrorTechnicalDetail detail={errorDetail} />}
       </div>
     );
   };

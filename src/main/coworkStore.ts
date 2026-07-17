@@ -14,6 +14,7 @@ import {
   CoworkForkMode,
   type CoworkForkMode as CoworkForkModeType,
 } from '../shared/cowork/constants';
+import type { CoworkErrorDetail } from '../shared/cowork/errorDetail';
 import {
   type CoworkGoal,
   normalizeCoworkGoal,
@@ -428,6 +429,7 @@ export interface CoworkMessageMetadata {
   toolResult?: string;
   toolUseId?: string | null;
   error?: string;
+  errorDetail?: CoworkErrorDetail;
   isError?: boolean;
   isStreaming?: boolean;
   isFinal?: boolean;

@@ -1518,6 +1518,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkModelSwitchFailed: '模型切换失败，请稍后重试。',
     coworkErrorEngineNotReady: 'AI 引擎正在启动中，请稍等几秒后重试。',
     coworkErrorUnknown: '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
+    coworkErrorTechnicalDetails: '技术详情',
+    coworkErrorModelLabel: '模型',
+    coworkErrorModelSourceLobsterAIPlan: 'LobsterAI 套餐',
+    coworkErrorModelSourceCustomModel: '自定义模型',
 
     // Media Generation
     mediaGeneration: '媒体生成',
@@ -4408,6 +4412,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkErrorEngineNotReady: 'AI engine is starting up. Please wait a few seconds and try again.',
     coworkErrorUnknown:
       'Task failed due to an unexpected error. Please retry. If the issue persists, check your model configuration.',
+    coworkErrorTechnicalDetails: 'Technical details',
+    coworkErrorModelLabel: 'Model',
+    coworkErrorModelSourceLobsterAIPlan: 'LobsterAI plan',
+    coworkErrorModelSourceCustomModel: 'Custom model',
 
     // Media Generation
     mediaGeneration: 'Media Generation',

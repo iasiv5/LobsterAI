@@ -44,6 +44,12 @@ const mockRuntimeState = vi.hoisted(() => ({
       customParams?: Record<string, unknown>;
     }>;
   }>,
+  providerSourceEntries: [] as Array<{
+    providerName: string;
+    codingPlanEnabled: boolean;
+    authType?: 'apikey' | 'oauth';
+    displayName?: string;
+  }>,
   rawApiConfig: {
     config: {
       baseURL: 'https://api.openai.com/v1',
@@ -62,6 +68,7 @@ const mockRuntimeState = vi.hoisted(() => ({
 
 vi.mock('./claudeSettings', () => ({
   getAllServerModelMetadata: () => mockRuntimeState.serverModels,
+  listProviderSourceEntries: () => mockRuntimeState.providerSourceEntries,
   resolveAllEnabledProviderConfigs: () => mockRuntimeState.enabledProviders,
   resolveAllProviderApiKeys: () => ({}),
   resolveRawApiConfig: () => mockRuntimeState.rawApiConfig,
@@ -95,6 +102,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     mockRuntimeState.proxyPort = null;
     mockRuntimeState.serverModels = [];
     mockRuntimeState.enabledProviders = [];
+    mockRuntimeState.providerSourceEntries = [];
     mockRuntimeState.rawApiConfig = {
       config: {
         baseURL: 'https://api.openai.com/v1',
@@ -2416,5 +2424,72 @@ describe('OpenClawConfigSync runtime config output', () => {
         'x-client-id': 'client-456',
       },
     });
+  });
+});
+
+describe('resolveModelSourceForOpenClawProvider', () => {
+  beforeEach(() => {
+    mockRuntimeState.providerSourceEntries = [];
+  });
+
+  test('classifies the LobsterAI plan without any Settings entry', async () => {
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('lobsterai-server')).toEqual({
+      source: 'lobsterai-plan',
+      providerName: ProviderName.LobsteraiServer,
+    });
+  });
+
+  test('classifies a custom provider with its display name', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Custom, codingPlanEnabled: false, displayName: '我的中转' },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('custom')).toEqual({
+      source: 'custom-provider',
+      providerName: ProviderName.Custom,
+      providerDisplayName: '我的中转',
+    });
+  });
+
+  test('classifies a vendor coding plan through the descriptor provider id', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Zhipu, codingPlanEnabled: true },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    // Zhipu maps to the OpenClaw provider id "zai".
+    expect(resolveModelSourceForOpenClawProvider('zai')).toEqual({
+      source: 'coding-plan',
+      providerName: ProviderName.Zhipu,
+      providerDisplayName: 'Zhipu',
+    });
+  });
+
+  test('classifies OAuth-mode builtin providers via their oauth descriptor id', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.Minimax, codingPlanEnabled: false, authType: 'oauth' },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('minimax-portal')).toEqual({
+      source: 'builtin-oauth',
+      providerName: ProviderName.Minimax,
+      providerDisplayName: 'MiniMax',
+    });
+    // The api-key descriptor id no longer matches while OAuth mode is active.
+    expect(resolveModelSourceForOpenClawProvider('minimax')).toBeUndefined();
+  });
+
+  test('classifies plain builtin providers and unknown ids', async () => {
+    mockRuntimeState.providerSourceEntries = [
+      { providerName: ProviderName.DeepSeek, codingPlanEnabled: false },
+    ];
+    const { resolveModelSourceForOpenClawProvider } = await import('./openclawConfigSync');
+    expect(resolveModelSourceForOpenClawProvider('deepseek')).toEqual({
+      source: 'builtin-provider',
+      providerName: ProviderName.DeepSeek,
+      providerDisplayName: 'DeepSeek',
+    });
+    expect(resolveModelSourceForOpenClawProvider('never-configured')).toBeUndefined();
+    expect(resolveModelSourceForOpenClawProvider('')).toBeUndefined();
   });
 });

@@ -24,6 +24,7 @@ import {
 import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
+  buildOpenClawRuntimeErrorDetail,
   ensurePlanModeProposedPlanBlock,
   estimateOpenClawChatSendFrameBytes,
   isPlanModeResponseComplete,
@@ -312,6 +313,83 @@ test('resolveOpenClawRuntimeErrorMessage keeps generic error when safe metadata 
     providerRuntimeFailureKind: 'unclassified',
     rawErrorPreview: 'provider returned a surprising response',
   })).toBe('LLM request failed.');
+});
+
+test('buildOpenClawRuntimeErrorDetail preserves safe metadata behind the normalized copy', () => {
+  const metadata = {
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+    rawErrorHash: 'abc123hash',
+  };
+  const displayMessage = resolveOpenClawRuntimeErrorMessage('LLM request failed.', metadata);
+  const detail = buildOpenClawRuntimeErrorDetail('LLM request failed.', displayMessage, metadata);
+
+  expect(detail).toEqual({
+    rawErrorMessage: 'LLM request failed.',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail returns undefined when the error passed through unchanged', () => {
+  expect(buildOpenClawRuntimeErrorDetail(
+    'session file locked (timeout after 10000ms)',
+    'session file locked (timeout after 10000ms)',
+    undefined,
+  )).toBeUndefined();
+});
+
+test('buildOpenClawRuntimeErrorDetail annotates the model source from gateway provider metadata', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'LLM request failed.',
+    '请求过于频繁，请稍后再试。',
+    { provider: 'custom', model: 'kimi-k2.5', httpCode: '429' },
+    {
+      resolveModelSource: (providerId) => (providerId === 'custom'
+        ? { source: 'custom-provider', providerName: 'custom', providerDisplayName: '我的中转' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'custom',
+    model: 'kimi-k2.5',
+    modelSource: 'custom-provider',
+    providerDisplayName: '我的中转',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail falls back to the turn model ref when metadata lacks provider info', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'Agent failed before reply: something broke.',
+    '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
+    undefined,
+    {
+      fallbackModelRef: 'zai/glm-5',
+      resolveModelSource: (providerId) => (providerId === 'zai'
+        ? { source: 'coding-plan', providerName: 'zhipu' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'zai',
+    model: 'glm-5',
+    modelSource: 'coding-plan',
+  });
+  expect(detail?.providerDisplayName).toBeUndefined();
 });
 
 test('estimateOpenClawChatSendFrameBytes measures the full RPC frame as UTF-8 JSON', () => {
