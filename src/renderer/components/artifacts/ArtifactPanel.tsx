@@ -3920,11 +3920,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       {/* Drag handle */}
       {!isPanelExpanded && (
         <div
+          key="artifact-panel-resize-handle"
           className="w-1 shrink-0 touch-none cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
           onPointerDown={handleResizeStart}
         />
       )}
+      {/* The key preserves the preview subtree when the preceding drag handle is removed. */}
       <aside
+        key="artifact-panel-content"
         style={isPanelExpanded
           ? { width: '100%', maxWidth: 'none' }
           : { width: constrainedPanelWidth, maxWidth: constrainedMaxPanelWidth }}

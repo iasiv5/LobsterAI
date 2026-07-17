@@ -2058,8 +2058,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setPromptInputAreaHeight(promptInputAreaRef.current?.offsetHeight ?? 0);
   }, []);
 
+  // Keep the prompt and expanded preview overlay in the same pre-paint layout pass.
   useLayoutEffect(() => {
     updatePromptInputAreaHeight();
+  }, [
+    currentSession?.id,
+    isArtifactPanelExpanded,
+    isExpandedConversationPreviewOpen,
+    isExpandedPromptInputHidden,
+    updatePromptInputAreaHeight,
+  ]);
+
+  useLayoutEffect(() => {
     const element = promptInputAreaRef.current;
     window.addEventListener('resize', updatePromptInputAreaHeight);
 
@@ -2075,7 +2085,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       resizeObserver.disconnect();
       window.removeEventListener('resize', updatePromptInputAreaHeight);
     };
-  }, [currentSession?.id, isExpandedPromptInputHidden, updatePromptInputAreaHeight]);
+  }, [currentSession?.id, updatePromptInputAreaHeight]);
 
   useEffect(() => {
     if (isPanelOpen) return;
