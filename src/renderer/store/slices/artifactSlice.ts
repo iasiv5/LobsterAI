@@ -1,10 +1,15 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 import {
+  ShareDeploymentCandidateSource,
+  type ShareDeploymentProjectCandidate,
+} from '../../../shared/shareDeployment/constants';
+import {
   dedupeArtifactsForDisplay,
   dedupeArtifactsWithinMessages,
   getLocalServicePortIdentityKey,
   normalizeFilePathForDedup,
+  normalizeProjectDirectoryForDedup,
   resolveArtifactIdForDisplay,
   shouldPreferArtifactForDisplay,
 } from '../../services/artifactParser';
@@ -43,6 +48,13 @@ interface AddArtifactPayload {
   defaultProjectDirectory?: string;
 }
 
+interface UpdateLocalServiceProjectMetadataPayload {
+  sessionId: string;
+  artifactId: string;
+  projectDirectory: string;
+  projectCandidates: ShareDeploymentProjectCandidate[];
+}
+
 interface ArtifactState {
   artifactsBySession: Record<string, Artifact[]>;
   previewTabsBySession: Record<string, ArtifactPreviewTab[]>;
@@ -71,6 +83,62 @@ const isMediaArtifact = (artifact: Artifact): boolean => (
 
 const isSameMessageArtifact = (left: Artifact, right: Artifact): boolean =>
   left.messageId === right.messageId;
+
+const LOCAL_SERVICE_RESOLVED_CANDIDATE_SOURCES = new Set<string>([
+  ShareDeploymentCandidateSource.Process,
+  ShareDeploymentCandidateSource.ProcessCwd,
+  ShareDeploymentCandidateSource.Cache,
+  ShareDeploymentCandidateSource.ArtifactMetadata,
+  ShareDeploymentCandidateSource.Workspace,
+  ShareDeploymentCandidateSource.WorkspaceChild,
+]);
+
+const hasResolvedLocalServiceProjectMetadata = (artifact: Artifact): boolean => (
+  artifact.type === ArtifactTypeValue.LocalService &&
+  Boolean(artifact.localService?.projectCandidates?.some(candidate =>
+    LOCAL_SERVICE_RESOLVED_CANDIDATE_SOURCES.has(candidate.source)
+  ))
+);
+
+const getLocalServiceContextCandidateKey = (artifact: Artifact): string => (
+  artifact.localService?.projectCandidates
+    ?.filter(candidate => !LOCAL_SERVICE_RESOLVED_CANDIDATE_SOURCES.has(candidate.source))
+    .map(candidate => [
+      candidate.source,
+      normalizeProjectDirectoryForDedup(candidate.directory),
+      candidate.messageId || '',
+      candidate.confidence,
+    ].join(':'))
+    .join('|') ?? ''
+);
+
+const preserveResolvedLocalServiceProjectMetadata = (
+  current: Artifact,
+  next: Artifact,
+): Artifact => {
+  if (
+    current.type !== ArtifactTypeValue.LocalService ||
+    next.type !== ArtifactTypeValue.LocalService ||
+    !hasResolvedLocalServiceProjectMetadata(current) ||
+    !current.localService ||
+    !next.localService
+  ) {
+    return next;
+  }
+  if (getLocalServiceContextCandidateKey(current) !== getLocalServiceContextCandidateKey(next)) {
+    return next;
+  }
+  return {
+    ...next,
+    localService: {
+      ...next.localService,
+      projectDirectory:
+        current.localService.projectDirectory ?? next.localService?.projectDirectory,
+      projectCandidates:
+        current.localService.projectCandidates ?? next.localService?.projectCandidates,
+    },
+  };
+};
 
 const findArtifactSessionId = (state: ArtifactState, artifactId: string): string | null => {
   for (const [sessionId, artifacts] of Object.entries(state.artifactsBySession)) {
@@ -177,7 +245,8 @@ const artifactSlice = createSlice({
       if (existing >= 0) {
         const old = state.artifactsBySession[sessionId][existing];
         if (artifact.content || !old.content || artifact.contentVersion !== old.contentVersion) {
-          state.artifactsBySession[sessionId][existing] = artifact;
+          state.artifactsBySession[sessionId][existing] =
+            preserveResolvedLocalServiceProjectMetadata(old, artifact);
         }
       } else {
         if (artifact.type === ArtifactTypeValue.LocalService) {
@@ -253,6 +322,17 @@ const artifactSlice = createSlice({
         }
         state.artifactsBySession[sessionId].push(artifact);
       }
+    },
+
+    updateLocalServiceProjectMetadata(
+      state,
+      action: PayloadAction<UpdateLocalServiceProjectMetadataPayload>,
+    ) {
+      const { sessionId, artifactId, projectDirectory, projectCandidates } = action.payload;
+      const artifact = state.artifactsBySession[sessionId]?.find(item => item.id === artifactId);
+      if (artifact?.type !== ArtifactTypeValue.LocalService || !artifact.localService) return;
+      artifact.localService.projectDirectory = projectDirectory;
+      artifact.localService.projectCandidates = projectCandidates;
     },
 
     selectArtifact(state, action: PayloadAction<string | null>) {
@@ -354,6 +434,7 @@ const artifactSlice = createSlice({
 export const {
   setSessionArtifacts,
   addArtifact,
+  updateLocalServiceProjectMetadata,
   selectArtifact,
   openArtifactPreviewTab,
   activateArtifactBrowserTab,

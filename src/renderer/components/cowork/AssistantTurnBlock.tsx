@@ -276,6 +276,7 @@ const AssistantTurnBlock: React.FC<{
   mapDisplayText?: (value: string) => string;
   localServiceDirectory?: string;
   onOpenLocalService?: (artifact: Artifact) => void;
+  onDeployLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
   onOpenArtifactPreview?: (artifact: Artifact) => void;
   onForkMessage?: (messageId: string) => void;
@@ -293,6 +294,7 @@ const AssistantTurnBlock: React.FC<{
   mapDisplayText,
   localServiceDirectory,
   onOpenLocalService,
+  onDeployLocalService,
   onOpenHtmlFile,
   onOpenArtifactPreview,
   onForkMessage,
@@ -568,6 +570,7 @@ const AssistantTurnBlock: React.FC<{
                         artifact={artifact}
                         localServiceDirectory={localServiceDirectory}
                         onOpenLocalService={onOpenLocalService}
+                        onDeployLocalService={onDeployLocalService}
                         onOpenHtmlFile={onOpenHtmlFile}
                         onOpenPreview={onOpenArtifactPreview}
                       />

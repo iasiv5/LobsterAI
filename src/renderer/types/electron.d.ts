@@ -46,9 +46,14 @@ import type {
   ShareDeploymentCreateNodeInput,
   ShareDeploymentDetectCandidatesInput,
   ShareDeploymentDetectCandidatesResult,
+  ShareDeploymentDownloadPersistenceInput,
+  ShareDeploymentDownloadPersistenceResult,
   ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentPersistenceInfoResult,
   ShareDeploymentProjectAnalysis,
   ShareDeploymentResult,
+  ShareDeploymentSelectPersistencePathInput,
+  ShareDeploymentSelectPersistencePathResult,
 } from '../../shared/shareDeployment/constants';
 import type {
   ShellGetBrowserAppsInput,
@@ -1205,11 +1210,18 @@ interface IElectronAPI {
     analyzeProjectDirectory: (
       options: ShareDeploymentAnalyzeProjectInput,
     ) => Promise<ShareDeploymentProjectAnalysis>;
+    selectPersistencePath: (
+      options: ShareDeploymentSelectPersistencePathInput,
+    ) => Promise<ShareDeploymentSelectPersistencePathResult>;
     createNodeDeployment: (
       options: ShareDeploymentCreateNodeInput,
     ) => Promise<ShareDeploymentResult>;
     get: (deploymentId: string) => Promise<ShareDeploymentResult>;
     getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) => Promise<ShareDeploymentResult>;
+    getPersistence: (deploymentId: string) => Promise<ShareDeploymentPersistenceInfoResult>;
+    downloadPersistenceArchive: (
+      options: ShareDeploymentDownloadPersistenceInput,
+    ) => Promise<ShareDeploymentDownloadPersistenceResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;

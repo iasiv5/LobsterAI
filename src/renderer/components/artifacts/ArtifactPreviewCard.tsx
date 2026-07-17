@@ -1,5 +1,5 @@
 import { ArrowTopRightOnSquareIcon } from '@heroicons/react/20/solid';
-import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, FolderIcon, ShareIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch } from 'react-redux';
@@ -9,22 +9,14 @@ import { openArtifactPreviewTab } from '@/store/slices/artifactSlice';
 import { type Artifact, ArtifactTypeValue } from '@/types/artifact';
 import { revealLocalPathWithToast, showShellFailureToast } from '@/utils/localFileActions';
 
-import FileTypeIcon from '../icons/fileTypes/FileTypeIcon';
+import ServiceDeploymentIcon from '../icons/ServiceDeploymentIcon';
 import { reportArtifactPreviewAction } from './artifactAnalytics';
-import {
-  getPreviewCardDescriptor,
-  PreviewCardDisplayKind,
-} from './previewCardPolicy';
+import { useOptionalArtifactFileShare } from './ArtifactFileShareController';
+import { isArtifactFileShareable } from './artifactFileSharePolicy';
+import ArtifactPreviewIdentity, { ArtifactPreviewGlobeIcon } from './ArtifactPreviewIdentity';
+import { getPreviewCardDescriptor } from './previewCardPolicy';
 
 const t = (key: string) => i18nService.t(key);
-
-const GlobeIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <ellipse cx="12" cy="12" rx="4.5" ry="10" />
-    <path d="M2 12h20" />
-  </svg>
-);
 
 const AppIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -277,7 +269,7 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({
           onClick={handleBrowserOpen}
           className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors text-left"
         >
-          <GlobeIcon className="w-4 h-4 text-primary flex-shrink-0" />
+          <ArtifactPreviewGlobeIcon className="w-4 h-4 text-primary flex-shrink-0" />
           <span className="truncate">{browserOpenAction.label}</span>
         </button>
       )}
@@ -345,6 +337,7 @@ interface ArtifactPreviewCardProps {
   artifact: Artifact;
   localServiceDirectory?: string;
   onOpenLocalService?: (artifact: Artifact) => void;
+  onDeployLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
   /**
    * Overrides the default preview-tab behavior for contexts without the
@@ -357,10 +350,12 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   artifact,
   localServiceDirectory,
   onOpenLocalService,
+  onDeployLocalService,
   onOpenHtmlFile,
   onOpenPreview,
 }) => {
   const dispatch = useDispatch();
+  const artifactFileShare = useOptionalArtifactFileShare();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownAnchorRef = useRef<HTMLButtonElement>(null);
 
@@ -390,9 +385,23 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
     dispatch(openArtifactPreviewTab({ sessionId: artifact.sessionId, artifactId: artifact.id }));
   }, [artifact, dispatch, onOpenHtmlFile, onOpenLocalService, onOpenPreview]);
 
+  const handleShareClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    void artifactFileShare?.openShare(artifact);
+  }, [artifact, artifactFileShare]);
+
+  const handleDeployClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    onDeployLocalService?.(artifact);
+  }, [artifact, onDeployLocalService]);
+
   const descriptor = getPreviewCardDescriptor(artifact);
-  const isWebsiteCard = descriptor.displayKind === PreviewCardDisplayKind.Website;
   const supportsOpenMenu = descriptor.supportsOpenMenu;
+  const canShare = artifact.type !== ArtifactTypeValue.LocalService &&
+    Boolean(artifactFileShare) &&
+    isArtifactFileShareable(artifact);
+  const canDeploy = artifact.type === ArtifactTypeValue.LocalService &&
+    Boolean(onDeployLocalService);
   const cardClassName = 'artifact-preview-card-row group flex min-h-[58px] items-center gap-3 px-4 py-3 transition-colors w-full text-left';
   const iconClassName = 'w-5 h-5';
   const localServiceUrl = artifact.type === ArtifactTypeValue.LocalService
@@ -412,30 +421,31 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
     ? { label: t('artifactPreviewCardLobsterBrowser'), onOpen: handleClick }
     : undefined;
   const subtitle = (
-    <div className="text-xs text-secondary truncate" title={effectiveLocalServiceDirectory || undefined}>
+    <>
       <span className="group-hover:hidden">{displaySubtitle}</span>
       <span className="hidden group-hover:inline">{descriptor.hoverSubtitle}</span>
-    </div>
+    </>
   );
 
   if (supportsOpenMenu) {
     return (
       <div className={cardClassName}>
-        <div className="flex-shrink-0 w-8 h-8 rounded-md bg-surface dark:bg-white/[0.04] flex items-center justify-center">
-          {isWebsiteCard ? (
-            <GlobeIcon className={`${iconClassName} text-primary`} />
-          ) : (
-            <FileTypeIcon fileName={descriptor.iconFileName} className={iconClassName} />
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={handleClick}
-          className="flex-1 min-w-0 text-left cursor-pointer bg-transparent border-none p-0"
-        >
-          <div className="text-sm font-medium text-foreground truncate">{descriptor.title}</div>
-          {subtitle}
-        </button>
+        <ArtifactPreviewIdentity
+          artifact={artifact}
+          descriptor={descriptor}
+          subtitle={subtitle}
+          subtitleTitle={effectiveLocalServiceDirectory || undefined}
+          iconContainerClassName="flex-shrink-0 w-8 h-8 rounded-md bg-surface dark:bg-white/[0.04] flex items-center justify-center"
+          iconClassName={iconClassName}
+          titleClassName="text-sm font-medium text-foreground truncate"
+          subtitleClassName="text-xs text-secondary truncate"
+          unwrapped
+          contentButtonProps={{
+            type: 'button',
+            onClick: handleClick,
+            className: 'flex-1 min-w-0 text-left cursor-pointer bg-transparent border-none p-0',
+          }}
+        />
         <button
           ref={dropdownAnchorRef as React.RefObject<HTMLButtonElement>}
           type="button"
@@ -454,12 +464,34 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
               return nextOpen;
             });
           }}
-          className="flex-shrink-0 ml-auto flex items-center gap-1 text-primary text-sm font-medium px-2 py-1 min-w-[78px] justify-end rounded-md hover:bg-primary/10 dark:hover:bg-primary/15 transition-colors"
+          className="ml-auto inline-flex h-9 min-w-[96px] flex-shrink-0 items-center justify-center gap-1 rounded-lg border border-border bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-surface"
           aria-label={t('artifactPreviewCardOpenWith')}
         >
           <span>{t('artifactPreviewCardOpenWith')}</span>
           <ChevronDownIcon className="w-3.5 h-3.5" />
         </button>
+        {canShare && (
+          <button
+            type="button"
+            onClick={handleShareClick}
+            className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+            aria-label={t('htmlShare')}
+          >
+            <ShareIcon className="h-4 w-4" />
+            <span>{t('htmlShare')}</span>
+          </button>
+        )}
+        {canDeploy && (
+          <button
+            type="button"
+            onClick={handleDeployClick}
+            className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+            aria-label={t('nodeDeploymentProgressDeploy')}
+          >
+            <ServiceDeploymentIcon className="h-4 w-4" />
+            <span>{t('nodeDeploymentProgressDeploy')}</span>
+          </button>
+        )}
         {dropdownOpen && (
           <OpenDropdown
             anchorRef={dropdownAnchorRef as React.RefObject<HTMLElement>}
@@ -485,27 +517,41 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className={`${cardClassName} cursor-pointer`}
-    >
-      <div className="flex-shrink-0 w-8 h-8 rounded-md bg-surface dark:bg-white/[0.04] flex items-center justify-center">
-        {isWebsiteCard ? (
-          <GlobeIcon className={`${iconClassName} text-primary`} />
-        ) : (
-          <FileTypeIcon fileName={descriptor.iconFileName} className={iconClassName} />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-foreground truncate">{descriptor.title}</div>
-        {subtitle}
-      </div>
-      <div className="flex-shrink-0 flex items-center gap-1 text-primary text-sm font-medium leading-none">
-        <ArrowTopRightOnSquareIcon className="w-4 h-4 shrink-0" />
-        <span>{t('artifactOpen')}</span>
-      </div>
-    </button>
+    <div className={cardClassName}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="flex min-w-0 flex-1 items-center gap-3 bg-transparent p-0 text-left cursor-pointer"
+      >
+        <ArtifactPreviewIdentity
+          artifact={artifact}
+          descriptor={descriptor}
+          subtitle={subtitle}
+          subtitleTitle={effectiveLocalServiceDirectory || undefined}
+          iconContainerClassName="flex-shrink-0 w-8 h-8 rounded-md bg-surface dark:bg-white/[0.04] flex items-center justify-center"
+          iconClassName={iconClassName}
+          contentClassName="flex-1 min-w-0"
+          titleClassName="text-sm font-medium text-foreground truncate"
+          subtitleClassName="text-xs text-secondary truncate"
+          unwrapped
+        />
+        <div className="flex-shrink-0 flex items-center gap-1 text-primary text-sm font-medium leading-none">
+          <ArrowTopRightOnSquareIcon className="w-4 h-4 shrink-0" />
+          <span>{t('artifactOpen')}</span>
+        </div>
+      </button>
+      {canShare && (
+        <button
+          type="button"
+          onClick={handleShareClick}
+          className="inline-flex h-9 min-w-[82px] flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+          aria-label={t('htmlShare')}
+        >
+          <ShareIcon className="h-4 w-4" />
+          <span>{t('htmlShare')}</span>
+        </button>
+      )}
+    </div>
   );
 };
 

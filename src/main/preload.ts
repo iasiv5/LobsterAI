@@ -41,8 +41,10 @@ import {
   type ShareDeploymentAnalyzeProjectInput,
   type ShareDeploymentCreateNodeInput,
   type ShareDeploymentDetectCandidatesInput,
+  type ShareDeploymentDownloadPersistenceInput,
   type ShareDeploymentGetByLocalServiceInput,
   ShareDeploymentIpc,
+  type ShareDeploymentSelectPersistencePathInput,
 } from '../shared/shareDeployment/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc } from '../shared/shell/constants';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
@@ -721,11 +723,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(ShareDeploymentIpc.DetectProjectCandidates, options),
     analyzeProjectDirectory: (options: ShareDeploymentAnalyzeProjectInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.AnalyzeProjectDirectory, options),
+    selectPersistencePath: (options: ShareDeploymentSelectPersistencePathInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.SelectPersistencePath, options),
     createNodeDeployment: (options: ShareDeploymentCreateNodeInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.CreateNodeDeployment, options),
     get: (deploymentId: string) => ipcRenderer.invoke(ShareDeploymentIpc.Get, deploymentId),
     getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) =>
       ipcRenderer.invoke(ShareDeploymentIpc.GetByLocalService, options),
+    getPersistence: (deploymentId: string) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.GetPersistence, deploymentId),
+    downloadPersistenceArchive: (options: ShareDeploymentDownloadPersistenceInput) =>
+      ipcRenderer.invoke(ShareDeploymentIpc.DownloadPersistenceArchive, options),
   },
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) =>

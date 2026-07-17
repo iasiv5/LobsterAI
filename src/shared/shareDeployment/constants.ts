@@ -1,5 +1,6 @@
 import type {
   HtmlShareAccessMode,
+  HtmlShareConfigurableStatus,
   HtmlShareDisabledSource,
   HtmlShareStatus,
 } from '../htmlShare/constants';
@@ -7,9 +8,12 @@ import type {
 export const ShareDeploymentIpc = {
   DetectProjectCandidates: 'shareDeployment:detectProjectCandidates',
   AnalyzeProjectDirectory: 'shareDeployment:analyzeProjectDirectory',
+  SelectPersistencePath: 'shareDeployment:selectPersistencePath',
   CreateNodeDeployment: 'shareDeployment:createNodeDeployment',
   Get: 'shareDeployment:get',
   GetByLocalService: 'shareDeployment:getByLocalService',
+  GetPersistence: 'shareDeployment:getPersistence',
+  DownloadPersistenceArchive: 'shareDeployment:downloadPersistenceArchive',
 } as const;
 
 export type ShareDeploymentIpc = (typeof ShareDeploymentIpc)[keyof typeof ShareDeploymentIpc];
@@ -22,6 +26,9 @@ export const ShareDeploymentCandidateSource = {
   TextFileLink: 'text_file_link',
   TextCdCommand: 'text_cd_command',
   TextCommonParent: 'text_common_parent',
+  ToolWorkingDirectory: 'tool_working_directory',
+  ToolCdCommand: 'tool_cd_command',
+  ToolPwdResult: 'tool_pwd_result',
   Workspace: 'workspace',
   WorkspaceChild: 'workspace_child',
   Cache: 'cache',
@@ -53,6 +60,18 @@ export const ShareDeploymentStatus = {
 export type ShareDeploymentStatus =
   (typeof ShareDeploymentStatus)[keyof typeof ShareDeploymentStatus];
 
+export const ShareDeploymentFailureCode = {
+  Provider: 'provider_error',
+  Service: 'service_error',
+  Unexpected: 'unexpected_error',
+  PersistenceUnavailable: 'persistence_unavailable',
+  PersistenceInvalid: 'persistence_invalid',
+  PersistenceDataMissing: 'persistence_data_missing',
+} as const;
+
+export type ShareDeploymentFailureCode =
+  (typeof ShareDeploymentFailureCode)[keyof typeof ShareDeploymentFailureCode];
+
 export const ShareDeploymentKind = {
   NodeService: 'node_service',
   StaticSite: 'static_site',
@@ -60,6 +79,69 @@ export const ShareDeploymentKind = {
 
 export type ShareDeploymentKind =
   (typeof ShareDeploymentKind)[keyof typeof ShareDeploymentKind];
+
+export const ShareDeploymentPersistenceProvider = {
+  Filesystem: 'filesystem',
+} as const;
+
+export type ShareDeploymentPersistenceProvider =
+  (typeof ShareDeploymentPersistenceProvider)[keyof typeof ShareDeploymentPersistenceProvider];
+
+export const ShareDeploymentPersistenceStatus = {
+  Configured: 'configured',
+  Live: 'live',
+  ResetPending: 'reset_pending',
+  Error: 'error',
+} as const;
+
+export type ShareDeploymentPersistenceStatus =
+  (typeof ShareDeploymentPersistenceStatus)[keyof typeof ShareDeploymentPersistenceStatus];
+
+export const ShareDeploymentPersistenceUpdateMode = {
+  Preserve: 'preserve',
+  Replace: 'replace',
+} as const;
+
+export type ShareDeploymentPersistenceUpdateMode =
+  (typeof ShareDeploymentPersistenceUpdateMode)[keyof typeof ShareDeploymentPersistenceUpdateMode];
+
+export const ShareDeploymentPersistenceBindingKind = {
+  File: 'file',
+  Directory: 'directory',
+} as const;
+
+export type ShareDeploymentPersistenceBindingKind =
+  (typeof ShareDeploymentPersistenceBindingKind)[keyof typeof ShareDeploymentPersistenceBindingKind];
+
+export interface ShareDeploymentPersistenceBinding {
+  appPath: string;
+  dataPath: string;
+  kind: ShareDeploymentPersistenceBindingKind;
+  sizeBytes?: number;
+}
+
+export interface ShareDeploymentPersistence {
+  enabled: boolean;
+  provider: ShareDeploymentPersistenceProvider;
+  mountPath?: string;
+  remoteRoot?: string;
+  quotaBytes?: number;
+  usedBytes?: number | null;
+  usedBytesEstimated?: boolean;
+  status?: ShareDeploymentPersistenceStatus;
+  bindings: ShareDeploymentPersistenceBinding[];
+}
+
+export interface ShareDeploymentSelectPersistencePathInput {
+  projectDirectory: string;
+  kind: ShareDeploymentPersistenceBindingKind;
+}
+
+export interface ShareDeploymentSelectPersistencePathResult {
+  success: boolean;
+  binding?: ShareDeploymentPersistenceBinding;
+  error?: string;
+}
 
 export interface ShareDeploymentProjectCandidate {
   directory: string;
@@ -108,6 +190,7 @@ export interface ShareDeploymentProjectAnalysis {
   totalFiles: number;
   totalBytes: number;
   excludedCount: number;
+  persistence?: ShareDeploymentPersistence;
   warnings: string[];
   blockers: string[];
   error?: string;
@@ -120,17 +203,42 @@ export interface ShareDeploymentCreateNodeInput {
   localServiceUrl: string;
   projectDirectory: string;
   accessMode?: HtmlShareAccessMode;
+  previousAccessMode?: HtmlShareAccessMode;
   nodeVersion: string;
   installCommand: string;
   buildCommand: string;
   startCommand: string;
   port: number;
+  persistence?: ShareDeploymentPersistence;
+  persistenceUpdateMode?: ShareDeploymentPersistenceUpdateMode;
+  targetShareStatus?: HtmlShareConfigurableStatus;
 }
 
 export interface ShareDeploymentGetByLocalServiceInput {
   sessionId: string;
   localServiceUrl: string;
   projectDirectory?: string;
+}
+
+export interface ShareDeploymentPersistenceInfoResult {
+  success: boolean;
+  persistence?: ShareDeploymentPersistence | null;
+  error?: string;
+  code?: number;
+}
+
+export interface ShareDeploymentDownloadPersistenceInput {
+  deploymentId: string;
+  projectDirectory?: string;
+  shareId?: string;
+}
+
+export interface ShareDeploymentDownloadPersistenceResult {
+  success: boolean;
+  filePath?: string;
+  empty?: boolean;
+  error?: string;
+  code?: number;
 }
 
 export interface ShareDeploymentEvent {
@@ -165,9 +273,11 @@ export interface ShareDeploymentRecord {
   providerRegion?: string;
   providerFunctionId?: string;
   providerEndpoint?: string;
+  persistence?: ShareDeploymentPersistence;
   deployedAt?: string;
   expiresAt?: string;
   lastAccessedAt?: string;
+  errorCode?: ShareDeploymentFailureCode;
   errorMessage?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -179,6 +289,7 @@ export interface ShareDeploymentResult {
   deployment?: ShareDeploymentRecord | null;
   analysis?: ShareDeploymentProjectAnalysis;
   warnings?: string[];
+  accessSyncError?: string;
   error?: string;
   code?: number;
 }

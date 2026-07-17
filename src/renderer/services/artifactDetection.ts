@@ -4,10 +4,8 @@ import {
   isIgnoredArtifactPath,
   isPathInsideDirectory,
   normalizeFilePathForDedup,
-  normalizeLocalServiceUrlForDedup,
   parseFileLinksFromMessage,
   parseFilePathsFromText,
-  parseLocalServiceUrlsFromText,
   parseMediaTokensFromText,
   parseRemoteImageArtifactsFromText,
   parseToolArtifact,
@@ -16,6 +14,7 @@ import {
   stripFileLinksFromText,
   toAbsoluteArtifactPath,
 } from './artifactParser';
+import { parseLocalServiceArtifactsFromMessages } from './localServiceContextParser';
 
 /**
  * Detect artifacts from a session transcript.
@@ -38,7 +37,11 @@ export function collectSessionArtifacts(
   sessionId: string,
   cwd?: string,
 ): Artifact[] {
-  const detected: Artifact[] = [];
+  const detected = parseLocalServiceArtifactsFromMessages(
+    messages,
+    sessionId,
+    { workingDirectory: cwd },
+  );
 
   const absolutize = (artifact: Artifact): Artifact =>
     artifact.filePath
@@ -69,28 +72,9 @@ export function collectSessionArtifacts(
   const pushMediaFileArtifact = (artifact: Artifact, seenFilePaths: Set<string>) => {
     pushFileArtifactIfNew(absolutize(artifact), seenFilePaths);
   };
-  const pushLocalServiceArtifactIfNew = (artifact: Artifact, seenLocalServiceUrls: Set<string>) => {
-    const url = artifact.url || artifact.content;
-    const normalized = normalizeLocalServiceUrlForDedup(url);
-    if (!url || seenLocalServiceUrls.has(normalized)) return;
-    seenLocalServiceUrls.add(normalized);
-    detected.push(artifact);
-  };
-
   for (const msg of messages) {
     if (msg.type === 'assistant' && !msg.metadata?.isThinking && msg.content) {
       const seenFilePaths = new Set<string>();
-      const seenLocalServiceUrls = new Set<string>();
-      const localServiceArtifacts = parseLocalServiceUrlsFromText(
-        msg.content,
-        msg.id,
-        sessionId,
-        { projectDirectory: cwd },
-      );
-      for (const serviceArtifact of localServiceArtifacts) {
-        pushLocalServiceArtifactIfNew(serviceArtifact, seenLocalServiceUrls);
-      }
-
       const fileLinks = parseFileLinksFromMessage(msg.content, msg.id, sessionId);
       for (const fl of fileLinks) {
         pushLinkedFileArtifact(fl, seenFilePaths);
