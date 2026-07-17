@@ -53,7 +53,10 @@ const WindowsAppTitleBar: React.FC<WindowsAppTitleBarProps> = ({
   }
 
   return (
-    <div className="draggable flex h-9 shrink-0 items-center justify-between border-b border-border bg-surface-raised pl-3">
+    <div
+      data-skin-app-titlebar="true"
+      className="draggable flex h-9 shrink-0 items-center justify-between border-b border-border bg-surface-raised pl-3"
+    >
       <div
         className={`flex h-full shrink-0 items-center ${isSidebarCollapsed ? 'gap-1' : 'justify-between'}`}
         style={isSidebarCollapsed ? undefined : { width: Math.max(0, sidebarWidth - 24) }}

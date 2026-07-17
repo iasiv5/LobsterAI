@@ -59,6 +59,13 @@ import type {
   ShellGetBrowserAppsInput,
   ShellOpenFailureReason,
 } from '../../shared/shell/constants';
+import type {
+  SkinApplyResponse,
+  SkinDeactivateResponse,
+  SkinDeleteResponse,
+  SkinGetActiveResponse,
+  SkinListResponse,
+} from '../../shared/skin/types';
 import type { CoworkTempDirPreview } from './cowork';
 interface ApiResponse {
   ok: boolean;
@@ -640,6 +647,14 @@ interface IElectronAPI {
       installed?: Record<string, InstalledKitRecord>;
       error?: string;
     }>;
+  };
+  skin: {
+    getActive: () => Promise<SkinGetActiveResponse>;
+    list: () => Promise<SkinListResponse>;
+    apply: (skinId: string) => Promise<SkinApplyResponse>;
+    deactivate: () => Promise<SkinDeactivateResponse>;
+    delete: (skinId: string) => Promise<SkinDeleteResponse>;
+    onChanged: (callback: () => void) => () => void;
   };
   agents: {
     list: () => Promise<Agent[]>;

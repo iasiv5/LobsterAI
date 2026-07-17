@@ -31,10 +31,11 @@ describe('OpenClaw extension manifests', () => {
     expect(readContractTools('ask-user-question')).toEqual(['AskUserQuestion']);
   });
 
-  test('declares LobsterAI media generation agent tool contracts', () => {
+  test('declares LobsterAI media generation and skin agent tool contracts', () => {
     expect(readContractTools('lobster-media-generation')).toEqual([
       'lobsterai_image_generate',
       'lobsterai_video_generate',
+      'lobsterai_skin_manage',
     ]);
   });
 

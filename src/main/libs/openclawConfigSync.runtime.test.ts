@@ -1169,7 +1169,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       config: {
         callbackUrl: 'http://127.0.0.1:5175/media-callback',
         secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
-        requestTimeoutMs: 120000,
+        requestTimeoutMs: 150000,
       },
     });
     expect(config.tools.deny).not.toContain('image_generate');
@@ -1191,7 +1191,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       config: {
         callbackUrl: 'http://127.0.0.1:5175/media-callback',
         secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
-        requestTimeoutMs: 120000,
+        requestTimeoutMs: 150000,
       },
     });
     expect(config.tools.deny).not.toContain('image_generate');

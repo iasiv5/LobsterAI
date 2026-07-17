@@ -24,6 +24,8 @@ import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import { SkillsView } from './components/skills';
+import SkinBackdrop, { SkinBackdropVariant } from './components/skin/SkinBackdrop';
+import SkinPresentationScope from './components/skin/SkinPresentationScope';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateBlockingPanel from './components/update/AppUpdateBlockingPanel';
@@ -37,6 +39,7 @@ import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
 import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
 import { defaultConfig, getProviderDisplayName, ShortcutAction } from './config';
+import { SkinProvider } from './providers/SkinProvider';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
 import { authService } from './services/auth';
@@ -1242,14 +1245,16 @@ const App: React.FC = () => {
             </div>
           </div>
           {showSettings && (
-            <Settings
-              onClose={handleCloseSettings}
-              initialTab={settingsOptions.initialTab}
-              initialTabRequestId={settingsOptions.requestId}
-              notice={settingsOptions.notice}
-              onUpdateFound={handleUpdateFound}
-              enterpriseConfig={enterpriseConfig}
-            />
+            <SkinProvider>
+              <Settings
+                onClose={handleCloseSettings}
+                initialTab={settingsOptions.initialTab}
+                initialTabRequestId={settingsOptions.requestId}
+                notice={settingsOptions.notice}
+                onUpdateFound={handleUpdateFound}
+                enterpriseConfig={enterpriseConfig}
+              />
+            </SkinProvider>
           )}
         </div>
       </div>
@@ -1257,7 +1262,11 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+    <SkinProvider>
+      <SkinPresentationScope
+        enabled
+        className="h-screen overflow-hidden flex flex-col bg-surface-raised"
+      >
       {toastMessage && (
         <Toast
           message={toastMessage}
@@ -1288,7 +1297,14 @@ const App: React.FC = () => {
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
         <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-          <div className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden">
+          <div
+            data-skin-cowork-frame={mainView === 'cowork' ? 'true' : undefined}
+            data-skin-management-frame={mainView !== 'cowork' ? 'true' : undefined}
+            className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden"
+          >
+            {mainView !== 'cowork' && (
+              <SkinBackdrop variant={SkinBackdropVariant.Management} />
+            )}
             <EngineStartupOverlay />
             {mainView === 'skills' ? (
               <SkillsView
@@ -1390,7 +1406,8 @@ const App: React.FC = () => {
           onCustomModel={handleWelcomeCustomModel}
         />
       )}
-    </div>
+      </SkinPresentationScope>
+    </SkinProvider>
   );
 };
 

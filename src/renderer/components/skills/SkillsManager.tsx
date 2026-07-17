@@ -835,7 +835,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
       )}
 
       {/* Sticky toolbar: Description + Search + Tabs + Tag pills */}
-      <div className="sticky top-0 z-10 space-y-4 bg-background pb-4">
+      <div
+        data-skin-management-toolbar="true"
+        className="sticky top-0 z-10 space-y-4 bg-background pb-4"
+      >
         {/* Search + Add button */}
         <div className="flex items-center gap-3">
         <div className="relative flex-1">

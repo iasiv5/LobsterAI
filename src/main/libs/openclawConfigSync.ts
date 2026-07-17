@@ -2174,7 +2174,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         config: {
           callbackUrl: mediaCallbackUrl,
           secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
-          requestTimeoutMs: 120000,
+          requestTimeoutMs: 150000,
         },
       };
     }

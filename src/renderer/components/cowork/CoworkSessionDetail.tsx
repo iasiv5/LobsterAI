@@ -4488,9 +4488,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     <ArtifactFileShareProvider sessionId={currentSession.id}>
       <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header — spans full width */}
-      <div className={`draggable flex h-12 items-center justify-between border-b border-border bg-background shrink-0 ${
-        isArtifactPanelExpanded ? 'pl-0 pr-4' : 'px-4'
-      }`}
+      <div
+        data-skin-session-titlebar="true"
+        className={`draggable flex h-12 items-center justify-between border-b border-border bg-background shrink-0 ${
+          isArtifactPanelExpanded ? 'pl-0 pr-4' : 'px-4'
+        }`}
       >
         {/* Left side: Toggle buttons (when collapsed) + Title */}
         <div className="flex h-full flex-1 items-center gap-2 min-w-0">
@@ -4875,10 +4877,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       <div ref={contentRowRef} className="relative flex-1 flex overflow-hidden">
       <div
         ref={detailRootRef}
-        className="flex-1 flex flex-col bg-background h-full min-w-0"
+        className="relative flex-1 flex flex-col h-full min-w-0"
         style={{ minWidth: isArtifactPanelExpanded ? 0 : COWORK_DETAIL_MIN_WIDTH }}
       >
-      <div className="relative flex-1 min-h-0">
+      <div className="relative z-10 flex-1 min-h-0">
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}

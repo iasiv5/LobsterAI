@@ -1,8 +1,18 @@
-import { configService } from './config';
-import { ThemeManager, allThemes } from '../theme';
 import type { ThemeDefinition } from '../theme';
+import { allThemes, ThemeManager } from '../theme';
+import { configService } from './config';
 
 type ThemeType = 'light' | 'dark' | 'system';
+type ThemeAppearance = Exclude<ThemeType, 'system'>;
+
+export const ThemeServiceEvent = {
+  AppearanceApplied: 'lobster-theme-appearance-applied',
+} as const;
+
+export interface ThemeAppearanceAppliedDetail {
+  appearance: ThemeAppearance;
+  themeId: string;
+}
 
 class ThemeService {
   private mediaQuery: MediaQueryList | null = null;
@@ -107,22 +117,48 @@ class ThemeService {
     return theme?.meta.appearance ?? 'light';
   }
 
+  async applyThemeAppearance(appearance: ThemeAppearance): Promise<boolean> {
+    if (this.getEffectiveTheme() === appearance) {
+      return false;
+    }
+
+    const target = this.resolveByAppearance(appearance);
+    if (!target) {
+      return false;
+    }
+
+    await configService.updateConfig({ theme: appearance });
+    this.currentTheme = appearance;
+    await this.manager.setTheme(target.meta.id);
+    window.dispatchEvent(new CustomEvent<ThemeAppearanceAppliedDetail>(
+      ThemeServiceEvent.AppearanceApplied,
+      {
+        detail: {
+          appearance,
+          themeId: target.meta.id,
+        },
+      },
+    ));
+    return true;
+  }
+
   // 根据 appearance 选择第一个匹配的主题，或恢复已保存的主题
   private applyByAppearance(appearance: 'light' | 'dark'): void {
-    // Check if there's a saved theme ID with the right appearance
+    const match = this.resolveByAppearance(appearance);
+    if (match) {
+      void this.manager.setTheme(match.meta.id);
+    }
+  }
+
+  private resolveByAppearance(appearance: ThemeAppearance): ThemeDefinition | undefined {
     const savedId = localStorage.getItem('lobster-theme-id');
     if (savedId) {
       const saved = allThemes.find(t => t.meta.id === savedId);
       if (saved && saved.meta.appearance === appearance) {
-        void this.manager.setTheme(savedId);
-        return;
+        return saved;
       }
     }
-    // Fallback: pick first theme matching the appearance
-    const match = allThemes.find(t => t.meta.appearance === appearance);
-    if (match) {
-      void this.manager.setTheme(match.meta.id);
-    }
+    return allThemes.find(t => t.meta.appearance === appearance);
   }
 }
 

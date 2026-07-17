@@ -3372,7 +3372,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   );
 
   return (
-    <div className="relative">
+    <div data-skin-prompt-input="true" className="relative">
       {goalEditModalOpen && (
         <Modal
           onClose={handleCloseGoalEditModal}

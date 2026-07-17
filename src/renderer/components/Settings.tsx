@@ -26,7 +26,11 @@ import { i18nService, LanguageType } from '../services/i18n';
 import { imService } from '../services/im';
 import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import { formatShortcutForDisplay, getShortcutConflictSignature, matchesShortcut } from '../services/shortcuts';
-import { themeService } from '../services/theme';
+import {
+  type ThemeAppearanceAppliedDetail,
+  themeService,
+  ThemeServiceEvent,
+} from '../services/theme';
 import { applyTypographyPreferences } from '../services/typography';
 import type { RootState } from '../store';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
@@ -78,6 +82,7 @@ import {
 } from './settings/modelProviderUtils';
 import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } from './settings/ModelSettingsSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
+import SkinSettingsSection from './skin/SkinSettingsSection';
 import ThemedSelect from './ui/ThemedSelect';
 
 type TabType = 'general' | 'appearance' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'about';
@@ -1402,6 +1407,25 @@ const Settings: React.FC<SettingsProps> = ({
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
 
+  useEffect(() => {
+    const handleAppearanceApplied = (event: Event) => {
+      const detail = (event as CustomEvent<ThemeAppearanceAppliedDetail>).detail;
+      if (!detail) {
+        return;
+      }
+
+      initialThemeRef.current = detail.appearance;
+      initialThemeIdRef.current = detail.themeId;
+      setTheme(detail.appearance);
+      setThemeId(detail.themeId);
+    };
+
+    window.addEventListener(ThemeServiceEvent.AppearanceApplied, handleAppearanceApplied);
+    return () => {
+      window.removeEventListener(ThemeServiceEvent.AppearanceApplied, handleAppearanceApplied);
+    };
+  }, []);
+
   // Plugin settings handle (deferred save)
   const pluginsSettingsRef = useRef<PluginsSettingsHandle>(null);
 
@@ -2169,8 +2193,6 @@ const Settings: React.FC<SettingsProps> = ({
   }, []);
 
   useEffect(() => {
-    const initialThemeId = initialThemeIdRef.current;
-    const initialTheme = initialThemeRef.current;
     const initialUiFontSize = initialUiFontSizeRef.current;
     const initialCodeFontSize = initialCodeFontSizeRef.current;
     const initialLanguage = initialLanguageRef.current;
@@ -2178,7 +2200,7 @@ const Settings: React.FC<SettingsProps> = ({
       if (didSaveRef.current) {
         return;
       }
-      themeService.restoreTheme(initialThemeId, initialTheme);
+      themeService.restoreTheme(initialThemeIdRef.current, initialThemeRef.current);
       applyTypographyPreferences({
         uiFontSize: initialUiFontSize,
         codeFontSize: initialCodeFontSize,
@@ -4593,6 +4615,8 @@ const Settings: React.FC<SettingsProps> = ({
             </>
           );
         })()}
+
+        <SkinSettingsSection />
 
         <div className="mt-5 divide-y divide-border rounded-xl border border-border bg-surface">
           <div className="px-4 py-3">

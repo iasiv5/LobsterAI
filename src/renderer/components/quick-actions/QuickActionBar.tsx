@@ -30,7 +30,7 @@ const QuickActionBar: React.FC<QuickActionBarProps> = ({ actions, selectedAction
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
+    <div data-skin-quick-actions="true" className="flex flex-wrap items-center justify-center gap-2">
       {actions.map((action) => {
         const IconComponent = iconMap[action.icon];
         const isSelected = action.id === selectedActionId;

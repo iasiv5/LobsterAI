@@ -30,7 +30,7 @@ const PromptPanel: React.FC<PromptPanelProps> = ({ action, onPromptSelect, onClo
   }
 
   return (
-    <div className="w-full animate-fade-in-up">
+    <div data-skin-prompt-panel="true" className="w-full animate-fade-in-up">
       {/* 标题 */}
       <div className="mb-2.5 flex items-center justify-between px-0.5">
         <span className="text-xs font-medium text-secondary">

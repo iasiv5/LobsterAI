@@ -16,6 +16,7 @@ import {
   selectCoworkConfig,
   selectCurrentSession,
   selectIsStreaming,
+  selectSessionNavigationTargetId,
 } from '../../store/selectors/coworkSelectors';
 import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionGoal, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearActiveKits } from '../../store/slices/kitSlice';
@@ -38,6 +39,9 @@ import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel, QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
+import HomeSkinEmblem from '../skin/HomeSkinEmblem';
+import SkinAmbientEffects from '../skin/SkinAmbientEffects';
+import SkinBackdrop, { SkinBackdropVariant } from '../skin/SkinBackdrop';
 import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
@@ -105,6 +109,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
 
   const currentSession = useSelector(selectCurrentSession);
+  const sessionNavigationTargetId = useSelector(selectSessionNavigationTargetId);
   const isStreaming = useSelector(selectIsStreaming);
   const currentSessionIdRef = useRef<string | null>(null);
 
@@ -123,6 +128,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
+  const shouldPresentConversation = Boolean(currentSession || sessionNavigationTargetId);
   const currentAgentWorkingDirectory = currentAgent?.workingDirectory?.trim() || config.workingDirectory || '';
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
   const homeDraftCollaborationMode = useSelector((state: RootState) => (
@@ -709,7 +715,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   const isEngineReady = isOpenClawReadyForSession(openClawStatus);
 
   const homeHeader = (
-    <div className="draggable flex h-12 items-center justify-between px-4 shrink-0">
+    <div className="draggable relative z-10 flex h-12 items-center justify-between px-4 shrink-0">
       <div className="non-draggable h-8 flex items-center">
         {isSidebarCollapsed && !isWindows && (
           <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
@@ -787,116 +793,119 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     </div>
   ) : null;
 
-  // When there's a current session, show the session detail view
-  if (currentSession) {
-    return (
-      <div className="relative flex-1 flex flex-col h-full">
-        {engineStatusBanner}
-        <CoworkSessionDetail
-          onManageSkills={() => onShowSkills?.()}
-          onManageKits={() => onShowKits?.()}
-          onContinue={handleContinueSession}
-          onStop={handleStopSession}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={onToggleSidebar}
-          onNewChat={onNewChat}
-          updateBadge={updateBadge}
-          minimizedPermission={minimizedPermission}
-          onRestorePermission={onRestorePermission}
-          onRespondToPermission={onRespondToPermission}
-        />
-      </div>
-    );
-  }
-
-  // Home view - no current session
   return (
-    <div className="relative flex-1 flex flex-col bg-background h-full">
-      {/* Engine status banner for non-blocking states */}
-      {engineStatusBanner}
+    <div data-skin-cowork="true" className="relative flex-1 flex flex-col bg-background h-full">
+      <SkinBackdrop
+        variant={shouldPresentConversation
+          ? SkinBackdropVariant.Conversation
+          : SkinBackdropVariant.Home}
+      />
+      <SkinAmbientEffects visible={!shouldPresentConversation} />
 
-      {/* Header */}
-      {homeHeader}
+      {currentSession ? (
+        <div className="relative z-10 flex-1 flex flex-col h-full">
+          {engineStatusBanner}
+          <CoworkSessionDetail
+            onManageSkills={() => onShowSkills?.()}
+            onManageKits={() => onShowKits?.()}
+            onContinue={handleContinueSession}
+            onStop={handleStopSession}
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={onToggleSidebar}
+            onNewChat={onNewChat}
+            updateBadge={updateBadge}
+            minimizedPermission={minimizedPermission}
+            onRestorePermission={onRestorePermission}
+            onRespondToPermission={onRespondToPermission}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Engine status banner for non-blocking states */}
+          {engineStatusBanner}
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto min-h-0 relative">
-        <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 py-8">
-          {/* Flexible spacers (2:3) keep the welcome block at the optical
-              center on tall windows; min-h preserves breathing room before
-              the page starts scrolling on short windows. */}
-          <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
-          {/* Welcome Section - staggered entrance animation */}
-          <div className="w-full max-w-3xl text-center">
-            <img
-              src="logo.png"
-              alt="LobsterAI"
-              className="mx-auto h-12 w-12 animate-fade-in-up"
-            />
-            <h2
-              className="mt-4 text-2xl font-semibold leading-[var(--lobster-leading-2xl)] tracking-normal text-foreground animate-fade-in-up"
-              style={{ animationDelay: '70ms', animationFillMode: 'both' }}
-            >
-              {i18nService.t(resolveHomeGreetingKey())}
-            </h2>
-            <p
-              className="mt-2 text-[length:var(--lobster-text-promptLarge)] font-normal leading-[var(--lobster-leading-promptLarge)] text-secondary animate-fade-in-up"
-              style={{ animationDelay: '120ms', animationFillMode: 'both' }}
-            >
-              {i18nService.t('coworkHomeTagline')}
-            </p>
-          </div>
+          {/* Header */}
+          {homeHeader}
 
-          {/* Prompt Input Area - Large version with folder selector */}
-          <div
-            className="relative z-30 mt-9 w-full max-w-3xl animate-fade-in-up"
-            style={{ animationDelay: '180ms', animationFillMode: 'both' }}
-          >
-            <CoworkPromptInput
-              ref={promptInputRef}
-              onSubmit={handleStartSession}
-              onStop={handleStopSession}
-              isStreaming={isStreaming}
-              disabled={!isEngineReady}
-              placeholder={i18nService.t('coworkPlaceholder')}
-              size="large"
-              workingDirectory={currentAgentWorkingDirectory}
-              onWorkingDirectoryChange={async (dir: string) => {
-                await agentService.updateAgent(currentAgentId, { workingDirectory: dir });
-              }}
-              showFolderSelector={true}
-              showModelSelector={true}
-              showAgentSelector={true}
-              onManageSkills={() => onShowSkills?.()}
-              onManageKits={() => onShowKits?.()}
-              onGoalCommand={handleStartGoalSession}
-            />
-          </div>
+          {/* Main content */}
+          <div className="relative z-10 flex-1 overflow-y-auto min-h-0">
+            <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 py-8">
+              {/* Flexible spacers (2:3) keep the welcome block at the optical
+                  center on tall windows; min-h preserves breathing room before
+                  the page starts scrolling on short windows. */}
+              <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
+              {/* Welcome Section - staggered entrance animation */}
+              <div data-skin-home-copy="true" className="w-full max-w-3xl text-center">
+                <HomeSkinEmblem
+                  className="mx-auto h-12 w-12 animate-fade-in-up"
+                />
+                <h2
+                  className="mt-4 text-2xl font-semibold leading-[var(--lobster-leading-2xl)] tracking-normal text-foreground animate-fade-in-up"
+                  style={{ animationDelay: '70ms', animationFillMode: 'both' }}
+                >
+                  {i18nService.t(resolveHomeGreetingKey())}
+                </h2>
+                <p
+                  className="mt-2 text-[length:var(--lobster-text-promptLarge)] font-normal leading-[var(--lobster-leading-promptLarge)] text-secondary animate-fade-in-up"
+                  style={{ animationDelay: '120ms', animationFillMode: 'both' }}
+                >
+                  {i18nService.t('coworkHomeTagline')}
+                </p>
+              </div>
 
-          {/* Quick Actions */}
-          <div
-            className="relative z-0 mt-8 flex w-full max-w-3xl flex-col items-center animate-fade-in-up"
-            style={{ animationDelay: '260ms', animationFillMode: 'both' }}
-          >
-            <QuickActionBar
-              actions={quickActions}
-              selectedActionId={selectedActionId}
-              onActionSelect={handleActionSelect}
-            />
-            {selectedAction && (
-              <div className="mt-4 w-full">
-                <PromptPanel
-                  action={selectedAction}
-                  onPromptSelect={handleQuickActionPromptSelect}
-                  onClose={handleQuickActionDeselect}
+              {/* Prompt Input Area - Large version with folder selector */}
+              <div
+                className="relative z-30 mt-9 w-full max-w-3xl animate-fade-in-up"
+                style={{ animationDelay: '180ms', animationFillMode: 'both' }}
+              >
+                <CoworkPromptInput
+                  ref={promptInputRef}
+                  onSubmit={handleStartSession}
+                  onStop={handleStopSession}
+                  isStreaming={isStreaming}
+                  disabled={!isEngineReady}
+                  placeholder={i18nService.t('coworkPlaceholder')}
+                  size="large"
+                  workingDirectory={currentAgentWorkingDirectory}
+                  onWorkingDirectoryChange={async (dir: string) => {
+                    await agentService.updateAgent(currentAgentId, { workingDirectory: dir });
+                  }}
+                  showFolderSelector={true}
+                  showModelSelector={true}
+                  showAgentSelector={true}
+                  onManageSkills={() => onShowSkills?.()}
+                  onManageKits={() => onShowKits?.()}
+                  onGoalCommand={handleStartGoalSession}
                 />
               </div>
-            )}
-            <CreditsResetCampaignFloat />
-          </div>
 
-          <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />
-        </div>
-      </div>
+              {/* Quick Actions */}
+              <div
+                className="relative z-0 mt-8 flex w-full max-w-3xl flex-col items-center animate-fade-in-up"
+                style={{ animationDelay: '260ms', animationFillMode: 'both' }}
+              >
+                <QuickActionBar
+                  actions={quickActions}
+                  selectedActionId={selectedActionId}
+                  onActionSelect={handleActionSelect}
+                />
+                {selectedAction && (
+                  <div className="mt-4 w-full">
+                    <PromptPanel
+                      action={selectedAction}
+                      onPromptSelect={handleQuickActionPromptSelect}
+                      onClose={handleQuickActionDeselect}
+                    />
+                  </div>
+                )}
+                <CreditsResetCampaignFloat />
+              </div>
+
+              <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

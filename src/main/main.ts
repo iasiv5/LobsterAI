@@ -90,9 +90,11 @@ import {
   type HtmlShareStatus as HtmlShareStatusValue,
 } from '../shared/htmlShare/constants';
 import type {
+  InstalledKitRecord,
   KitReference,
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
+import { KitStoreKey } from '../shared/kit/constants';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -366,6 +368,12 @@ import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPer
 import { isHiddenUserPluginId } from './plugins/pluginManager';
 import { SkillManager } from './skills/skillManager';
 import { getSkillServiceManager } from './skills/skillServices';
+import {
+  notifySkinChanged,
+  registerSkinElectronIntegration,
+  SKIN_PRIVILEGED_SCHEME,
+  SkinRuntimeController,
+} from './skins';
 import { SqliteStore } from './sqliteStore';
 import { StartupProfiler } from './startupProfiler';
 import { SubagentMessageStore } from './subagentMessageStore';
@@ -389,6 +397,7 @@ protocol.registerSchemesAsPrivileged([
       stream: true,
     },
   },
+  SKIN_PRIVILEGED_SCHEME,
 ]);
 
 const gwDiagTs = (): string => {
@@ -1747,6 +1756,7 @@ let openClawRuntimeAdapter: OpenClawRuntimeAdapter | null = null;
 let coworkEngineRouter: CoworkEngineRouter | null = null;
 let skillManager: SkillManager | null = null;
 let mcpRuntime: McpRuntime | null = null;
+let skinRuntimeController: SkinRuntimeController | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let sqliteBackupManager: SqliteBackupManager | null = null;
@@ -2774,6 +2784,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('complete', (sessionId: string, claudeSessionId: string | null) => {
     mediaSelectionBySession.delete(sessionId);
+    skinRuntimeController?.handleRuntimeComplete(sessionId);
     mediaReferencesBySession.delete(sessionId);
     getDesktopNotificationManager().handleComplete(sessionId);
     const windows = BrowserWindow.getAllWindows();
@@ -2797,6 +2808,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('error', (sessionId: string, error: string) => {
     mediaSelectionBySession.delete(sessionId);
+    skinRuntimeController?.handleRuntimeError(sessionId);
     mediaReferencesBySession.delete(sessionId);
     // Mark session as error in store so the .catch() fallback can detect duplicates.
     try {
@@ -3448,6 +3460,26 @@ const resolveMediaSelectionForSession = (sessionId: string | null): MediaSelecti
   }
 
   return undefined;
+};
+
+const getSkinRuntimeController = (): SkinRuntimeController => {
+  if (!skinRuntimeController) {
+    skinRuntimeController = new SkinRuntimeController({
+      rootDir: path.join(app.getPath('userData'), 'skins'),
+      getInstalledKits: () => (
+        getStore().get<Record<string, InstalledKitRecord>>(KitStoreKey.Installed) ?? {}
+      ),
+      getParentSessionId: sessionId => (
+        getCoworkParentSessionId(getStore().getDatabase(), sessionId)
+      ),
+      resolveSessionId: sessionKey => (
+        resolveCoworkSessionIdByOpenClawSessionKey(getStore().getDatabase(), sessionKey)
+      ),
+      resolveMediaSelection: resolveMediaSelectionForSession,
+      onChanged: notifySkinChanged,
+    });
+  }
+  return skinRuntimeController;
 };
 
 const mediaModelIdForOutput = (model: unknown, fallback?: string): string => {
@@ -4304,6 +4336,10 @@ if (!gotTheLock) {
     context: { sessionKey: string; toolCallId: string };
   }): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean; details?: Record<string, unknown> }> => {
     const { tool, args } = request;
+    const skinRuntime = getSkinRuntimeController();
+    if (skinRuntime.handlesTool(tool)) {
+      return skinRuntime.handleToolRequest(request);
+    }
     const action = (args.action as string) || 'generate';
     const serverBaseUrl = getServerApiBaseUrl();
     const sessionId = extractSessionIdFromKey(request.context.sessionKey);
@@ -4315,6 +4351,14 @@ if (!gotTheLock) {
       : canonicalizeMediaModelId(selection?.videoModelId || selection?.modelId || '');
     let selectedModel = explicitModel || resolvedModelFromSelection;
     let selectedModelSource = explicitModel ? 'tool' : resolvedModelFromSelection ? 'selection' : 'none';
+
+    if (action === 'generate' && tool === MediaGenerationTool.Image) {
+      const skinPreflight = await skinRuntime.preflightLobsterImageGeneration(
+        sessionId,
+        selection,
+      );
+      if (skinPreflight) return skinPreflight;
+    }
 
     if (action === 'generate' && resolvedModelFromSelection && explicitModel && explicitModel !== resolvedModelFromSelection) {
       console.warn(`[MediaGeneration] overriding LLM model choice "${explicitModel}" with user selection "${resolvedModelFromSelection}"`);
@@ -4395,9 +4439,6 @@ if (!gotTheLock) {
         const pollCount = incrementMediaStatusPollCount(sessionId, taskId);
         const mediaType = tool === MediaGenerationTool.Image ? 'images' : 'videos';
         const statusMediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
-        if (sessionId && statusMediaType === 'video') {
-          markMediaTaskHandledByStatusPolling(sessionId, taskId);
-        }
         console.log(`[MediaGeneration] checking ${mediaType} task status for task ${taskId}.`);
         const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/${mediaType}/tasks/${taskId}`);
         console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} task status.`);
@@ -4417,7 +4458,7 @@ if (!gotTheLock) {
           ? task.modelSelectionReason.trim()
           : undefined;
         if (sessionId && TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
-          pendingMediaTasks.delete(taskId);
+          markMediaTaskHandledByStatusPolling(sessionId, taskId);
         }
         const assets = resultUrls.map(url => ({
           type: statusMediaType,
@@ -6812,7 +6853,13 @@ if (!gotTheLock) {
           );
         }
 
-        const normalizedMediaSelection = normalizeMediaSelectionState(options.mediaSelection);
+        const skinTurn = getSkinRuntimeController().prepareTurn({
+          sessionId: session.id,
+          kitIds: options.kitIds,
+          mediaSelection: normalizeMediaSelectionState(options.mediaSelection),
+          mediaGenerationEntitled: cachedMediaGenerationEntitled,
+        });
+        const { workflowKind, mediaSelection: normalizedMediaSelection } = skinTurn;
         if (normalizedMediaSelection && normalizedMediaSelection.mode !== 'none') {
           mediaSelectionBySession.set(session.id, normalizedMediaSelection);
         } else {
@@ -6873,6 +6920,7 @@ if (!gotTheLock) {
             imageAttachments: options.imageAttachments,
             agentId: options.agentId,
             mediaSelection: normalizedMediaSelection,
+            workflowKind,
             mediaReferences: options.mediaReferences,
             selectedTextSnippets,
           })
@@ -6982,7 +7030,13 @@ if (!gotTheLock) {
           };
         }
 
-        const normalizedMediaSelection = normalizeMediaSelectionState(options.mediaSelection);
+        const skinTurn = getSkinRuntimeController().prepareTurn({
+          sessionId: options.sessionId,
+          kitIds: options.kitIds,
+          mediaSelection: normalizeMediaSelectionState(options.mediaSelection),
+          mediaGenerationEntitled: cachedMediaGenerationEntitled,
+        });
+        const { workflowKind, mediaSelection: normalizedMediaSelection } = skinTurn;
         if (normalizedMediaSelection && normalizedMediaSelection.mode !== 'none') {
           mediaSelectionBySession.set(options.sessionId, normalizedMediaSelection);
         } else {
@@ -7022,6 +7076,7 @@ if (!gotTheLock) {
             resolvedKitCapabilities: options.resolvedKitCapabilities,
             imageAttachments: options.imageAttachments,
             mediaSelection: normalizedMediaSelection,
+            workflowKind,
             mediaReferences: options.mediaReferences,
             selectedTextSnippets,
           })
@@ -7229,6 +7284,7 @@ if (!gotTheLock) {
       const coworkStoreInstance = getCoworkStore();
       coworkStoreInstance.deleteSession(sessionId);
       mediaSelectionBySession.delete(sessionId);
+      skinRuntimeController?.handleSessionDeleted(sessionId);
       mediaReferencesBySession.delete(sessionId);
       getDesktopNotificationManager().handleSessionDeleted(sessionId);
       // Remove any pending media tasks for this session
@@ -7272,6 +7328,7 @@ if (!gotTheLock) {
       coworkStoreInstance.deleteSessions(sessionIds);
       const router = getCoworkEngineRouter();
       for (const sessionId of sessionIds) {
+        skinRuntimeController?.handleSessionDeleted(sessionId);
         getDesktopNotificationManager().handleSessionDeleted(sessionId);
         try {
           getIMGatewayManager()?.getIMStore()?.deleteSessionMappingByCoworkSessionId(sessionId);
@@ -10566,7 +10623,7 @@ if (!gotTheLock) {
           ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
           : "script-src 'self'",
         "style-src 'self' 'unsafe-inline' https:",
-        `img-src 'self' data: blob: https: http: ${ArtifactPreviewProtocol.LocalFile}:`,
+        `img-src 'self' data: blob: https: http: ${ArtifactPreviewProtocol.LocalFile}: ${SKIN_PRIVILEGED_SCHEME.scheme}:`,
         // 允许连接到所有域名，不做限制
         'connect-src *',
         "font-src 'self' data: blob: https:",
@@ -11165,6 +11222,7 @@ if (!gotTheLock) {
 
     // 注册 localfile:// 自定义协议，用于安全加载本地媒体文件。
     protocol.handle(ArtifactPreviewProtocol.LocalFile, createLocalFileProtocolResponse);
+    registerSkinElectronIntegration(getSkinRuntimeController().store);
 
     profiler.mark('initStore');
     console.log('[Main] initApp: starting initStore()');

@@ -7,6 +7,7 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../../shared/kit/constants';
+import type { SkinWorkflowKind } from '../../../shared/skin/constants';
 import type { CoworkMessage, CoworkSessionStatus } from '../../coworkStore';
 
 export type CoworkAgentEngine = 'openclaw';
@@ -111,6 +112,7 @@ export type CoworkStartOptions = {
   imageAttachments?: CoworkImageAttachment[];
   agentId?: string;
   mediaSelection?: CoworkMediaSelection;
+  workflowKind?: SkinWorkflowKind;
   mediaReferences?: CoworkMediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
 };
@@ -125,6 +127,7 @@ export type CoworkContinueOptions = {
   resolvedKitCapabilities?: ResolvedKitCapabilities;
   imageAttachments?: CoworkImageAttachment[];
   mediaSelection?: CoworkMediaSelection;
+  workflowKind?: SkinWorkflowKind;
   mediaReferences?: CoworkMediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
 };

@@ -170,14 +170,19 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       isCurrentSession: task.id === currentSessionId,
       taskStatus: task.status,
     });
-    if (task.agentId !== currentAgentId) {
-      agentService.switchAgent(task.agentId);
-      await coworkService.loadSessions(task.agentId);
+    try {
+      if (task.agentId !== currentAgentId) {
+        agentService.switchAgent(task.agentId, { targetSessionId: task.id });
+        await coworkService.loadSessions(task.agentId);
+      }
+      onShowCowork();
+      // Clear subagent detail view so the main session detail is shown
+      window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
+      const session = await coworkService.loadSession(task.id);
+      return session;
+    } finally {
+      coworkService.finishSessionNavigation(task.id);
     }
-    onShowCowork();
-    // Clear subagent detail view so the main session detail is shown
-    window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
-    return coworkService.loadSession(task.id);
   }, [currentAgentId, currentSessionId, onShowCowork, onTaskSelected]);
 
   useEffect(() => {
@@ -230,13 +235,17 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
         }
 
         const agentId = session.agentId?.trim() || AgentId.Main;
-        if (agentId !== currentAgentId) {
-          agentService.switchAgent(agentId);
-          await coworkService.loadSessions(agentId);
+        try {
+          if (agentId !== currentAgentId) {
+            agentService.switchAgent(agentId, { targetSessionId: session.id });
+            await coworkService.loadSessions(agentId);
+          }
+          onShowCowork();
+          window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
+          await coworkService.loadSession(session.id);
+        } finally {
+          coworkService.finishSessionNavigation(session.id);
         }
-        onShowCowork();
-        window.dispatchEvent(new CustomEvent(CoworkUiEvent.SelectSubagent, { detail: null }));
-        await coworkService.loadSession(session.id);
       })();
     };
 
@@ -492,7 +501,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     <div className="pb-3" role="tree" aria-label={i18nService.t('myAgents')}>
       {hasPinnedAgents && (
         <div className="space-y-0.5">
-          <div className="sticky top-0 z-30 flex h-10 items-center bg-surface-raised px-1.5">
+          <div className="sticky top-0 z-30 -ml-[6px] flex h-10 w-[calc(100%+12px)] items-center bg-surface-raised pl-3 pr-1">
             <h2 className="min-w-0 truncate text-sm font-normal text-secondary">
               {i18nService.t('myAgentSidebarPinned')}
             </h2>

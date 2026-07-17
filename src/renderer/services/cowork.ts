@@ -30,6 +30,7 @@ import {
   deleteSessions as deleteSessionsAction,
   dequeuePendingPermission,
   enqueuePendingPermission,
+  finishSessionNavigation as finishSessionNavigationAction,
   markCompactionNotified,
   prependMessages,
   setConfig,
@@ -1266,38 +1267,42 @@ class CoworkService {
   }
 
   async loadSession(sessionId: string): Promise<CoworkSession | null> {
-    const cowork = window.electron?.cowork;
-    if (!cowork) return null;
-    const requestId = ++this.latestLoadSessionRequestId;
+    try {
+      const cowork = window.electron?.cowork;
+      if (!cowork) return null;
+      const requestId = ++this.latestLoadSessionRequestId;
 
-    const result = await cowork.getSession(sessionId);
-    if (result.success && result.session) {
-      this.logDiagnostic(
-        'info',
-        `received session ${sessionId}; returned ${result.session.messages.length} of ${result.session.totalMessages} messages from offset ${result.session.messagesOffset}.`,
-      );
-      // Keep only the latest session load result to avoid stale async overwrites.
-      if (requestId !== this.latestLoadSessionRequestId) {
-        this.logDiagnostic('debug', `ignored stale session load result for session ${sessionId}.`);
+      const result = await cowork.getSession(sessionId);
+      if (result.success && result.session) {
+        this.logDiagnostic(
+          'info',
+          `received session ${sessionId}; returned ${result.session.messages.length} of ${result.session.totalMessages} messages from offset ${result.session.messagesOffset}.`,
+        );
+        // Keep only the latest session load result to avoid stale async overwrites.
+        if (requestId !== this.latestLoadSessionRequestId) {
+          this.logDiagnostic('debug', `ignored stale session load result for session ${sessionId}.`);
+          return result.session;
+        }
+        store.dispatch(setCurrentSession(result.session));
+        this.setCurrentSessionStreaming(sessionId, result.session.status === 'running', 'load_session_completed');
+        void this.loadSessionMessageRailIndex(sessionId);
+        void cowork.markSessionViewed?.(sessionId).catch((error: unknown) => {
+          console.warn('[CoworkService] failed to mark session viewed:', error);
+        });
+
+        const imResult = await cowork.remoteManaged(sessionId);
+        if (requestId === this.latestLoadSessionRequestId) {
+          store.dispatch(setRemoteManaged(imResult?.remoteManaged ?? false));
+        }
+
         return result.session;
       }
-      store.dispatch(setCurrentSession(result.session));
-      this.setCurrentSessionStreaming(sessionId, result.session.status === 'running', 'load_session_completed');
-      void this.loadSessionMessageRailIndex(sessionId);
-      void cowork.markSessionViewed?.(sessionId).catch((error: unknown) => {
-        console.warn('[CoworkService] failed to mark session viewed:', error);
-      });
 
-      const imResult = await cowork.remoteManaged(sessionId);
-      if (requestId === this.latestLoadSessionRequestId) {
-        store.dispatch(setRemoteManaged(imResult?.remoteManaged ?? false));
-      }
-
-      return result.session;
+      console.error('Failed to load session:', result.error);
+      return null;
+    } finally {
+      this.finishSessionNavigation(sessionId);
     }
-
-    console.error('Failed to load session:', result.error);
-    return null;
   }
 
   async loadSessionMessageRailIndex(sessionId: string): Promise<CoworkMessageRailIndexItem[]> {
@@ -1687,6 +1692,10 @@ class CoworkService {
     if (options.restoreAgentSkills) {
       restoreCurrentAgentDefaultSkills();
     }
+  }
+
+  finishSessionNavigation(sessionId: string): void {
+    store.dispatch(finishSessionNavigationAction(sessionId));
   }
 
   destroy(): void {

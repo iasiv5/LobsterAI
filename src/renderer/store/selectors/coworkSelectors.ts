@@ -10,6 +10,9 @@ import type { RootState } from '../index';
 export const selectCoworkSessions = (state: RootState) => state.cowork.sessions;
 export const selectCurrentSessionId = (state: RootState) => state.cowork.currentSessionId;
 export const selectCurrentSession = (state: RootState) => state.cowork.currentSession;
+export const selectSessionNavigationTargetId = (
+  state: RootState,
+) => state.cowork.sessionNavigationTargetId;
 export const selectIsStreaming = (state: RootState) => state.cowork.isStreaming;
 export const selectIsCoworkActive = (state: RootState) => state.cowork.isCoworkActive;
 export const selectRemoteManaged = (state: RootState) => state.cowork.remoteManaged;

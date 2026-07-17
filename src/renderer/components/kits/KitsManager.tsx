@@ -690,7 +690,10 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
       </p>
 
       {/* Sticky toolbar: Search + tabs */}
-      <div className="sticky top-0 z-10 space-y-4 bg-background pb-4">
+      <div
+        data-skin-management-toolbar="true"
+        className="sticky top-0 z-10 space-y-4 bg-background pb-4"
+      >
         {actionError && (
           <ErrorMessage message={actionError} onClose={() => setActionError('')} />
         )}
