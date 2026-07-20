@@ -462,6 +462,39 @@ test('replaceConversationMessages ignores assistant-only entries for the updated
   expect(store.getSession(sid)?.updatedAt).toBe(2000);
 });
 
+test('getRecentConversationMessages reads beyond the session page and excludes non-conversation messages', () => {
+  const sid = 'sess-recent-conversation';
+  insertSession(sid);
+
+  for (let index = 1; index <= 31; index += 1) {
+    insertMessage(
+      `msg-${index}`,
+      sid,
+      index % 2 === 0 ? 'assistant' : 'user',
+      `message ${index}`,
+      '{}',
+      index,
+      index,
+    );
+  }
+  insertMessage('tool-32', sid, 'tool_use', 'ignored tool', '{}', 32, 32);
+
+  expect(store.getSession(sid)?.messages).toHaveLength(30);
+  expect(store.getRecentConversationMessages(sid, 50).map(message => message.content)).toEqual(
+    Array.from({ length: 31 }, (_, index) => `message ${index + 1}`),
+  );
+  expect(store.getRecentConversationMessages(sid, 3).map(message => message.content)).toEqual([
+    'message 29',
+    'message 30',
+    'message 31',
+  ]);
+  expect(store.getAllConversationMessages(sid).map(message => message.content)).toEqual(
+    Array.from({ length: 31 }, (_, index) => `message ${index + 1}`),
+  );
+  expect(store.getRecentConversationMessages(sid, 0)).toEqual([]);
+  expect(store.getRecentConversationMessages(sid, Number.POSITIVE_INFINITY)).toEqual([]);
+});
+
 test('getSession returns all messages when ALL have corrupt metadata', () => {
   const sid = 'sess-2';
   insertSession(sid);
