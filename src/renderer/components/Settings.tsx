@@ -82,6 +82,7 @@ import {
 } from './settings/modelProviderUtils';
 import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } from './settings/ModelSettingsSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
+import SkinPresentationScope from './skin/SkinPresentationScope';
 import SkinSettingsSection from './skin/SkinSettingsSection';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -5768,7 +5769,9 @@ const Settings: React.FC<SettingsProps> = ({
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-3 sm:p-4"
       className="w-[calc(100vw-1.5rem)] max-w-[900px] min-w-0 sm:w-[calc(100vw-2rem)]"
     >
-      <div
+      <SkinPresentationScope
+        enabled
+        data-skin-settings="true"
         className="relative flex h-[80vh] max-h-[calc(100vh-2rem)] w-full min-w-0 rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
         onClick={handleSettingsClick}
       >
@@ -6194,7 +6197,7 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           )}
 
-      </div>
+      </SkinPresentationScope>
     </Modal>
   );
 };

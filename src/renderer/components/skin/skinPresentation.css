@@ -2,6 +2,7 @@
   background-color: var(--lobster-skin-panel) !important;
 }
 
+[data-skin-presentation="immersive_shell"][data-skin-settings="true"],
 [data-skin-presentation="immersive_shell"]
   :is(
     [data-skin-sidebar],
