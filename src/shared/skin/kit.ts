@@ -17,7 +17,7 @@ export const SkinPackKitBundle = {
 } as const;
 
 export const SkinPackKitMetadata = {
-  Version: '0.2.0',
+  Version: '0.3.0',
   IconUrl: 'https://ydhardwarebusiness.nosdn.127.net/1df64d1ffdd4213a763bfb7f86883515.png',
   WorkflowKind: SkinWorkflowKind.SkinPack,
 } as const;

@@ -44,15 +44,18 @@ export class SkinWorkflowRegistry {
   constructor(private readonly options: SkinWorkflowRegistryOptions) {}
 
   prepareTurn(input: PrepareSkinWorkflowTurnInput): PreparedSkinWorkflowTurn {
-    const workflowKind = this.resolveTrustedWorkflowKind(input.kitIds);
+    const requestedWorkflowKind = this.resolveTrustedWorkflowKind(input.kitIds);
+    const workflowKind = requestedWorkflowKind
+      ?? this.resolve(input.sessionId)?.state.workflowKind;
     if (!workflowKind) {
-      this.states.delete(input.sessionId);
       return { mediaSelection: input.mediaSelection };
     }
 
-    const existing = this.states.get(input.sessionId);
-    if (!existing || existing.workflowKind !== workflowKind) {
-      this.states.set(input.sessionId, { workflowKind });
+    if (requestedWorkflowKind) {
+      const existing = this.states.get(input.sessionId);
+      if (!existing || existing.workflowKind !== workflowKind) {
+        this.states.set(input.sessionId, { workflowKind });
+      }
     }
 
     if (!input.mediaGenerationEntitled) {
@@ -115,7 +118,8 @@ export class SkinWorkflowRegistry {
   handleRuntimeComplete(_sessionId: string): void {
     // Native image_generate finishes through a background wake after the
     // runtime emits complete. Keep the transaction until apply/deactivate,
-    // an explicit user turn without the Kit, an error, or session deletion.
+    // an error, or session deletion. Follow-up turns may omit the Kit after
+    // the renderer clears its one-turn capability selection.
   }
 
   handleRuntimeError(sessionId: string): void {

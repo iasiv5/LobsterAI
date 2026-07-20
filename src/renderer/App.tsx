@@ -788,6 +788,11 @@ const App: React.FC = () => {
     }
   };
 
+  const handleStartAiSkinFromSettings = (text: string, kitId: string) => {
+    handleCloseSettings();
+    openHomeWithKit(kitId, text);
+  };
+
   const isShortcutInputActive = () => {
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLElement)) return false;
@@ -1373,6 +1378,7 @@ const App: React.FC = () => {
       {showSettings && (
         <Settings
           onClose={handleCloseSettings}
+          onStartAiSkin={handleStartAiSkinFromSettings}
           initialTab={settingsOptions.initialTab}
           initialTabRequestId={settingsOptions.requestId}
           notice={settingsOptions.notice}

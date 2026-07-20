@@ -92,7 +92,7 @@ describe('skin workflow registry', () => {
     expect(registry.resolve('parent')).toBeUndefined();
   });
 
-  test('preserves an active draft when the Kit continues in a later turn', () => {
+  test('preserves an active draft when a later turn omits the Kit', () => {
     const registry = createRegistry();
     const input = {
       sessionId: 'continued-kit-session',
@@ -103,12 +103,43 @@ describe('skin workflow registry', () => {
 
     registry.prepareTurn(input);
     registry.recordDraft(input.sessionId, 'skin-one');
-    registry.prepareTurn(input);
+    registry.prepareTurn({
+      sessionId: input.sessionId,
+      mediaGenerationEntitled: true,
+      mediaSelection: { mode: MediaSelectionMode.Auto },
+    });
 
     expect(registry.resolve(input.sessionId)?.state.draftSkinId).toBe('skin-one');
   });
 
-  test('clears exact session state on error, deletion, or a new turn without the Kit', () => {
+  test('preserves a trusted workflow when a follow-up turn omits the Kit', () => {
+    const registry = createRegistry();
+    registry.prepareTurn({
+      sessionId: 'clarification-session',
+      kitIds: [SkinPackKitId.BuiltIn],
+      mediaGenerationEntitled: true,
+      mediaSelection: { mode: MediaSelectionMode.Auto },
+    });
+
+    expect(registry.prepareTurn({
+      sessionId: 'clarification-session',
+      mediaGenerationEntitled: true,
+      mediaSelection: { mode: MediaSelectionMode.Auto },
+    })).toEqual({
+      workflowKind: SkinWorkflowKind.SkinPack,
+      mediaSelection: { mode: MediaSelectionMode.Image },
+    });
+    expect(registry.resolve('clarification-session')?.state.workflowKind)
+      .toBe(SkinWorkflowKind.SkinPack);
+
+    registry.finishWorkflow('clarification-session');
+    expect(registry.prepareTurn({
+      sessionId: 'clarification-session',
+      mediaGenerationEntitled: false,
+    })).toEqual({ mediaSelection: undefined });
+  });
+
+  test('clears exact session state on error or deletion', () => {
     const registry = createRegistry();
     const prepare = (sessionId: string) => registry.prepareTurn({
       sessionId,
@@ -123,12 +154,5 @@ describe('skin workflow registry', () => {
     prepare('deleted-session');
     registry.handleSessionDeleted('deleted-session');
     expect(registry.resolve('deleted-session')).toBeUndefined();
-
-    prepare('continued-session');
-    registry.prepareTurn({
-      sessionId: 'continued-session',
-      mediaGenerationEntitled: false,
-    });
-    expect(registry.resolve('continued-session')).toBeUndefined();
   });
 });
