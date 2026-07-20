@@ -1,5 +1,6 @@
-import { ArrowPathIcon,XMarkIcon } from '@heroicons/react/24/outline';
-import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowPathIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { collectSessionArtifacts, loadDetectedFileArtifact } from '../../services/artifactDetection';
 import { i18nService } from '../../services/i18n';
@@ -254,7 +255,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
     return Number.isFinite(date.getTime()) ? formatDateTime(date) : null;
   }, [runStartedAt]);
 
-  return (
+  const modal = (
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center"
       onClick={onClose}
@@ -367,6 +368,12 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') {
+    return modal;
+  }
+
+  return createPortal(modal, document.body);
 };
 
 export default RunSessionModal;

@@ -1,10 +1,16 @@
 import { ProviderName } from '@shared/providers';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  authService,
   mapPricingCatalogTextModelsToServerModels,
   mapPricingCatalogToPublicServerModels,
 } from './auth';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('pricing catalog model mapping', () => {
   test('maps public text models to locked server models', () => {
@@ -61,5 +67,68 @@ describe('pricing catalog model mapping', () => {
 
     expect(models.map(model => model.id)).toEqual(['MiniMax-M3']);
     expect(models[0].accessible).toBe(false);
+  });
+});
+
+describe('login diagnostics', () => {
+  test('persists renderer lifecycle logs without including the login URL', async () => {
+    const fromRenderer = vi.fn();
+    const login = vi.fn().mockResolvedValue({ success: true });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electron: {
+        api: {
+          fetch: vi.fn().mockResolvedValue({
+            ok: true,
+            data: { data: { value: 'https://lobsterai.youdao.com/portal#/login' } },
+          }),
+        },
+        auth: { login },
+        log: { fromRenderer },
+      },
+    });
+
+    await authService.login();
+
+    expect(login).toHaveBeenCalledWith('https://lobsterai.youdao.com/portal#/login');
+    expect(fromRenderer).toHaveBeenCalledWith(
+      'info',
+      'AuthService',
+      expect.stringMatching(/^login attempt \d+ started$/),
+    );
+    expect(fromRenderer).toHaveBeenCalledWith(
+      'info',
+      'AuthService',
+      expect.stringMatching(/^login attempt \d+ handed off to the system browser$/),
+    );
+    expect(fromRenderer.mock.calls.flat().join(' ')).not.toContain('lobsterai.youdao.com');
+  });
+
+  test('records a warning while preserving the existing non-throwing IPC failure behavior', async () => {
+    const fromRenderer = vi.fn();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electron: {
+        api: {
+          fetch: vi.fn().mockResolvedValue({
+            ok: true,
+            data: { data: { value: 'https://lobsterai.youdao.com/portal#/login' } },
+          }),
+        },
+        auth: { login: vi.fn().mockResolvedValue({ success: false, error: 'open failed' }) },
+        log: { fromRenderer },
+      },
+    });
+
+    await expect(authService.login()).resolves.toBeUndefined();
+
+    expect(fromRenderer).toHaveBeenCalledWith(
+      'warn',
+      'AuthService',
+      expect.stringMatching(/^login attempt \d+ could not open the system browser$/),
+    );
   });
 });

@@ -281,6 +281,7 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
   OpenClawChannelSessionSync,
 } from './libs/openclawChannelSessionSync';
+import { deliverOpenClawConfigToGateway } from './libs/openclawConfigDelivery';
 import {
   classifyAppConfigChange,
   classifyCoworkConfigChange,
@@ -2427,10 +2428,33 @@ const _syncOpenClawConfigImpl = async (
   );
 
   if (!needsHardRestart) {
-    console.log(`${D()} ──── NO RESTART, hot-reload only. reason=${options.reason}`);
+    if (!syncResult.changed) {
+      console.log(`${D()} ──── NO RESTART, config unchanged. reason=${options.reason}`);
+      return {
+        success: true,
+        changed: false,
+      };
+    }
+    // The gateway's file watcher can miss writes that land right after a
+    // (re)start, so never rely on it alone: push the final on-disk content
+    // through config.set for a positive hot-apply ack, or schedule a deferred
+    // restart when the RPC path is unavailable.
+    const deliveryManager = getOpenClawEngineManager();
+    const delivery = await deliverOpenClawConfigToGateway({
+      reason: options.reason,
+      gatewayPhase: deliveryManager.getStatus().phase,
+      readConfigFile: () => fs.readFileSync(deliveryManager.getConfigPath(), 'utf8'),
+      ensureRpcClient: async () => (
+        openClawRuntimeAdapter ? openClawRuntimeAdapter.ensureGatewayRpcClient() : null
+      ),
+      scheduleDeferredRestart: scheduleDeferredGatewayRestart,
+    });
+    console.log(
+      `${D()} ──── NO RESTART, hot delivery mode=${delivery.mode} restartScheduled=${delivery.restartScheduled}. reason=${options.reason}`,
+    );
     return {
       success: true,
-      changed: syncResult.changed,
+      changed: true,
     };
   }
 
@@ -5278,7 +5302,7 @@ if (!gotTheLock) {
     return quota;
   };
 
-  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
+  ipcMain.handle(AuthIpcChannel.Login, async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
     const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
     const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
@@ -5304,7 +5328,7 @@ if (!gotTheLock) {
       await shell.openExternal(finalUrl);
       return { success: true };
     } catch (error) {
-      await localCallback?.close();
+      // The callback may be shared by another login page and will clean itself up on timeout.
       console.warn('[Auth] local callback login failed, falling back to deep link login:', error);
       try {
         await shell.openExternal(fallbackUrl);

@@ -2400,7 +2400,7 @@ test('continueSession aborts silently when the session is stopped during the mod
 
 function createReconcileStore(
   messages: Array<Record<string, unknown>>,
-  options: { agentModel?: string; sessionId?: string } = {},
+  options: { agentModel?: string; sessionId?: string; sessionMessageLimit?: number } = {},
 ) {
   const session = {
     id: options.sessionId ?? 'session-1',
@@ -2419,6 +2419,7 @@ function createReconcileStore(
   };
   let nextId = session.messages.length + 1;
   let replaceCallCount = 0;
+  let getAllConversationMessagesCallCount = 0;
   let lastReplaceArgs: { sessionId: string; authoritative: Array<Record<string, unknown>> } | null = null;
   let replaceSessionCallCount = 0;
   let lastReplaceSessionArgs: { sessionId: string; messages: Array<Record<string, unknown>> } | null = null;
@@ -2431,12 +2432,32 @@ function createReconcileStore(
   return {
     session,
     getReplaceCallCount: () => replaceCallCount,
+    getAllConversationMessagesCallCount: () => getAllConversationMessagesCallCount,
     getLastReplaceArgs: () => lastReplaceArgs,
     getReplaceSessionCallCount: () => replaceSessionCallCount,
     getLastReplaceSessionArgs: () => lastReplaceSessionArgs,
     getUpdateSessionCalls: () => updateSessionCalls,
     store: {
-      getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+      getSession: (sessionId: string) => {
+        if (sessionId !== session.id) return null;
+        if (options.sessionMessageLimit == null) return session;
+        return {
+          ...session,
+          messages: session.messages.slice(-options.sessionMessageLimit),
+        };
+      },
+      getRecentConversationMessages: (sessionId: string, limit: number) => {
+        if (sessionId !== session.id) return [];
+        return session.messages
+          .filter((message) => message.type === 'user' || message.type === 'assistant')
+          .slice(-limit);
+      },
+      getAllConversationMessages: (sessionId: string) => {
+        if (sessionId !== session.id) return [];
+        getAllConversationMessagesCallCount += 1;
+        return session.messages
+          .filter((message) => message.type === 'user' || message.type === 'assistant');
+      },
       getAgent: () => ({
         id: session.agentId,
         name: 'Main',
@@ -2907,6 +2928,90 @@ test('reconcileWithHistory: already in sync — skips replace', async () => {
 
   expect(getReplaceCallCount()).toBe(0);
   expect(session.messages.length).toBe(2);
+});
+
+test('reconcileWithHistory: compares beyond the paginated session window', async () => {
+  const messages = Array.from({ length: 31 }, (_, index) => ({
+    id: `msg-${index + 1}`,
+    type: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message ${index + 1}`,
+    timestamp: index + 1,
+    metadata: {},
+  }));
+  const {
+    session,
+    store,
+    getReplaceCallCount,
+    getAllConversationMessagesCallCount,
+  } = createReconcileStore(messages, {
+    sessionMessageLimit: 30,
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: messages.map((message) => ({
+        role: message.type,
+        content: message.content,
+      })),
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, 'agent:main:feishu:group:test');
+  await adapter.reconcileWithHistory(session.id, 'agent:main:feishu:group:test');
+
+  expect(getReplaceCallCount()).toBe(0);
+  expect(getAllConversationMessagesCallCount()).toBe(0);
+  expect(session.messages).toHaveLength(31);
+});
+
+test('reconcileWithHistory: preserves history before a repaired 50-message gateway tail', async () => {
+  const messages = Array.from({ length: 60 }, (_, index) => ({
+    id: `msg-${index + 1}`,
+    type: index % 2 === 0 ? 'user' : 'assistant',
+    content: `message ${index + 1}`,
+    timestamp: index + 1,
+    metadata: {},
+  }));
+  const gatewayMessages = messages.slice(-50).map((message) => ({
+    role: message.type,
+    content: message.content,
+  }));
+  gatewayMessages[gatewayMessages.length - 1] = {
+    role: 'assistant',
+    content: 'message 60 updated',
+  };
+
+  const {
+    session,
+    store,
+    getReplaceCallCount,
+    getAllConversationMessagesCallCount,
+    getLastReplaceArgs,
+  } = createReconcileStore(messages);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({ messages: gatewayMessages }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, 'agent:main:feishu:group:test');
+  await adapter.reconcileWithHistory(session.id, 'agent:main:feishu:group:test');
+
+  expect(getReplaceCallCount()).toBe(1);
+  expect(getAllConversationMessagesCallCount()).toBe(1);
+  const authoritative = getLastReplaceArgs()!.authoritative;
+  expect(authoritative).toHaveLength(60);
+  expect(authoritative.slice(0, 10).map((entry) => entry.text)).toEqual(
+    Array.from({ length: 10 }, (_, index) => `message ${index + 1}`),
+  );
+  expect(authoritative.at(-1)?.text).toBe('message 60 updated');
+  expect(session.messages).toHaveLength(60);
+  expect(session.messages[0]?.content).toBe('message 1');
+  expect(session.messages.at(-1)?.content).toBe('message 60 updated');
 });
 
 test('reconcileWithHistory: missing assistant message — triggers replace', async () => {
@@ -6891,6 +6996,17 @@ function createHistoryStore(messages: Array<Record<string, unknown>>) {
     session,
     store: {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+      getRecentConversationMessages: (sessionId: string, limit: number) => {
+        if (sessionId !== session.id) return [];
+        return session.messages
+          .filter((message) => message.type === 'user' || message.type === 'assistant')
+          .slice(-limit);
+      },
+      getAllConversationMessages: (sessionId: string) => {
+        if (sessionId !== session.id) return [];
+        return session.messages
+          .filter((message) => message.type === 'user' || message.type === 'assistant');
+      },
       addMessage: (sessionId: string, message: Record<string, unknown>) => {
         expect(sessionId).toBe(session.id);
         const created = {

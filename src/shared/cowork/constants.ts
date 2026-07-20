@@ -49,6 +49,7 @@ export const CoworkIpcChannel = {
   GoalCommand: 'cowork:session:goalCommand',
   SubmitSteer: 'cowork:session:submitSteer',
   SessionModelOverrideChanged: 'cowork:session:modelOverrideChanged',
+  SessionsChanged: 'cowork:sessions:changed',
   StreamGoal: 'cowork:stream:goal',
   MemoryReadRaw: 'cowork:memory:readRaw',
   MemoryWriteRaw: 'cowork:memory:writeRaw',
@@ -58,6 +59,10 @@ export const CoworkIpcChannel = {
   TempStorageClean: 'cowork:tempStorage:clean',
 } as const;
 export type CoworkIpcChannel = typeof CoworkIpcChannel[keyof typeof CoworkIpcChannel];
+
+export interface CoworkSessionsChangedPayload {
+  sessionIds: string[];
+}
 
 export const CoworkForkMode = {
   None: 'none',

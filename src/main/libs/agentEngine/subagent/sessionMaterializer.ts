@@ -15,7 +15,7 @@ export interface SubagentSessionMaterializerDeps {
   store: SubagentSessionMaterializerStore;
   rememberSessionKey: (sessionId: string, sessionKey: string) => void;
   markSessionHistoryUnsynced: (sessionId: string) => void;
-  notifySessionsChanged: () => void;
+  notifySessionsChanged: (sessionId: string) => void;
   emitSessionStatus: (sessionId: string, status: CoworkSessionStatus) => void;
   emitComplete: (sessionId: string, sessionKey: string) => void;
   emitError: (sessionId: string, error: string) => void;
@@ -56,7 +56,7 @@ export class SubagentSessionMaterializer {
       );
       this.deps.rememberSessionKey(session.id, params.childSessionKey);
       this.deps.markSessionHistoryUnsynced(session.id);
-      this.deps.notifySessionsChanged();
+      this.deps.notifySessionsChanged(session.id);
       void this.deps.syncSessionHistory(session.id, params.childSessionKey)
         .catch((error) => {
           console.warn('[OpenClawRuntime] subagent child history sync failed:', error);
@@ -102,7 +102,7 @@ export class SubagentSessionMaterializer {
     } else {
       this.deps.emitError(sessionId, 'Subagent session failed.');
     }
-    this.deps.notifySessionsChanged();
+    this.deps.notifySessionsChanged(sessionId);
     void this.deps.syncSessionHistory(sessionId, sessionKey)
       .catch((error) => {
         console.warn('[OpenClawRuntime] passive subagent final history sync failed:', error);

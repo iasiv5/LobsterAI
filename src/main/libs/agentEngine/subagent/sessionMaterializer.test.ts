@@ -76,7 +76,7 @@ describe('SubagentSessionMaterializer', () => {
     }));
     expect(deps.rememberSessionKey).toHaveBeenCalledWith('child-1', 'agent:product-analyst:subagent:child-1');
     expect(deps.markSessionHistoryUnsynced).toHaveBeenCalledWith('child-1');
-    expect(deps.notifySessionsChanged).toHaveBeenCalled();
+    expect(deps.notifySessionsChanged).toHaveBeenCalledWith('child-1');
     await Promise.resolve();
     expect(deps.syncSessionHistory).toHaveBeenCalledWith('child-1', 'agent:product-analyst:subagent:child-1');
   });
@@ -91,6 +91,6 @@ describe('SubagentSessionMaterializer', () => {
     expect(store.updateSession).toHaveBeenCalledWith('child-1', { status: 'completed' });
     expect(deps.emitSessionStatus).toHaveBeenCalledWith('child-1', 'completed');
     expect(deps.emitComplete).toHaveBeenCalledWith('child-1', 'agent:product-analyst:subagent:child-1');
-    expect(deps.notifySessionsChanged).toHaveBeenCalled();
+    expect(deps.notifySessionsChanged).toHaveBeenCalledWith('child-1');
   });
 });

@@ -21,6 +21,11 @@ const SKIN_CREATOR_SKILL_METADATA: KitSkillMetadata = {
   },
 };
 
+const SKIN_PACK_STARTER_PROMPT = {
+  en: 'Create a custom AI skin for LobsterAI using {primary and accent colors} as the palette, centered on {theme or character}, set in {scene and mood}, and designed for {use case or purpose}. Generate a coordinated backdrop, emblem, and interface colors from this idea, then apply them to LobsterAI.',
+  zh: '请为 LobsterAI 创建一套以 {主色与辅助色} 为主色调、以 {主题或人物} 为视觉中心的 AI 皮肤；画面呈现 {场景与氛围}，并适合 {使用场景或用途}。请据此生成协调的背景、徽记和界面配色，并自动应用到 LobsterAI。',
+};
+
 export function buildSkinPackMarketplaceKit(): Record<string, unknown> {
   return {
     id: SkinPackKitId.BuiltIn,
@@ -37,6 +42,7 @@ export function buildSkinPackMarketplaceKit(): Record<string, unknown> {
     version: SkinPackKitMetadata.Version,
     workflowKind: SkinPackKitMetadata.WorkflowKind,
     tryAsking: [
+      SKIN_PACK_STARTER_PROMPT,
       {
         en: 'Turn LobsterAI into a blue-and-white championship night: a legendary number 10 lifting the world trophy in golden confetti, full of passion, glory, and collectible fan-memento energy',
         zh: '把 LobsterAI 变成蓝白冠军之夜：传奇 10 号在金色纸雨中高举世界冠军奖杯，热血、荣耀，像一件值得收藏的球迷纪念品',
