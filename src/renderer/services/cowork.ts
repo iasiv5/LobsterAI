@@ -73,6 +73,10 @@ import type {
 } from '../types/cowork';
 import { CoworkSessionStatusValue } from '../types/cowork';
 import { CoworkQueuedFollowUpCoordinator } from './coworkQueuedFollowUpCoordinator';
+import {
+  getPreservedMessageWindow,
+  shouldReloadCurrentSessionForChange,
+} from './coworkSessionRefreshPolicy';
 import { i18nService } from './i18n';
 
 const STREAM_ERROR_DUPLICATE_WINDOW_MS = 10_000;
@@ -407,24 +411,39 @@ class CoworkService {
 
     // Sessions changed listener (new channel sessions discovered by polling,
     // or reconcileWithHistory replaced messages for a channel session)
-    const sessionsChangedCleanup = cowork.onSessionsChanged(() => {
+    const sessionsChangedCleanup = cowork.onSessionsChanged((payload) => {
       const beforeState = store.getState().cowork;
-      console.log('[CoworkService] onSessionsChanged: received IPC event, before sessions:', beforeState.sessions.length, 'sessionIds:', beforeState.sessions.map(s => s.id).slice(0, 5));
+      const changedSessionIds = Array.isArray(payload?.sessionIds) ? payload.sessionIds : [];
+      const changeScope = changedSessionIds.length > 0
+        ? `${changedSessionIds.slice(0, 5).join(',')}${changedSessionIds.length > 5 ? `,+${changedSessionIds.length - 5}` : ''}`
+        : 'unscoped';
+      this.logDiagnostic(
+        'debug',
+        `received sessions change; active=${beforeState.currentSessionId ?? 'none'}; changed=${changeScope}.`,
+      );
       void this.loadSessions().then(() => {
         const state = store.getState().cowork;
-        console.log('[CoworkService] onSessionsChanged: loadSessions complete, total sessions:', state.sessions.length, 'sessionIds:', state.sessions.map(s => s.id).slice(0, 5));
 
-        // Reload the active session's full message list so that messages
-        // replaced by reconcileWithHistory (bulk SQLite replace) are reflected
-        // in the conversation view, not just the sidebar.  Without this,
-        // user messages synced from gateway history would only appear after
-        // the user manually re-enters the conversation.
+        // Reload the active conversation only when that session changed.
+        // Preserve any older history the user already paged in so a scoped
+        // refresh cannot collapse the view back to the default tail window.
         const currentId = state.currentSessionId;
-        if (currentId) {
-          void this.loadSession(currentId);
+        const shouldReloadCurrent = shouldReloadCurrentSessionForChange(currentId, payload);
+        this.logDiagnostic(
+          'debug',
+          `processed sessions change; active=${currentId ?? 'none'}; changed=${changeScope}; reloadActive=${shouldReloadCurrent}.`,
+        );
+        if (currentId && shouldReloadCurrent) {
+          void this.loadSession(currentId, { preserveLoadedRange: true }).catch((error: unknown) => {
+            this.logDiagnostic(
+              'error',
+              `failed to refresh changed active session ${currentId}.`,
+              error,
+            );
+          });
         }
       }).catch((err) => {
-        console.error('[CoworkService] onSessionsChanged: loadSessions FAILED:', err);
+        this.logDiagnostic('error', 'failed to refresh the session list after a sessions change.', err);
       });
     });
     this.streamListenerCleanups.push(sessionsChangedCleanup);
@@ -1266,11 +1285,15 @@ class CoworkService {
     }
   }
 
-  async loadSession(sessionId: string): Promise<CoworkSession | null> {
+  async loadSession(
+    sessionId: string,
+    options: { preserveLoadedRange?: boolean } = {},
+  ): Promise<CoworkSession | null> {
     try {
       const cowork = window.electron?.cowork;
       if (!cowork) return null;
       const requestId = ++this.latestLoadSessionRequestId;
+      const previouslyLoadedSession = store.getState().cowork.currentSession;
 
       const result = await cowork.getSession(sessionId);
       if (result.success && result.session) {
@@ -1283,8 +1306,77 @@ class CoworkService {
           this.logDiagnostic('debug', `ignored stale session load result for session ${sessionId}.`);
           return result.session;
         }
-        store.dispatch(setCurrentSession(result.session));
-        this.setCurrentSessionStreaming(sessionId, result.session.status === 'running', 'load_session_completed');
+        let session = result.session;
+        if (
+          options.preserveLoadedRange
+          && previouslyLoadedSession?.id === sessionId
+          && cowork.getSessionMessages
+        ) {
+          const preservedWindow = getPreservedMessageWindow(
+            previouslyLoadedSession.messagesOffset,
+            session.messagesOffset,
+            session.totalMessages,
+          );
+          if (preservedWindow) {
+            let pageResult;
+            try {
+              pageResult = await cowork.getSessionMessages({
+                sessionId,
+                ...preservedWindow,
+              });
+            } catch (error) {
+              this.logDiagnostic(
+                'warn',
+                `failed to preserve loaded history for session ${sessionId}; keeping the existing view.`,
+                error,
+              );
+              return previouslyLoadedSession;
+            }
+            if (requestId !== this.latestLoadSessionRequestId) {
+              this.logDiagnostic('debug', `ignored stale preserved session load result for session ${sessionId}.`);
+              return session;
+            }
+            if (pageResult.success && pageResult.messages && pageResult.messages.length > 0) {
+              const returnedOffset = pageResult.offset ?? preservedWindow.offset;
+              const returnedEnd = returnedOffset + pageResult.messages.length;
+              const latestLoadedSession = store.getState().cowork.currentSession;
+              const latestLoadedEnd = latestLoadedSession
+                ? latestLoadedSession.messagesOffset + latestLoadedSession.messages.length
+                : 0;
+              if (
+                latestLoadedSession?.id === sessionId
+                && (
+                  latestLoadedSession.messagesOffset < returnedOffset
+                  || latestLoadedEnd > returnedEnd
+                )
+              ) {
+                this.logDiagnostic(
+                  'debug',
+                  `kept a newer in-memory history window for session ${sessionId}; loaded offset=${latestLoadedSession.messagesOffset}, count=${latestLoadedSession.messages.length}; refresh offset=${returnedOffset}, count=${pageResult.messages.length}.`,
+                );
+                return latestLoadedSession;
+              }
+              session = {
+                ...session,
+                messages: pageResult.messages,
+                messagesOffset: returnedOffset,
+                totalMessages: pageResult.total ?? session.totalMessages,
+              };
+              this.logDiagnostic(
+                'debug',
+                `preserved loaded history for session ${sessionId}; returned ${session.messages.length} of ${session.totalMessages} messages from offset ${session.messagesOffset}.`,
+              );
+            } else {
+              this.logDiagnostic(
+                'warn',
+                `failed to preserve loaded history for session ${sessionId}: ${pageResult.error ?? 'empty result'}; keeping the existing view.`,
+              );
+              return previouslyLoadedSession;
+            }
+          }
+        }
+        store.dispatch(setCurrentSession(session));
+        this.setCurrentSessionStreaming(sessionId, session.status === 'running', 'load_session_completed');
         void this.loadSessionMessageRailIndex(sessionId);
         void cowork.markSessionViewed?.(sessionId).catch((error: unknown) => {
           console.warn('[CoworkService] failed to mark session viewed:', error);
@@ -1295,7 +1387,7 @@ class CoworkService {
           store.dispatch(setRemoteManaged(imResult?.remoteManaged ?? false));
         }
 
-        return result.session;
+        return session;
       }
 
       console.error('Failed to load session:', result.error);

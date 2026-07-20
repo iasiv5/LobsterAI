@@ -13,7 +13,10 @@ import {
 import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
-import { CoworkIpcChannel } from '../shared/cowork/constants';
+import {
+  CoworkIpcChannel,
+  type CoworkSessionsChangedPayload,
+} from '../shared/cowork/constants';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
@@ -611,10 +614,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('cowork:stream:error', handler);
       return () => ipcRenderer.removeListener('cowork:stream:error', handler);
     },
-    onSessionsChanged: (callback: () => void) => {
-      const handler = () => callback();
-      ipcRenderer.on('cowork:sessions:changed', handler);
-      return () => ipcRenderer.removeListener('cowork:sessions:changed', handler);
+    onSessionsChanged: (callback: (data?: CoworkSessionsChangedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data?: CoworkSessionsChangedPayload) => callback(data);
+      ipcRenderer.on(CoworkIpcChannel.SessionsChanged, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.SessionsChanged, handler);
     },
     onSessionModelOverrideChanged: (
       callback: (data: { sessionId: string; modelOverride: string }) => void,

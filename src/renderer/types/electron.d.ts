@@ -11,6 +11,7 @@ import type {
 import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
+  CoworkSessionsChangedPayload,
 } from '../../shared/cowork/constants';
 import type { CoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
@@ -1079,7 +1080,9 @@ interface IElectronAPI {
       callback: (data: { sessionId: string; claudeSessionId: string | null }) => void,
     ) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
-    onSessionsChanged: (callback: () => void) => () => void;
+    onSessionsChanged: (
+      callback: (data?: CoworkSessionsChangedPayload) => void,
+    ) => () => void;
     onSessionModelOverrideChanged?: (
       callback: (data: { sessionId: string; modelOverride: string }) => void,
     ) => () => void;
