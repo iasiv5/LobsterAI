@@ -10581,6 +10581,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   /**
+   * Resolve a connected gateway RPC client for config delivery, creating and
+   * handshaking one if needed. Resolves to null instead of throwing so callers
+   * can degrade to their own fallback path.
+   */
+  async ensureGatewayRpcClient(): Promise<GatewayClientLike | null> {
+    try {
+      await this.ensureGatewayClientReady();
+    } catch (error) {
+      console.warn('[OpenClawRuntime] ensureGatewayRpcClient failed:', error);
+      return null;
+    }
+    return this.gatewayClient;
+  }
+
+  /**
    * Current engine status without starting or waiting for anything.
    * Lets IPC handlers report not-ready quickly instead of blocking on
    * gateway startup.

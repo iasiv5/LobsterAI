@@ -275,6 +275,7 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
   OpenClawChannelSessionSync,
 } from './libs/openclawChannelSessionSync';
+import { deliverOpenClawConfigToGateway } from './libs/openclawConfigDelivery';
 import {
   classifyAppConfigChange,
   classifyCoworkConfigChange,
@@ -2421,10 +2422,33 @@ const _syncOpenClawConfigImpl = async (
   );
 
   if (!needsHardRestart) {
-    console.log(`${D()} ──── NO RESTART, hot-reload only. reason=${options.reason}`);
+    if (!syncResult.changed) {
+      console.log(`${D()} ──── NO RESTART, config unchanged. reason=${options.reason}`);
+      return {
+        success: true,
+        changed: false,
+      };
+    }
+    // The gateway's file watcher can miss writes that land right after a
+    // (re)start, so never rely on it alone: push the final on-disk content
+    // through config.set for a positive hot-apply ack, or schedule a deferred
+    // restart when the RPC path is unavailable.
+    const deliveryManager = getOpenClawEngineManager();
+    const delivery = await deliverOpenClawConfigToGateway({
+      reason: options.reason,
+      gatewayPhase: deliveryManager.getStatus().phase,
+      readConfigFile: () => fs.readFileSync(deliveryManager.getConfigPath(), 'utf8'),
+      ensureRpcClient: async () => (
+        openClawRuntimeAdapter ? openClawRuntimeAdapter.ensureGatewayRpcClient() : null
+      ),
+      scheduleDeferredRestart: scheduleDeferredGatewayRestart,
+    });
+    console.log(
+      `${D()} ──── NO RESTART, hot delivery mode=${delivery.mode} restartScheduled=${delivery.restartScheduled}. reason=${options.reason}`,
+    );
     return {
       success: true,
-      changed: syncResult.changed,
+      changed: true,
     };
   }
 
