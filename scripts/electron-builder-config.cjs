@@ -3,14 +3,15 @@
 const path = require('path');
 
 const config = require('../electron-builder.json');
+const { BuildEnv } = require('./build-env.cjs');
 const { readBuildKeyfrom } = require('./build-keyfrom.cjs');
 
 // Opt-in web installer (small NSIS stub that downloads the app package from a
 // CDN at install time). Default builds are full offline installers; nothing
 // changes unless LOBSTERAI_WEB_INSTALLER=1 is set explicitly.
-const WEB_INSTALLER_ENV = 'LOBSTERAI_WEB_INSTALLER';
-const WEB_PKG_BASE_URL_ENV = 'LOBSTERAI_WEB_PKG_BASE_URL';
-const WEB_PKG_URL_ENV = 'LOBSTERAI_WEB_PKG_URL';
+const WEB_INSTALLER_ENV = BuildEnv.WebInstaller;
+const WEB_PKG_BASE_URL_ENV = BuildEnv.WebPkgBaseUrl;
+const WEB_PKG_URL_ENV = BuildEnv.WebPkgUrl;
 
 function isWebInstallerEnabled() {
   const value = (process.env[WEB_INSTALLER_ENV] || '').trim().toLowerCase();
