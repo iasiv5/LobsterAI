@@ -57,6 +57,13 @@ import {
   getArtifactFileShareSourceType,
   isArtifactFileShareable,
 } from './artifactFileSharePolicy';
+import {
+  ArtifactSubscriptionBlockReason,
+  ArtifactSubscriptionFeature,
+  type ArtifactSubscriptionPromptState,
+  resolveArtifactSubscriptionDecision,
+} from './artifactSubscriptionGate';
+import ArtifactSubscriptionPromptDialog from './ArtifactSubscriptionPromptDialog';
 
 const t = (key: string) => i18nService.t(key);
 
@@ -80,7 +87,6 @@ interface ArtifactFileShareDialogState {
   selectedPermission?: ArtifactFileSharePermissionValue;
   message?: string;
   error?: string;
-  showSubscriptionAction?: boolean;
 }
 
 interface PreparedArtifactFileShare {
@@ -100,6 +106,21 @@ type HtmlShareApi = NonNullable<typeof window.electron>['htmlShare'];
 type HtmlShareResult = Awaited<ReturnType<HtmlShareApi['createFromHtmlFile']>>;
 
 const ArtifactFileShareContext = createContext<ArtifactFileShareControllerValue | null>(null);
+
+class ArtifactFileShareRequestError extends Error {
+  readonly code?: number;
+
+  constructor(message: string, code?: number) {
+    super(message);
+    this.name = 'ArtifactFileShareRequestError';
+    this.code = code;
+  }
+}
+
+function isSubscriptionRequiredError(error: unknown): boolean {
+  return error instanceof ArtifactFileShareRequestError &&
+    error.code === HtmlShareErrorCode.SubscriptionRequired;
+}
 
 function normalizeAccessMode(accessMode?: HtmlShareAccessModeValue): HtmlShareAccessModeValue {
   return accessMode === HtmlShareAccessMode.Public
@@ -176,9 +197,13 @@ function requireShareRecord(
   result: HtmlShareResult,
   previous?: ArtifactFileShareRecord,
 ): ArtifactFileShareRecord {
-  if (!result?.success) throw new Error(getFailureMessage(result));
+  if (!result?.success) {
+    throw new ArtifactFileShareRequestError(getFailureMessage(result), result?.code);
+  }
   const share = getShareRecord(result, previous);
-  if (!share) throw new Error(getFailureMessage(result));
+  if (!share) {
+    throw new ArtifactFileShareRequestError(getFailureMessage(result), result?.code);
+  }
   return share;
 }
 
@@ -248,6 +273,8 @@ function logShare(level: 'debug' | 'warn', message: string): void {
 export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileShareProviderProps) {
   const authState = useSelector((state: RootState) => state.auth);
   const [dialog, setDialog] = useState<ArtifactFileShareDialogState | null>(null);
+  const [subscriptionPrompt, setSubscriptionPrompt] =
+    useState<ArtifactSubscriptionPromptState | null>(null);
   const [copyStatus, setCopyStatus] = useState<ArtifactFileShareCopyStatus>(
     ArtifactFileShareCopyStatus.Idle,
   );
@@ -277,6 +304,7 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
   useEffect(() => {
     generationRef.current += 1;
     setDialog(null);
+    setSubscriptionPrompt(null);
     resetFeedback();
   }, [resetFeedback, sessionId]);
 
@@ -287,6 +315,11 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
     setDialog(null);
     resetFeedback();
   }, [resetFeedback]);
+
+  const closeSubscriptionPrompt = useCallback(() => {
+    generationRef.current += 1;
+    setSubscriptionPrompt(null);
+  }, []);
 
   const isDialogOpen = Boolean(dialog);
   const isDialogBusy = Boolean(dialog?.operation);
@@ -366,24 +399,17 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
     }, 2200);
   }, [clearFeedbackTimer]);
 
-  const getEntitlementMessage = useCallback(async (): Promise<{
-    allowed: boolean;
-    message?: string;
-  }> => {
-    let isLoggedIn = authState.isLoggedIn;
-    let quota = authState.quota;
-    if (!isLoggedIn || quota?.subscriptionStatus !== 'active') {
+  const getSubscriptionDecision = useCallback(async () => {
+    return resolveArtifactSubscriptionDecision({
+      isLoggedIn: authState.isLoggedIn,
+      subscriptionStatus: authState.quota?.subscriptionStatus,
+    }, async () => {
       const refreshed = await authService.refreshAuthState();
-      isLoggedIn = refreshed.isLoggedIn;
-      quota = refreshed.quota;
-    }
-    if (!isLoggedIn) {
-      return { allowed: false, message: t('htmlShareLoginRequiredMessage') };
-    }
-    if (quota?.subscriptionStatus !== 'active') {
-      return { allowed: false, message: t('htmlShareSubscriptionRequiredMessage') };
-    }
-    return { allowed: true };
+      return {
+        isLoggedIn: refreshed.isLoggedIn,
+        subscriptionStatus: refreshed.quota?.subscriptionStatus,
+      };
+    });
   }, [authState.isLoggedIn, authState.quota]);
 
   const lookupShare = useCallback(async (api: HtmlShareApi, request: ArtifactFileShareRequest) => {
@@ -422,7 +448,9 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
 
       const preparation = (async (): Promise<PreparedArtifactFileShare> => {
         const lookup = await lookupShare(api, request);
-        if (!lookup?.success) throw new Error(getFailureMessage(lookup));
+        if (!lookup?.success) {
+          throw new ArtifactFileShareRequestError(getFailureMessage(lookup), lookup?.code);
+        }
 
         const existingShare = getShareRecord(lookup.share);
         if (existingShare) {
@@ -447,30 +475,26 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
       const runId = generationRef.current + 1;
       generationRef.current = runId;
       resetFeedback();
-      setDialog({
-        artifact,
-        request,
-        phase: ArtifactFileSharePhase.Preparing,
-        selectedPermission: ArtifactFileSharePermission.Code,
-        message: t('artifactFileShareChecking'),
-      });
+      setDialog(null);
+      setSubscriptionPrompt(null);
 
       try {
-        const entitlement = await getEntitlementMessage();
+        const subscriptionDecision = await getSubscriptionDecision();
         if (generationRef.current !== runId) return;
-        if (!entitlement.allowed) {
-          setDialog(previous =>
-            previous && previous.artifact.id === artifact.id
-              ? {
-                  ...previous,
-                  phase: ArtifactFileSharePhase.Entitlement,
-                  message: entitlement.message,
-                  showSubscriptionAction: true,
-                }
-              : previous,
-          );
+        if (!subscriptionDecision.allowed) {
+          setSubscriptionPrompt({
+            feature: ArtifactSubscriptionFeature.Share,
+            reason: subscriptionDecision.reason,
+          });
           return;
         }
+        setDialog({
+          artifact,
+          request,
+          phase: ArtifactFileSharePhase.Preparing,
+          selectedPermission: ArtifactFileSharePermission.Code,
+          message: t('artifactFileShareChecking'),
+        });
         if (!api) throw new Error(t('htmlShareUnavailableInProduction'));
 
         const mutationBarrier = mutationBarriersRef.current.get(request.lookupKey);
@@ -495,22 +519,26 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
         });
       } catch (error) {
         if (generationRef.current !== runId) return;
+        if (isSubscriptionRequiredError(error)) {
+          setDialog(null);
+          setSubscriptionPrompt({
+            feature: ArtifactSubscriptionFeature.Share,
+            reason: ArtifactSubscriptionBlockReason.SubscriptionRequired,
+          });
+          return;
+        }
         const message = error instanceof Error ? error.message : t('htmlShareFailed');
         logShare('warn', `Failed to prepare share for artifact ${request.artifactId}: ${message}`);
-        setDialog(previous =>
-          previous && previous.artifact.id === artifact.id
-            ? {
-                ...previous,
-                phase: ArtifactFileSharePhase.Error,
-                operation: undefined,
-                message: undefined,
-                error: message,
-              }
-            : previous,
-        );
+        setDialog({
+          artifact,
+          request,
+          phase: ArtifactFileSharePhase.Error,
+          selectedPermission: ArtifactFileSharePermission.Code,
+          error: message,
+        });
       }
     },
-    [getEntitlementMessage, loadShare, resetFeedback],
+    [getSubscriptionDecision, loadShare, resetFeedback],
   );
 
   const openShare = useCallback(
@@ -639,6 +667,14 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
       );
     } catch (error) {
       if (generationRef.current !== runId) return;
+      if (isSubscriptionRequiredError(error)) {
+        setDialog(null);
+        setSubscriptionPrompt({
+          feature: ArtifactSubscriptionFeature.Share,
+          reason: ArtifactSubscriptionBlockReason.SubscriptionRequired,
+        });
+        return;
+      }
       const message = error instanceof Error ? error.message : t('htmlShareFailed');
       logShare(
         'warn',
@@ -747,6 +783,14 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
       );
     } catch (error) {
       if (generationRef.current !== runId) return;
+      if (isSubscriptionRequiredError(error)) {
+        setDialog(null);
+        setSubscriptionPrompt({
+          feature: ArtifactSubscriptionFeature.Share,
+          reason: ArtifactSubscriptionBlockReason.SubscriptionRequired,
+        });
+        return;
+      }
       const refreshedShare = await refreshShare(api, snapshot.request, lastConfirmedShare);
       if (generationRef.current !== runId) return;
       const retryPlan = buildArtifactFileSharePermissionPlan(refreshedShare, targetPermission);
@@ -835,6 +879,14 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
       showTimedUpdateSuccess();
     } catch (error) {
       if (generationRef.current !== runId) return;
+      if (isSubscriptionRequiredError(error)) {
+        setDialog(null);
+        setSubscriptionPrompt({
+          feature: ArtifactSubscriptionFeature.Share,
+          reason: ArtifactSubscriptionBlockReason.SubscriptionRequired,
+        });
+        return;
+      }
       const message = error instanceof Error ? error.message : t('htmlShareFailed');
       setDialog(previous =>
         previous && previous.artifact.id === snapshot.artifact.id
@@ -884,7 +936,8 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
 
   const openSubscriptionPage = useCallback(() => {
     void window.electron?.shell?.openExternal(getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare));
-  }, []);
+    closeSubscriptionPrompt();
+  }, [closeSubscriptionPrompt]);
 
   const contextValue = useMemo<ArtifactFileShareControllerValue>(
     () => ({ openShare }),
@@ -1000,11 +1053,9 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
             canUpdateFile={canUpdateFile}
             copyStatus={copyStatus}
             updateStatus={updateStatus}
-            showSubscriptionAction={dialog.showSubscriptionAction}
             closeButtonRef={closeButtonRef}
             onClose={closeDialog}
             onRetry={retryShare}
-            onOpenSubscription={openSubscriptionPage}
             onPermissionChange={selectPermission}
             onCreate={() => void submitCreateShare()}
             onSubmitPermission={() => void submitPermissionChange()}
@@ -1015,10 +1066,20 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
         )
       : null;
 
+  const subscriptionPromptPortal = subscriptionPrompt ? (
+    <ArtifactSubscriptionPromptDialog
+      feature={subscriptionPrompt.feature}
+      reason={subscriptionPrompt.reason}
+      onCancel={closeSubscriptionPrompt}
+      onSubscribe={openSubscriptionPage}
+    />
+  ) : null;
+
   return (
     <ArtifactFileShareContext.Provider value={contextValue}>
       {children}
       {dialogPortal}
+      {subscriptionPromptPortal}
     </ArtifactFileShareContext.Provider>
   );
 }

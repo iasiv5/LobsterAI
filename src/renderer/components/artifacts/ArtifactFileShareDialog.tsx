@@ -21,7 +21,6 @@ const t = (key: string) => i18nService.t(key);
 export const ArtifactFileSharePhase = {
   Preparing: 'preparing',
   Ready: 'ready',
-  Entitlement: 'entitlement',
   Error: 'error',
 } as const;
 
@@ -74,11 +73,9 @@ interface ArtifactFileShareDialogProps {
   canUpdateFile: boolean;
   copyStatus: ArtifactFileShareCopyStatus;
   updateStatus: ArtifactFileShareUpdateStatus;
-  showSubscriptionAction?: boolean;
   closeButtonRef: RefObject<HTMLButtonElement>;
   onClose: () => void;
   onRetry: () => void;
-  onOpenSubscription: () => void;
   onPermissionChange: (permission: ArtifactFileSharePermissionValue) => void;
   onCreate: () => void;
   onSubmitPermission: () => void;
@@ -147,11 +144,9 @@ const ArtifactFileShareDialog = ({
   canUpdateFile,
   copyStatus,
   updateStatus,
-  showSubscriptionAction = false,
   closeButtonRef,
   onClose,
   onRetry,
-  onOpenSubscription,
   onPermissionChange,
   onCreate,
   onSubmitPermission,
@@ -301,15 +296,6 @@ const ArtifactFileShareDialog = ({
               className="inline-flex h-10 min-w-[88px] items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             >
               {t('artifactFileShareRetry')}
-            </button>
-          )}
-          {phase === ArtifactFileSharePhase.Entitlement && showSubscriptionAction && (
-            <button
-              type="button"
-              onClick={onOpenSubscription}
-              className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-            >
-              {t('htmlShareOpenSubscription')}
             </button>
           )}
           {isReady && intent === ArtifactFileShareIntent.Manage && (

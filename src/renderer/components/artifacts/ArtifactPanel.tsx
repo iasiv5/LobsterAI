@@ -97,6 +97,14 @@ import {
 } from './artifactFileSharePolicy';
 import { ArtifactPreviewGlobeIcon } from './ArtifactPreviewIdentity';
 import ArtifactRenderer from './ArtifactRenderer';
+import {
+  ArtifactSubscriptionBlockReason,
+  ArtifactSubscriptionFeature,
+  type ArtifactSubscriptionFeature as ArtifactSubscriptionFeatureValue,
+  type ArtifactSubscriptionPromptState,
+  resolveArtifactSubscriptionDecision,
+} from './artifactSubscriptionGate';
+import ArtifactSubscriptionPromptDialog from './ArtifactSubscriptionPromptDialog';
 import FileDirectoryView from './FileDirectoryView';
 import {
   buildLocalServiceDeploymentPermissionPlan,
@@ -159,7 +167,6 @@ type HtmlSharePhase = (typeof HtmlSharePhase)[keyof typeof HtmlSharePhase];
 
 const HtmlShareDialogKind = {
   Create: 'create',
-  Subscription: 'subscription',
   Existing: 'existing',
   Result: 'result',
 } as const;
@@ -719,6 +726,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const [localBrowserUrl, setLocalBrowserUrl] = useState('');
   const [htmlSharePhase, setHtmlSharePhase] = useState<HtmlSharePhase>(HtmlSharePhase.Idle);
   const [htmlShareDialog, setHtmlShareDialog] = useState<HtmlShareDialogState | null>(null);
+  const [subscriptionPrompt, setSubscriptionPrompt] =
+    useState<ArtifactSubscriptionPromptState | null>(null);
   const [htmlSharePendingRequest, setHtmlSharePendingRequest] =
     useState<HtmlSharePendingRequest | null>(null);
   const [, setHtmlShareLookup] = useState<HtmlShareLookupState | null>(null);
@@ -1585,16 +1594,28 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
   }, [onOpenHtmlFileInBrowser, reportSelectedArtifactAction, selectedArtifact]);
 
-  const openSubscriptionPage = useCallback(() => {
-    window.electron?.shell?.openExternal(getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare));
-    setHtmlShareDialog(null);
-    if (localServiceDeploymentRequest?.requestId) {
+  const closeSubscriptionPrompt = useCallback(() => {
+    const feature = subscriptionPrompt?.feature;
+    setSubscriptionPrompt(null);
+    setHtmlSharePendingRequest(null);
+    if (
+      feature === ArtifactSubscriptionFeature.Deployment &&
+      localServiceDeploymentRequest?.requestId
+    ) {
       onLocalServiceDeploymentRequestConsumed?.(localServiceDeploymentRequest.requestId);
     }
   }, [
     localServiceDeploymentRequest?.requestId,
     onLocalServiceDeploymentRequestConsumed,
+    subscriptionPrompt?.feature,
   ]);
+
+  const openSubscriptionPage = useCallback(() => {
+    void window.electron?.shell?.openExternal(
+      getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare),
+    );
+    closeSubscriptionPrompt();
+  }, [closeSubscriptionPrompt]);
 
   const formatShareClipboardText = useCallback((url: string, shareCode?: string): string => {
     if (!shareCode) return url;
@@ -1613,34 +1634,27 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }, 2200);
   }, []);
 
-  const ensureHtmlShareAllowed = useCallback(async (): Promise<boolean> => {
-    let latestIsLoggedIn = authState.isLoggedIn;
-    let latestQuota = authState.quota;
-
-    if (!latestIsLoggedIn || latestQuota?.subscriptionStatus !== 'active') {
+  const ensureArtifactSubscriptionAllowed = useCallback(async (
+    feature: ArtifactSubscriptionFeatureValue,
+  ): Promise<boolean> => {
+    const decision = await resolveArtifactSubscriptionDecision({
+      isLoggedIn: authState.isLoggedIn,
+      subscriptionStatus: authState.quota?.subscriptionStatus,
+    }, async () => {
       const refreshed = await authService.refreshAuthState();
-      latestIsLoggedIn = refreshed.isLoggedIn;
-      latestQuota = refreshed.quota;
-    }
-
-    if (!latestIsLoggedIn) {
-      setHtmlShareDialog({
-        kind: HtmlShareDialogKind.Subscription,
-        title: t('htmlShareLoginRequiredTitle'),
-        message: t('htmlShareLoginRequiredMessage'),
-      });
-      return false;
-    }
-    if (latestQuota?.subscriptionStatus !== 'active') {
-      setHtmlShareDialog({
-        kind: HtmlShareDialogKind.Subscription,
-        title: t('htmlShareSubscriptionRequiredTitle'),
-        message: t('htmlShareSubscriptionRequiredMessage'),
-      });
+      return {
+        isLoggedIn: refreshed.isLoggedIn,
+        subscriptionStatus: refreshed.quota?.subscriptionStatus,
+      };
+    });
+    if (!decision.allowed) {
+      setHtmlShareDialog(null);
+      setHtmlSharePendingRequest(null);
+      setSubscriptionPrompt({ feature, reason: decision.reason });
       return false;
     }
     return true;
-  }, [authState.isLoggedIn, authState.quota]);
+  }, [authState.isLoggedIn, authState.quota?.subscriptionStatus]);
 
   const handleCopyShareLink = useCallback(
     async (url?: string, shareCode?: string) => {
@@ -1696,10 +1710,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     ) => {
       if (!result?.success || !result.url) {
         if (result?.code === HtmlShareErrorCode.SubscriptionRequired) {
-          setHtmlShareDialog({
-            kind: HtmlShareDialogKind.Subscription,
-            title: t('htmlShareSubscriptionRequiredTitle'),
-            message: t('htmlShareSubscriptionRequiredMessage'),
+          setHtmlShareDialog(null);
+          setHtmlSharePendingRequest(null);
+          setSubscriptionPrompt({
+            feature: ArtifactSubscriptionFeature.Share,
+            reason: ArtifactSubscriptionBlockReason.SubscriptionRequired,
           });
           setHtmlSharePhase(HtmlSharePhase.Failed);
           return;
@@ -1953,7 +1968,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     setIsNodeDeploymentLookupPending(true);
 
     try {
-      if (!(await ensureHtmlShareAllowed())) {
+      if (!(await ensureArtifactSubscriptionAllowed(ArtifactSubscriptionFeature.Deployment))) {
         setIsNodeDeploymentDialogOpen(false);
         setNodeDeploymentDialog(null);
         return;
@@ -2039,7 +2054,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
   }, [
     clearNodeDeploymentLookupDialogTimer,
-    ensureHtmlShareAllowed,
+    ensureArtifactSubscriptionAllowed,
     isHtmlSharing,
     isNodeDeploymentBusy,
     isNodeDeploymentLookupPending,
@@ -4529,31 +4544,25 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                     onClick={() => {
                       setHtmlShareDialog(null);
                       setHtmlSharePendingRequest(null);
-                      if (localServiceDeploymentRequest?.requestId) {
-                        onLocalServiceDeploymentRequestConsumed?.(
-                          localServiceDeploymentRequest.requestId,
-                        );
-                      }
                     }}
                     className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
                   >
                     {htmlShareDialog.kind === HtmlShareDialogKind.Result ? t('close') : t('cancel')}
                   </button>
-                  {htmlShareDialog.kind === HtmlShareDialogKind.Subscription && (
-                    <button
-                      type="button"
-                      onClick={openSubscriptionPage}
-                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {t('htmlShareOpenSubscription')}
-                    </button>
-                  )}
                 </div>
               </div>
             )}
           </div>,
           document.body,
         )}
+      {subscriptionPrompt && (
+        <ArtifactSubscriptionPromptDialog
+          feature={subscriptionPrompt.feature}
+          reason={subscriptionPrompt.reason}
+          onCancel={closeSubscriptionPrompt}
+          onSubscribe={openSubscriptionPage}
+        />
+      )}
       {nodeDeploymentDialog && isNodeDeploymentDialogOpen &&
         createPortal(
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/35 px-4">

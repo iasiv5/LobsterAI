@@ -585,6 +585,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     htmlShareSubscriptionRequiredMessage:
       '分享功能需要有效订阅。开通后即可生成分享链接，并可选择分享码或公开访问。',
     htmlShareOpenSubscription: '去订阅',
+    subscriptionGateOpenAction: '去订阅',
     htmlShareUnavailableInProduction: '分享功能暂不可用。',
     nodeDeploymentShare: '分享',
     nodeDeploymentPreparing: '正在准备...',
@@ -610,6 +611,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     nodeDeploymentStatusExpiredMessage: '该服务分享已过期。',
     nodeDeploymentStatusStoppedMessage: '该服务分享已停止。',
     nodeDeploymentDialogTitle: '网站部署',
+    nodeDeploymentLoginRequiredTitle: '登录并订阅后即可部署网站',
+    nodeDeploymentLoginRequiredMessage: '网站部署是订阅用户功能。请登录后开通订阅。',
+    nodeDeploymentSubscriptionRequiredTitle: '开通订阅后即可部署网站',
+    nodeDeploymentSubscriptionRequiredMessage:
+      '网站部署需要有效订阅。开通后即可将本地网站部署到云端，并生成可访问链接。',
     nodeDeploymentLookupFailed: '获取部署信息失败。',
     nodeDeploymentAccessStatusApplyFailed: '服务已部署，但访问状态更新失败：{message}',
     nodeDeploymentStoppedNotice: '该服务已停止',
@@ -3574,6 +3580,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     htmlShareSubscriptionRequiredMessage:
       'Sharing requires an active subscription. After subscribing, you can create links with share-code or public access.',
     htmlShareOpenSubscription: 'View subscription',
+    subscriptionGateOpenAction: 'View subscription',
     htmlShareUnavailableInProduction: 'Sharing is currently unavailable.',
     nodeDeploymentShare: 'Share',
     nodeDeploymentPreparing: 'Preparing...',
@@ -3601,6 +3608,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     nodeDeploymentStatusExpiredMessage: 'This service share has expired.',
     nodeDeploymentStatusStoppedMessage: 'This service share has been stopped.',
     nodeDeploymentDialogTitle: 'Website deployment',
+    nodeDeploymentLoginRequiredTitle: 'Log in and subscribe to deploy a website',
+    nodeDeploymentLoginRequiredMessage:
+      'Website deployment is available to subscribers. Log in and subscribe to continue.',
+    nodeDeploymentSubscriptionRequiredTitle: 'Subscribe to deploy a website',
+    nodeDeploymentSubscriptionRequiredMessage:
+      'Website deployment requires an active subscription. After subscribing, you can deploy a local website to the cloud and get an access link.',
     nodeDeploymentLookupFailed: 'Failed to load deployment information.',
     nodeDeploymentAccessStatusApplyFailed:
       'The service was deployed, but its access status could not be updated: {message}',
