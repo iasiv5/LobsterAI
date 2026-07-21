@@ -1,8 +1,5 @@
 import { ChatBubbleLeftIcon, PhotoIcon } from '@heroicons/react/24/outline';
-import {
-  BrowserAnnotationScreenshotStatus,
-  type CoworkBrowserAnnotationMessageBatch,
-} from '@shared/cowork/browserAnnotations';
+import type { CoworkBrowserAnnotationMessageBatch } from '@shared/cowork/browserAnnotations';
 import React, { useCallback, useMemo, useState } from 'react';
 
 import { hasGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
@@ -235,17 +232,7 @@ const UserMessageItem: React.FC<{
   const allImageAttachments = imageAttachmentPreviews.length > 0
     ? imageAttachmentPreviews
     : legacyImageAttachments;
-  const browserAnnotationImageIndexes = new Set(
-    browserAnnotations.flatMap(batch => batch.annotations.flatMap((annotation) => {
-      const transportImageIndex = annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Ready
-        ? annotation.screenshot.asset.transportImageIndex
-        : undefined;
-      return typeof transportImageIndex === 'number' ? [transportImageIndex] : [];
-    })),
-  );
-  const displayImageAttachments = allImageAttachments.filter(
-    (_attachment, index) => !browserAnnotationImageIndexes.has(index + 1),
-  );
+  const displayImageAttachments = allImageAttachments;
   const hasCapabilityBadges = messageKitReferences.length > 0 || messageSkills.length > 0;
   const handleImagePreviewOpen = useCallback((image: ImagePreviewSource) => {
     reportConversationMessageAction({

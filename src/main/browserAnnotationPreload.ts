@@ -16,6 +16,8 @@ import {
   type BrowserAnnotationRect,
   BrowserAnnotationScreenshotStatus,
   type CoworkBrowserAnnotation,
+  getBrowserAnnotationElementChanges,
+  hasBrowserAnnotationContent,
   resolveBrowserAnnotationMarkerViewportPoint,
   resolveBrowserAnnotationViewportRect,
 } from '../shared/cowork/browserAnnotations';
@@ -255,14 +257,6 @@ function applyElementEdit(element: HTMLElement, edit: BrowserAnnotationElementEd
 
 function restoreElementEdit(element: HTMLElement, edit: BrowserAnnotationElementEdit): void {
   applyElementEdit(element, { ...edit, current: { ...edit.original } });
-}
-
-function hasElementChanges(edit?: BrowserAnnotationElementEdit): boolean {
-  if (!edit) return false;
-  return edit.current.text !== edit.original.text
-    || ELEMENT_STYLE_DEFINITIONS.some(
-      definition => edit.current[definition.key] !== edit.original[definition.key],
-    );
 }
 
 function sameElementChanges(
@@ -628,7 +622,7 @@ function start(envelope: BrowserAnnotationGuestEnvelope): void {
   };
 
   const updateSaveDisabled = () => {
-    const disabled = !textarea.value.trim();
+    const disabled = !hasBrowserAnnotationContent(textarea.value, draftElementEdit || undefined);
     topConfirm.disabled = disabled;
     saveButton.disabled = disabled;
   };
@@ -899,6 +893,7 @@ function start(envelope: BrowserAnnotationGuestEnvelope): void {
     if (!draftElementEdit || !pendingElement) return;
     draftElementEdit.current = { ...draftElementEdit.current, ...patch };
     applyElementEdit(pendingElement, draftElementEdit);
+    updateSaveDisabled();
     requestAnimationFrame(refreshEditingGeometry);
   };
 
@@ -1002,12 +997,13 @@ function start(envelope: BrowserAnnotationGuestEnvelope): void {
 
   const saveAnnotation = () => {
     const comment = textarea.value.trim().slice(0, BrowserAnnotationLimit.MaxCommentLength);
-    if (!pendingAnchor || !comment) return;
-    const now = Date.now();
-    const anchor = pendingElement?.isConnected ? elementAnchor(pendingElement) : pendingAnchor;
-    const elementEdit = draftElementEdit && hasElementChanges(draftElementEdit)
+    const elementEdit = draftElementEdit
+      && getBrowserAnnotationElementChanges(draftElementEdit).length > 0
       ? cloneElementEdit(draftElementEdit)
       : undefined;
+    if (!pendingAnchor || !hasBrowserAnnotationContent(comment, elementEdit)) return;
+    const now = Date.now();
+    const anchor = pendingElement?.isConnected ? elementAnchor(pendingElement) : pendingAnchor;
     if (editingId) {
       annotations = annotations.map(item => {
         if (item.id !== editingId) return item;

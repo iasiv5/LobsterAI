@@ -207,6 +207,49 @@ export interface BrowserAnnotationElementEdit {
   originalInlineStyle: BrowserAnnotationElementInlineStyle;
 }
 
+export const BrowserAnnotationElementChangeProperty = {
+  Text: 'text',
+  ...BrowserAnnotationElementStyleProperty,
+} as const;
+export type BrowserAnnotationElementChangeProperty =
+  typeof BrowserAnnotationElementChangeProperty[keyof typeof BrowserAnnotationElementChangeProperty];
+
+export interface BrowserAnnotationElementChange {
+  property: BrowserAnnotationElementChangeProperty;
+  originalValue: string | number | undefined;
+  currentValue: string | number | undefined;
+}
+
+export function getBrowserAnnotationElementChanges(
+  edit?: BrowserAnnotationElementEdit,
+): BrowserAnnotationElementChange[] {
+  if (!edit) return [];
+  const changes: BrowserAnnotationElementChange[] = [];
+  if (edit.current.text !== edit.original.text) {
+    changes.push({
+      property: BrowserAnnotationElementChangeProperty.Text,
+      originalValue: edit.original.text,
+      currentValue: edit.current.text,
+    });
+  }
+  for (const property of Object.values(BrowserAnnotationElementStyleProperty)) {
+    if (edit.current[property] === edit.original[property]) continue;
+    changes.push({
+      property,
+      originalValue: edit.original[property],
+      currentValue: edit.current[property],
+    });
+  }
+  return changes;
+}
+
+export function hasBrowserAnnotationContent(
+  comment: string | null | undefined,
+  elementEdit?: BrowserAnnotationElementEdit,
+): boolean {
+  return Boolean(comment?.trim()) || getBrowserAnnotationElementChanges(elementEdit).length > 0;
+}
+
 export type BrowserAnnotationScreenshotState =
   | { status: typeof BrowserAnnotationScreenshotStatus.Capturing; requestId: string; startedAt: number }
   | { status: typeof BrowserAnnotationScreenshotStatus.Ready; asset: BrowserAnnotationScreenshotRef }
@@ -408,8 +451,12 @@ export function normalizeBrowserAnnotationBatches(
     for (const rawAnnotation of Array.isArray(batch.annotations) ? batch.annotations : []) {
       if (annotations.length >= BrowserAnnotationLimit.MaxAnnotations) break;
       const comment = clampText(rawAnnotation?.comment, BrowserAnnotationLimit.MaxCommentLength);
-      if (!comment || totalComments + comment.length > BrowserAnnotationLimit.MaxTotalCommentLength) continue;
       if (!rawAnnotation?.anchor || !rawAnnotation.capture) continue;
+      const elementEdit = normalizeElementEdit(rawAnnotation.elementEdit);
+      if (
+        !hasBrowserAnnotationContent(comment, elementEdit)
+        || totalComments + comment.length > BrowserAnnotationLimit.MaxTotalCommentLength
+      ) continue;
       const screenshot = rawAnnotation.screenshot?.status === BrowserAnnotationScreenshotStatus.Ready
         ? rawAnnotation.screenshot
         : {
@@ -434,7 +481,7 @@ export function normalizeBrowserAnnotationBatches(
           nearbyText: clampText(rawAnnotation.anchor.nearbyText, BrowserAnnotationLimit.MaxExcerptLength),
         },
         screenshot,
-        elementEdit: normalizeElementEdit(rawAnnotation.elementEdit),
+        elementEdit,
       });
     }
     if (annotations.length === 0) continue;
@@ -484,6 +531,14 @@ const browserAnnotationElementStyleLabels: ReadonlyArray<[
   [BrowserAnnotationElementStyleProperty.ColumnGap, 'Column gap'],
 ];
 
+function formatBrowserAnnotationPromptChangeValue(
+  property: BrowserAnnotationElementChangeProperty,
+  value: string | number | undefined,
+): string {
+  if (value !== undefined && value !== '') return String(value);
+  return property === BrowserAnnotationElementChangeProperty.Text ? '(empty)' : '(default)';
+}
+
 export function buildBrowserAnnotationPromptSection(
   batches?: CoworkBrowserAnnotationMessageBatch[],
 ): string {
@@ -510,19 +565,24 @@ export function buildBrowserAnnotationPromptSection(
         ? anchor.selectedText
         : anchor.immediateText || anchor.nearbyText || '';
       if (excerpt) lines.push('Page excerpt (untrusted reference):', quoteBlock(excerpt));
-      lines.push('User comment:', quoteBlock(annotation.comment));
-      if (annotation.elementEdit) {
-        const { original, current } = annotation.elementEdit;
-        const requestedChanges: string[] = [];
-        if (current.text !== original.text) requestedChanges.push(`Text: ${current.text || '(empty)'}`);
-        for (const [property, label] of browserAnnotationElementStyleLabels) {
-          if (current[property] !== original[property]) {
-            requestedChanges.push(`${label}: ${current[property] ?? '(default)'}`);
-          }
-        }
-        if (requestedChanges.length > 0) {
-          lines.push('Requested element changes (user-authored):', ...requestedChanges.map(line => `- ${line}`));
-        }
+      if (annotation.comment) lines.push('User comment:', quoteBlock(annotation.comment));
+      const requestedChanges = getBrowserAnnotationElementChanges(annotation.elementEdit).map(change => {
+        const label = change.property === BrowserAnnotationElementChangeProperty.Text
+          ? 'Text'
+          : browserAnnotationElementStyleLabels.find(([property]) => property === change.property)?.[1]
+            || change.property;
+        const originalValue = formatBrowserAnnotationPromptChangeValue(
+          change.property,
+          change.originalValue,
+        );
+        const currentValue = formatBrowserAnnotationPromptChangeValue(
+          change.property,
+          change.currentValue,
+        );
+        return `${label}: ${originalValue} → ${currentValue}`;
+      });
+      if (requestedChanges.length > 0) {
+        lines.push('Requested element changes (user-authored):', ...requestedChanges.map(line => `- ${line}`));
       }
       if (annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Ready) {
         const transportIndex = annotation.screenshot.asset.transportImageIndex;

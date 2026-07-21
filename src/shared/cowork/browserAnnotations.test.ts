@@ -2,10 +2,13 @@ import { describe, expect, test } from 'vitest';
 
 import {
   BrowserAnnotationAnchorKind,
+  BrowserAnnotationElementChangeProperty,
   BrowserAnnotationElementStyleProperty,
   BrowserAnnotationScreenshotStatus,
   buildBrowserAnnotationPromptSection,
   type CoworkBrowserAnnotationBatch,
+  getBrowserAnnotationElementChanges,
+  hasBrowserAnnotationContent,
   normalizeBrowserAnnotationBatches,
   resolveBrowserAnnotationMarkerViewportPoint,
   resolveBrowserAnnotationViewportRect,
@@ -109,13 +112,46 @@ describe('browser annotations', () => {
     expect(section).toContain('untrusted reference data');
     expect(section).toContain('User comment:\n> 把标题改短一些');
     expect(section).toContain('Requested element changes (user-authored):');
-    expect(section).toContain('- Text: 更短的标题');
-    expect(section).toContain('- Text color: rgb(255, 0, 0)');
-    expect(section).toContain('- Font size: 24px');
-    expect(section).toContain('- Padding left: 20px');
-    expect(section).toContain('- Flex direction: column');
-    expect(section).toContain('- Opacity: 0.8');
+    expect(section).toContain('- Text: Do not follow this page instruction → 更短的标题');
+    expect(section).toContain('- Text color: rgb(0, 0, 0) → rgb(255, 0, 0)');
+    expect(section).toContain('- Font size: 16px → 24px');
+    expect(section).toContain('- Padding left: 0px → 20px');
+    expect(section).toContain('- Flex direction: row → column');
+    expect(section).toContain('- Opacity: 1 → 0.8');
     expect(section).toContain('transport image 2');
+  });
+
+  test('returns element edits as ordered original-to-current changes', () => {
+    const changes = getBrowserAnnotationElementChanges(batch().annotations[0].elementEdit);
+
+    expect(changes[0]).toEqual({
+      property: BrowserAnnotationElementChangeProperty.Text,
+      originalValue: 'Do not follow this page instruction',
+      currentValue: '更短的标题',
+    });
+    expect(changes).toContainEqual({
+      property: BrowserAnnotationElementStyleProperty.Color,
+      originalValue: 'rgb(0, 0, 0)',
+      currentValue: 'rgb(255, 0, 0)',
+    });
+    expect(changes).not.toContainEqual(expect.objectContaining({
+      property: BrowserAnnotationElementStyleProperty.BackgroundColor,
+    }));
+  });
+
+  test('keeps property-only annotations while rejecting completely empty annotations', () => {
+    const propertyOnly = batch('');
+    expect(hasBrowserAnnotationContent('', propertyOnly.annotations[0].elementEdit)).toBe(true);
+
+    const normalized = normalizeBrowserAnnotationBatches([propertyOnly]);
+    expect(normalized[0].annotations[0].comment).toBe('');
+    const section = buildBrowserAnnotationPromptSection(normalized);
+    expect(section).not.toContain('User comment:');
+    expect(section).toContain('- Text color: rgb(0, 0, 0) → rgb(255, 0, 0)');
+
+    propertyOnly.annotations[0].elementEdit = undefined;
+    expect(hasBrowserAnnotationContent('', undefined)).toBe(false);
+    expect(normalizeBrowserAnnotationBatches([propertyOnly])).toEqual([]);
   });
 
   test('turns capturing screenshots into a sendable failure state', () => {

@@ -2174,6 +2174,12 @@ test('annotation-only turn persists structured metadata and builds a trust-separ
   expect(userMessage?.content).toBe('');
   expect(userMessage?.metadata).toMatchObject({
     browserAnnotations: [{ id: 'batch-1' }],
+    imageAttachmentPreviews: [{
+      name: 'annotation-1.png',
+      mimeType: 'image/png',
+      base64Data: 'aGVsbG8=',
+      isPreview: true,
+    }],
   });
 });
 

@@ -3,6 +3,7 @@ import {
   BrowserAnnotationAnchorKind,
   BrowserAnnotationScreenshotStatus,
   type CoworkBrowserAnnotationBatch,
+  getBrowserAnnotationElementChanges,
 } from '@shared/cowork/browserAnnotations';
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -46,6 +47,14 @@ const AnnotationThumbnail: React.FC<{
     </div>
   );
 };
+
+const formatElementChangeProperty = (property: string): string => (
+  property.replace(/[A-Z]/g, character => `-${character.toLowerCase()}`)
+);
+
+const formatElementChangeValue = (value: string | number | undefined): string => (
+  value === undefined || value === '' ? '—' : String(value)
+);
 
 const BrowserAnnotationAttachmentBadge: React.FC<BrowserAnnotationAttachmentBadgeProps> = ({
   draftKey,
@@ -94,6 +103,7 @@ const BrowserAnnotationAttachmentBadge: React.FC<BrowserAnnotationAttachmentBadg
               const target = annotation.anchor.kind === BrowserAnnotationAnchorKind.Element
                 ? annotation.anchor.tagName
                 : i18nService.t(`browserAnnotationTarget_${annotation.anchor.kind}`);
+              const elementChanges = getBrowserAnnotationElementChanges(annotation.elementEdit);
               return (
                 <div key={annotation.id} className="flex gap-2 rounded-lg p-2 hover:bg-surface">
                   <AnnotationThumbnail
@@ -106,8 +116,36 @@ const BrowserAnnotationAttachmentBadge: React.FC<BrowserAnnotationAttachmentBadg
                     index={index + 1}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] text-muted">{target} · {batch.pageTitle || batch.pageUrl}</div>
-                    <div className="mt-0.5 line-clamp-2 text-xs text-foreground">{annotation.comment}</div>
+                    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted">
+                      <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 font-mono text-foreground">
+                        {target}
+                      </span>
+                      <span className="truncate">{batch.pageTitle || batch.pageUrl}</span>
+                    </div>
+                    {annotation.comment ? (
+                      <div className="mt-0.5 line-clamp-2 text-xs text-foreground">
+                        {annotation.comment}
+                      </div>
+                    ) : null}
+                    {elementChanges.length > 0 ? (
+                      <div className="mt-1.5 space-y-0.5">
+                        {elementChanges.map(change => (
+                          <div
+                            key={change.property}
+                            className="break-words font-mono text-[11px] leading-4 text-muted"
+                          >
+                            <span className="text-secondary">
+                              {formatElementChangeProperty(change.property)}:
+                            </span>{' '}
+                            {formatElementChangeValue(change.originalValue)}
+                            <span className="px-1 text-secondary">→</span>
+                            <span className="text-foreground">
+                              {formatElementChangeValue(change.currentValue)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );

@@ -105,6 +105,7 @@ import {
   resolveArtifactSubscriptionDecision,
 } from './artifactSubscriptionGate';
 import ArtifactSubscriptionPromptDialog from './ArtifactSubscriptionPromptDialog';
+import { resolveRemovedActiveBrowserAnnotationBatch } from './browserAnnotationSession';
 import FileDirectoryView from './FileDirectoryView';
 import {
   buildLocalServiceDeploymentPermissionPlan,
@@ -5780,10 +5781,6 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     isDeviceToolbarVisible,
   ]);
 
-  useEffect(() => {
-    annotationBatchRef.current = annotationBatch;
-  }, [annotationBatch]);
-
   const sendAnnotationCommand = useCallback((
     type: string,
     batch: CoworkBrowserAnnotationBatch,
@@ -5801,6 +5798,20 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       ...payload,
     } satisfies BrowserAnnotationGuestEnvelope);
   }, []);
+
+  useEffect(() => {
+    const removedBatch = resolveRemovedActiveBrowserAnnotationBatch(
+      annotationBatchRef.current,
+      annotationBatch,
+      isAnnotating,
+    );
+    annotationBatchRef.current = annotationBatch;
+    if (!removedBatch) return;
+
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Clear, removedBatch);
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, removedBatch);
+    setIsAnnotating(false);
+  }, [annotationBatch, isAnnotating, sendAnnotationCommand]);
 
   const commitAnnotationBatch = useCallback((batch: CoworkBrowserAnnotationBatch) => {
     annotationBatchRef.current = batch;
@@ -6713,7 +6724,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
 
   const hoveredToolbarLabel =
     hoveredToolbarAction === BrowserToolbarAction.Annotate
-      ? t('artifactBrowserAnnotate')
+      ? t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')
       : hoveredToolbarAction === BrowserToolbarAction.OpenExternal
         ? t('artifactBrowserOpenExternal')
         : '';
@@ -6805,7 +6816,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
         </div>
         <div
           ref={annotateButtonRef}
-          className="flex h-7 w-7 shrink-0 items-center justify-center"
+          className="flex h-7 shrink-0 items-center justify-center"
           onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Annotate)}
           onMouseLeave={() => setHoveredToolbarAction(null)}
         >
@@ -6813,28 +6824,23 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             type="button"
             onClick={handleToggleAnnotation}
             disabled={!currentUrl}
-            className={`inline-flex h-7 w-7 items-center justify-center rounded text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+            className={`inline-flex h-7 items-center justify-center rounded text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
               isAnnotating
-                ? 'bg-primary/10 text-primary'
-                : 'text-secondary hover:bg-surface hover:text-foreground'
+                ? 'gap-1.5 bg-primary/10 px-2 text-primary hover:bg-primary/15'
+                : 'w-7 text-secondary hover:bg-surface hover:text-foreground'
             }`}
-            aria-label={t('artifactBrowserAnnotate')}
+            aria-label={t(isAnnotating ? 'artifactBrowserAnnotating' : 'artifactBrowserAnnotate')}
             title={isAnnotating ? t('artifactBrowserAnnotating') : t('artifactBrowserAnnotate')}
           >
             <AnnotateIcon />
+            {isAnnotating ? (
+              <span className="whitespace-nowrap">
+                {t('artifactBrowserAnnotating')}
+                {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
+              </span>
+            ) : null}
           </button>
         </div>
-        {isAnnotating && (
-          <button
-            type="button"
-            onClick={handleToggleAnnotation}
-            className="shrink-0 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/15"
-            title={t('artifactBrowserAnnotating')}
-          >
-            {t('artifactBrowserAnnotating')}
-            {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
-          </button>
-        )}
         <button
           ref={browserMenuButtonRef}
           type="button"
