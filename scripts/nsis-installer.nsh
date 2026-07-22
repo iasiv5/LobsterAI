@@ -240,10 +240,14 @@
     ; with an up-front path-list (tar + runtime dirs), and 1m05s with
     ; real-time protection off -- signing does not soften the ~160s Defender
     ; keeps spending on the Electron binaries and app.asar, and a path list
-    ; can never cover them all. The whole-directory entry closes that gap and
+    ; can never cover them all. Note: on machines where Defender applies new
+    ; exclusions asynchronously this entry may do nothing for the current
+    ; install -- the pre-provisioned entries left by the PREVIOUS install
+    ; (see the rebalance step) are what protect the big files there. The
+    ; whole-directory entry closes the remaining gap where it does work, and
     ; is strictly bounded:
-    ;  - the end of customInstall replaces it with the three narrow permanent
-    ;    entries (cfmind, python-win, app.asar.unpacked);
+    ;  - the end of customInstall replaces it with the narrow permanent
+    ;    entries (runtime dirs plus pre-provisioned big-file paths);
     ;  - an interrupted install leaves it behind only until the next
     ;    install or uninstall, both of which remove it unconditionally
     ;    (the entry path is always $INSTDIR, so any later run self-heals);
@@ -271,15 +275,19 @@
     CreateDirectory "$INSTDIR\resources\cfmind"
     CreateDirectory "$INSTDIR\resources\python-win"
     CreateDirectory "$INSTDIR\resources\SKILLs"
-    nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender install-scope exclusion added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
+    ; ExecToStack, and the command echoes "added"/"skipped: <reason>": the
+    ; try/catch means the exit code is 0 either way, so the captured output
+    ; is the only signal in the timing log that the exclusion really landed.
+    nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR$\" -ErrorAction Stop; Write-Output \"added\" } catch { Write-Output (\"skipped: \" + $$_.Exception.Message) }"'
     Pop $0
+    Pop $1
     StrCpy $R2 $0
     System::Call 'kernel32::GetTickCount()i .r6'
     IntOp $5 $6 - $7
     FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
     FileSeek $9 0 END
     !insertmacro GetTimestamp $8
-    FileWrite $9 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5$\r$\n"
+    FileWrite $9 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5 output=$1$\r$\n"
     FileClose $9
     DefenderExclusionAddSkipped:
   !endif
@@ -487,34 +495,42 @@
   ; extraction it is intentionally kept alongside win-resources.tar.
 
   ; -- Rebalance Defender exclusions now that extraction is done --
-  ; Unconditionally remove the install-scope whole-directory entry plus every
-  ; temporary/legacy entry any earlier version may have left behind (tar and
-  ; app.asar from the path-list era, SKILLs from the permanent era, and a
-  ; whole-directory leftover from an interrupted install -- the entry path is
-  ; always $INSTDIR, so this step self-heals it).
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR$\",$\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\app.asar$\",$\"$INSTDIR\resources\SKILLs$\" -ErrorAction SilentlyContinue } catch {}"'
+  ; Unconditionally remove the install-scope whole-directory entry (also the
+  ; leftover of an interrupted install -- the entry path is always $INSTDIR,
+  ; so this step self-heals it) and the SKILLs entry older installers added.
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR$\",$\"$INSTDIR\resources\SKILLs$\" -ErrorAction SilentlyContinue; Write-Output \"removed\" } catch { Write-Output (\"failed: \" + $$_.Exception.Message) }"'
   Pop $0
   Pop $1
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=defender-exclusion-trim-complete exit=$0$\r$\n"
+  FileWrite $2 "$8 phase=defender-exclusion-trim-complete exit=$0 output=$1$\r$\n"
   FileClose $2
 
-  ; Re-add the narrow permanent entries (runtime trees with thousands of
-  ; small files; SKILLs deliberately absent). Skipped entirely when the
+  ; Re-add the permanent entries; skipped entirely when the
   ; /NoDefenderExclusion opt-out is present -- the removals above are not.
+  ;
+  ; Besides the three runtime trees, this PRE-PROVISIONS the two biggest
+  ; single files of the NEXT upgrade: win-resources.tar and app.asar. Field
+  ; finding (EICAR-verified on a machine where install-time exclusions never
+  ; worked): Defender applies newly added exclusions asynchronously, minutes
+  ; later -- entries added mid-install protect nothing, while entries that
+  ; have been sitting since the previous install are fully honored. Risk:
+  ; the tar path points at a file that only exists during an install, and
+  ; app.asar is the same trust class as the already-excluded
+  ; app.asar.unpacked. SKILLs stays scannable (user-writable,
+  ; agent-executed).
   ${GetParameters} $R9
   ClearErrors
   ${GetOptions} $R9 "/NoDefenderExclusion" $R8
   IfErrors 0 DefenderPermanentAddSkipped
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop } catch {}"'
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\app.asar.unpacked$\",$\"$INSTDIR\resources\app.asar$\",$\"$INSTDIR\resources\win-resources.tar$\" -ErrorAction Stop; Write-Output \"added\" } catch { Write-Output (\"skipped: \" + $$_.Exception.Message) }"'
   Pop $0
   Pop $1
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=defender-exclusion-permanent-complete exit=$0$\r$\n"
+  FileWrite $2 "$8 phase=defender-exclusion-permanent-complete exit=$0 output=$1$\r$\n"
   FileClose $2
   DefenderPermanentAddSkipped:
 
