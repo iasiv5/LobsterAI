@@ -4814,7 +4814,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       )}
 
       {/* Export Options Modal */}
-      {showExportOptions && (
+      {showExportOptions && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
           onClick={() => setShowExportOptions(false)}
@@ -4878,7 +4878,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Content row: chat + artifact panel */}
