@@ -112,22 +112,20 @@
 ;  - uninstaller: un.install section (assisted) or un.onInit (silent /S)
 !macro customCheckAppRunning
   !ifndef BUILD_UNINSTALLER
-    ; In-app silent updates (/S) have no installer UI at all, so without this
-    ; the user stares at a dead app for minutes and may try to relaunch it
+    ; Silent installs (/S -- e.g. enterprise IT deployments; in-app updates
+    ; use --updated mode with a visible progress page instead) have no
+    ; installer UI at all, so without this the machine looks idle for minutes
     ; mid-replace. Banner is a plugin-owned window, so it shows even in
-    ; silent mode; interactive installs keep the wizard and never see it.
-    ; The window dies with the installer process, so no failure path can
-    ; leave it behind.
+    ; silent mode. The window dies with the installer process, so no failure
+    ; path can leave it behind.
     ;
-    ; ASCII-only, deliberately -- comments included: the darwin makensis
-    ; builds used for local syntax checks reject any non-ASCII byte in this
-    ; file (UTF-8 with or without BOM, UTF-16, and they crash on ${U+xxxx}
-    ; escapes), and the file is read line-by-line so even a comment breaks
-    ; it. The pre-quit in-app modal already explains the update in Chinese.
-    ; To localize this string, first verify a Chinese literal compiles with
-    ; the Windows build machine's makensis, then swap it there.
+    ; The text is "Updating LobsterAI, please wait..." in Chinese, written as
+    ; ${U+xxxx} escapes because this file must stay pure ASCII: the darwin
+    ; makensis builds used for local syntax checks reject any non-ASCII byte
+    ; (the escapes are fine on the Windows build machine -- the webPackage
+    ; patch ships them in production already).
     ${If} ${Silent}
-      Banner::show /NOUNLOAD "Updating LobsterAI, please wait..."
+      Banner::show /NOUNLOAD "${U+6B63}${U+5728}${U+66F4}${U+65B0} LobsterAI${U+FF0C}${U+8BF7}${U+7A0D}${U+5019}${U+2026}"
     ${EndIf}
   !endif
 

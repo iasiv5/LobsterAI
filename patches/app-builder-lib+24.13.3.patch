@@ -15,6 +15,39 @@ index 9b75baa..e018ea7 100644
          defines.APP_PACKAGE_URL = appPackageUrl;
      }
      get installerFilenamePattern() {
+diff --git a/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh b/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
+index b7f4752..e11b58f 100644
+--- a/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
+@@ -43,6 +43,18 @@
+     !insertmacro customPageAfterChangeDir
+   !endif
+ 
++  # In-app update (--updated): the previous install directory may already be
++  # renamed away by customCheckAppRunning, so a mid-install cancel would leave
++  # the user with no working app at all. Disable the Cancel button for the
++  # whole install-files page in that mode.
++  Function instFilesShow
++    ${if} ${isUpdated}
++      GetDlgItem $0 $HWNDPARENT 2
++      EnableWindow $0 0
++    ${endif}
++  FunctionEnd
++  !define MUI_PAGE_CUSTOMFUNCTION_SHOW instFilesShow
++
+   !insertmacro MUI_PAGE_INSTFILES
+   !ifmacrodef customFinishPage
+     !insertmacro customFinishPage
+@@ -60,6 +72,9 @@
+       !define MUI_FINISHPAGE_RUN
+       !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+     !endif
++    # In-app update: no finish page either -- the app is relaunched by the
++    # install section itself (isForceRun), so the update ends hands-free.
++    !insertmacro skipPageIfUpdated
+     !insertmacro MUI_PAGE_FINISH
+   !endif
+ !else
 diff --git a/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh b/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh
 index 8ec0be3..f48db67 100644
 --- a/node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh
@@ -57,3 +90,57 @@ index 8ec0be3..f48db67 100644
 +
    StrCpy $packageFile "$PLUGINSDIR\package.7z"
  !macroend
+diff --git a/node_modules/app-builder-lib/templates/nsis/installSection.nsh b/node_modules/app-builder-lib/templates/nsis/installSection.nsh
+index 053772f..28f04b1 100644
+--- a/node_modules/app-builder-lib/templates/nsis/installSection.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/installSection.nsh
+@@ -102,9 +102,13 @@ ${endIf}
+   !endif
+   !insertmacro quitSuccess
+ !else
+-  # for assisted installer run only if silent, because assisted installer has run after finish option
++  # for assisted installer run only if silent or updated, because otherwise the
++  # assisted installer has its run-after-finish option; in updated mode the
++  # finish page is skipped, so this is what relaunches the app.
+   ${if} ${isForceRun}
+-  ${andIf} ${Silent}
+-    !insertmacro doStartApp
++    ${if} ${Silent}
++    ${orIf} ${isUpdated}
++      !insertmacro doStartApp
++    ${endIf}
+   ${endIf}
+ !endif
+diff --git a/node_modules/app-builder-lib/templates/nsis/multiUserUi.nsh b/node_modules/app-builder-lib/templates/nsis/multiUserUi.nsh
+index 52a83df..0500e4e 100644
+--- a/node_modules/app-builder-lib/templates/nsis/multiUserUi.nsh
++++ b/node_modules/app-builder-lib/templates/nsis/multiUserUi.nsh
+@@ -36,6 +36,28 @@ Var isForceCurrentInstall
+ 			Abort
+ 		${endIf}
+ 
++		!ifndef BUILD_UNINSTALLER
++			# In-app update (--updated): reuse the mode of the existing installation
++			# instead of asking again -- the user already chose at first install.
++			# With both or neither modes present, fall through to the normal page.
++			${if} ${isUpdated}
++				${if} $hasPerUserInstallation == "1"
++				${andIf} $hasPerMachineInstallation == "0"
++					!insertmacro setInstallModePerUser
++					Abort
++				${elseIf} $hasPerUserInstallation == "0"
++				${andIf} $hasPerMachineInstallation == "1"
++					${IfNot} ${UAC_IsAdmin}
++						ShowWindow $HWNDPARENT ${SW_HIDE}
++						!insertmacro UAC_RunElevated
++						Quit
++					${endIf}
++					!insertmacro setInstallModePerAllUsers
++					Abort
++				${endIf}
++			${endif}
++		!endif
++
+ 		StrCpy $isForceMachineInstall "0"
+ 		StrCpy $isForceCurrentInstall "0"
+ 		!ifmacrodef customInstallmode
